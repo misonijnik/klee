@@ -1,3 +1,7 @@
+/*
+ * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ */
+
 /* -*- mode: c++; c-basic-offset: 2; -*- */
 
 //===-- main.cpp ------------------------------------------------*- C++ -*-===//
@@ -23,6 +27,7 @@
 #include "klee/Support/ModuleUtil.h"
 #include "klee/Support/PrintVersion.h"
 #include "klee/System/Time.h"
+#include "klee/ADT/TestCaseUtils.h"
 
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
@@ -41,6 +46,7 @@
 
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/Signals.h"
+#include <llvm/ADT/StringExtras.h>
 
 #if LLVM_VERSION_CODE >= LLVM_VERSION(4, 0)
 #include <llvm/Bitcode/BitcodeReader.h>
@@ -61,6 +67,8 @@
 #include <iterator>
 #include <sstream>
 
+#include <klee/Misc/json.hpp>
+using json = nlohmann::json;
 
 using namespace llvm;
 using namespace klee;
@@ -120,6 +128,11 @@ namespace {
                 cl::desc("Write .sym.path files for each test case (default=false)"),
                 cl::cat(TestCaseCat));
 
+  cl::opt<bool>
+  WriteKTestFiles("write-ktest-files",
+                  cl::init(true),
+                  cl::desc("Write KTest files alongside json-formatted TestCase (default=true)"),
+                  cl::cat(TestCaseCat));
 
   /*** Startup options ***/
 
@@ -158,7 +171,7 @@ namespace {
   WarnAllExternals("warn-all-external-symbols",
                    cl::desc("Issue a warning on startup for all external symbols (default=false)."),
                    cl::cat(StartCat));
-  
+
 
   /*** Linking options ***/
 
@@ -309,10 +322,15 @@ private:
   unsigned m_numTotalTests;     // Number of tests received from the interpreter
   unsigned m_numGeneratedTests; // Number of tests successfully generated
   unsigned m_pathsExplored; // number of paths explored so far
+  unsigned m_statesTerminated;
 
   // used for writing .ktest files
   int m_argc;
   char **m_argv;
+
+  void writeTestCaseKTest(const TestCase &tc, unsigned id);
+
+  void writeTestCasePlain(const TestCase &tc, unsigned id);
 
 public:
   KleeHandler(int argc, char **argv);
@@ -326,7 +344,7 @@ public:
 
   void setInterpreter(Interpreter *i);
 
-  void processTestCase(const ExecutionState  &state,
+  void processTestCase(ExecutionState  &state,
                        const char *errorMessage,
                        const char *errorSuffix);
 
@@ -470,53 +488,108 @@ KleeHandler::openTestFile(const std::string &suffix, unsigned id) {
   return openOutputFile(getTestFilename(suffix, id));
 }
 
+void KleeHandler::writeTestCaseKTest(const TestCase &tc, unsigned id) {
+  KTest b;
+  b.numArgs = m_argc;
+  b.args = m_argv;
+  b.symArgvs = 0;
+  b.symArgvLen = 0;
+  b.numObjects = tc.n_objects;
+  b.objects = new KTestObject[b.numObjects];
+  assert(b.objects);
+  for (unsigned i = 0; i < b.numObjects; i++) {
+    KTestObject *o = &b.objects[i];
+    o->name = const_cast<char *>(tc.objects[i].name);
+    o->numBytes = tc.objects[i].size;
+    o->bytes = new unsigned char[o->numBytes];
+    assert(o->bytes);
+    for (unsigned j = 0; j < o->numBytes; j++) {
+      o->bytes[j] = tc.objects[i].values[j];
+    }
+  }
+  if (!kTest_toFile(&b,
+                    getOutputFilename(getTestFilename("ktest", id)).c_str())) {
+    klee_warning("unable to write output test case, losing it");
+  }
+  for (unsigned i = 0; i < b.numObjects; i++)
+    delete[] b.objects[i].bytes;
+  delete[] b.objects;
+}
 
-/* Outputs all files (.ktest, .kquery, .cov etc.) describing a test case */
-void KleeHandler::processTestCase(const ExecutionState &state,
+void KleeHandler::writeTestCasePlain(const TestCase &tc, unsigned id) {
+  json out;
+
+  out["n_objects"] = tc.n_objects;
+  out["numArgs"] = tc.numArgs;
+  for (size_t i = 0; i < tc.numArgs; i++) {
+    out["args"].push_back(std::string(tc.args[i]));
+  }
+  out["symArgvs"] = tc.symArgvs;
+  out["symArgvLen"] = tc.symArgvLen;
+
+  for (unsigned i = 0; i < tc.n_objects; i++) {
+    json out_obj;
+    out_obj["name"] = std::string(tc.objects[i].name);
+    out_obj["values"] = std::vector<unsigned char>(
+        tc.objects[i].values, tc.objects[i].values + tc.objects[i].size);
+    out_obj["size"] = tc.objects[i].size;
+    out_obj["address"] = tc.objects[i].address;
+    out_obj["n_offsets"] = tc.objects[i].n_offsets;
+    for (unsigned j = 0; j < tc.objects[i].n_offsets; j++) {
+      json offset_obj;
+      offset_obj["offset"] = tc.objects[i].offsets[j].offset;
+      offset_obj["index"] = tc.objects[i].offsets[j].index;
+      out_obj["offsets"].push_back(offset_obj);
+    }
+    out["objects"].push_back(out_obj);
+  }
+  auto file = openTestFile("ktestjson", id);
+  *file << out.dump(4);
+}
+
+void KleeHandler::processTestCase(ExecutionState &state,
                                   const char *errorMessage,
                                   const char *errorSuffix) {
+
+  unsigned state_id = ++m_statesTerminated;
+
   if (!WriteNone) {
-    std::vector< std::pair<std::string, std::vector<unsigned char> > > out;
-    bool success = m_interpreter->getSymbolicSolution(state, out);
+    const auto start_time = time::getWallTime();
+    TestCase assignments{};
+    assignments.numArgs = m_argc;
+    assignments.args = new char*[m_argc];
+    for(int i = 0; i<m_argc; i++) {
+      assignments.args[i] = new char[std::strlen(m_argv[i])+1];
+      std::strcpy(assignments.args[i], m_argv[i]);
+    }
+    assignments.symArgvs = 0;
+    assignments.symArgvLen = 0;
+    
+    bool success = m_interpreter->getSymbolicSolution(state, assignments);
+
+    // _-_ Should it be done before or after getSymbolicSolution?
+    int lazy_instantiation_resolved = m_interpreter->resolveLazyInstantiation(state);
+    if(lazy_instantiation_resolved == 1) {
+      m_interpreter->setInstantiationGraph(state, assignments);
+    }
 
     if (!success)
       klee_warning("unable to get symbolic solution, losing test case");
 
-    const auto start_time = time::getWallTime();
+    unsigned test_id = ++m_numTotalTests;
 
-    unsigned id = ++m_numTotalTests;
-
-    if (success) {
-      KTest b;
-      b.numArgs = m_argc;
-      b.args = m_argv;
-      b.symArgvs = 0;
-      b.symArgvLen = 0;
-      b.numObjects = out.size();
-      b.objects = new KTestObject[b.numObjects];
-      assert(b.objects);
-      for (unsigned i=0; i<b.numObjects; i++) {
-        KTestObject *o = &b.objects[i];
-        o->name = const_cast<char*>(out[i].first.c_str());
-        o->numBytes = out[i].second.size();
-        o->bytes = new unsigned char[o->numBytes];
-        assert(o->bytes);
-        std::copy(out[i].second.begin(), out[i].second.end(), o->bytes);
-      }
-
-      if (!kTest_toFile(&b, getOutputFilename(getTestFilename("ktest", id)).c_str())) {
-        klee_warning("unable to write output test case, losing it");
-      } else {
-        ++m_numGeneratedTests;
-      }
-
-      for (unsigned i=0; i<b.numObjects; i++)
-        delete[] b.objects[i].bytes;
-      delete[] b.objects;
+    if (WriteKTestFiles && success && lazy_instantiation_resolved == 0) {
+      writeTestCaseKTest(assignments, test_id);
     }
 
+    if (success && lazy_instantiation_resolved != -1) {
+      writeTestCasePlain(assignments, test_id);
+    }
+
+    TestCase_free(&assignments);
+
     if (errorMessage) {
-      auto f = openTestFile(errorSuffix, id);
+      auto f = openTestFile(errorSuffix, test_id);
       if (f)
         *f << errorMessage;
     }
@@ -525,7 +598,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
       std::vector<unsigned char> concreteBranches;
       m_pathWriter->readStream(m_interpreter->getPathStreamID(state),
                                concreteBranches);
-      auto f = openTestFile("path", id);
+      auto f = openTestFile("path", test_id);
       if (f) {
         for (const auto &branch : concreteBranches) {
           *f << branch << '\n';
@@ -536,7 +609,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
     if (errorMessage || WriteKQueries) {
       std::string constraints;
       m_interpreter->getConstraintLog(state, constraints,Interpreter::KQUERY);
-      auto f = openTestFile("kquery", id);
+      auto f = openTestFile("kquery", test_id);
       if (f)
         *f << constraints;
     }
@@ -546,7 +619,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
       // SMT-LIBv2 not CVC which is a bit confusing
       std::string constraints;
       m_interpreter->getConstraintLog(state, constraints, Interpreter::STP);
-      auto f = openTestFile("cvc", id);
+      auto f = openTestFile("cvc", test_id);
       if (f)
         *f << constraints;
     }
@@ -554,7 +627,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
     if (WriteSMT2s) {
       std::string constraints;
         m_interpreter->getConstraintLog(state, constraints, Interpreter::SMTLIB2);
-        auto f = openTestFile("smt2", id);
+        auto f = openTestFile("smt2", test_id);
         if (f)
           *f << constraints;
     }
@@ -563,7 +636,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
       std::vector<unsigned char> symbolicBranches;
       m_symPathWriter->readStream(m_interpreter->getSymbolicPathStreamID(state),
                                   symbolicBranches);
-      auto f = openTestFile("sym.path", id);
+      auto f = openTestFile("sym.path", test_id);
       if (f) {
         for (const auto &branch : symbolicBranches) {
           *f << branch << '\n';
@@ -574,7 +647,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
     if (WriteCov) {
       std::map<const std::string*, std::set<unsigned> > cov;
       m_interpreter->getCoveredLines(state, cov);
-      auto f = openTestFile("cov", id);
+      auto f = openTestFile("cov", test_id);
       if (f) {
         for (const auto &entry : cov) {
           for (const auto &line : entry.second) {
@@ -584,12 +657,14 @@ void KleeHandler::processTestCase(const ExecutionState &state,
       }
     }
 
+    m_numGeneratedTests++;
+
     if (m_numGeneratedTests == MaxTests)
       m_interpreter->setHaltExecution(true);
 
     if (WriteTestInfo) {
       time::Span elapsed_time(time::getWallTime() - start_time);
-      auto f = openTestFile("info", id);
+      auto f = openTestFile("info", test_id);
       if (f)
         *f << "Time to generate test case: " << elapsed_time << '\n';
     }
@@ -600,6 +675,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
     klee_error("EXITING ON ERROR:\n%s\n", errorMessage);
   }
 }
+
 
   // load a .path file
 void KleeHandler::loadPathFile(std::string name,
@@ -1514,7 +1590,6 @@ int main(int argc, char **argv, char **envp) {
       }
     }
     interpreter->runFunctionAsMain(mainFn, pArgc, pArgv, pEnvp);
-
     while (!seeds.empty()) {
       kTest_free(seeds.back());
       seeds.pop_back();

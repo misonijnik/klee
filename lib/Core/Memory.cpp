@@ -1,3 +1,7 @@
+/*
+ * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ */
+
 //===-- Memory.cpp --------------------------------------------------------===//
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -14,7 +18,7 @@
 #include "MemoryManager.h"
 
 #include "klee/ADT/BitArray.h"
-#include "klee/Expr/ArrayCache.h"
+#include "klee/Expr/ArrayManager.h"
 #include "klee/Expr/Expr.h"
 #include "klee/Support/OptionCategories.h"
 #include "klee/Solver/Solver.h"
@@ -81,17 +85,52 @@ ObjectState::ObjectState(const MemoryObject *mo)
     flushMask(0),
     knownSymbolics(0),
     updates(0, 0),
+    manager(mo->parent),
     size(mo->size),
     readOnly(false) {
   if (!UseConstantArrays) {
     static unsigned id = 0;
     const Array *array =
-        getArrayCache()->CreateArray("tmp_arr" + llvm::utostr(++id), size);
+        getArrayManager()->CreateArray("tmp_arr" + llvm::utostr(++id), size);
     updates = UpdateList(array, 0);
   }
   memset(concreteStore, 0, size);
 }
 
+ObjectState::ObjectState(unsigned _size, MemoryManager *_manager)
+  : copyOnWriteOwner(0),
+    object(nullptr),
+    concreteStore(new uint8_t[_size]),
+    concreteMask(0),
+    flushMask(0),
+    knownSymbolics(0),
+    updates(0, 0),
+    manager(_manager),
+    size(_size),
+    readOnly(false) {
+  if (!UseConstantArrays) {
+    static unsigned id = 0;
+    const Array *array =
+        getArrayManager()->CreateArray("tmp_arr" + llvm::utostr(++id), size);
+    updates = UpdateList(array, 0);
+  }
+  memset(concreteStore, 0, size);
+}
+
+ObjectState::ObjectState(const Array *array, MemoryManager *_manager)
+  : copyOnWriteOwner(0),
+    object(nullptr),
+    concreteStore(new uint8_t[array->size]),
+    concreteMask(0),
+    flushMask(0),
+    knownSymbolics(0),
+    updates(array, 0),
+    manager(_manager),
+    size(array->size),
+    readOnly(false) {
+  makeSymbolic();
+  memset(concreteStore, 0, size);
+}
 
 ObjectState::ObjectState(const MemoryObject *mo, const Array *array)
   : copyOnWriteOwner(0),
@@ -101,6 +140,22 @@ ObjectState::ObjectState(const MemoryObject *mo, const Array *array)
     flushMask(0),
     knownSymbolics(0),
     updates(array, 0),
+    manager(mo->parent),
+    size(mo->size),
+    readOnly(false) {
+  makeSymbolic();
+  memset(concreteStore, 0, size);
+}
+
+ObjectState::ObjectState(const MemoryObject *mo, UpdateList ul)
+  : copyOnWriteOwner(0),
+    object(mo),
+    concreteStore(new uint8_t[mo->size]),
+    concreteMask(0),
+    flushMask(0),
+    knownSymbolics(0),
+    updates(ul),
+    manager(mo->parent),
     size(mo->size),
     readOnly(false) {
   makeSymbolic();
@@ -115,9 +170,10 @@ ObjectState::ObjectState(const ObjectState &os)
     flushMask(os.flushMask ? new BitArray(*os.flushMask, os.size) : 0),
     knownSymbolics(0),
     updates(os.updates),
+    manager(os.manager),
     size(os.size),
     readOnly(false) {
-  assert(!os.readOnly && "no need to copy read only object?");
+  //assert(!os.readOnly && "no need to copy read only object?");
   if (os.knownSymbolics) {
     knownSymbolics = new ref<Expr>[size];
     for (unsigned i=0; i<size; i++)
@@ -134,9 +190,13 @@ ObjectState::~ObjectState() {
   delete[] concreteStore;
 }
 
-ArrayCache *ObjectState::getArrayCache() const {
-  assert(object && "object was NULL");
-  return object->parent->getArrayCache();
+ArrayManager *ObjectState::getArrayManager() const {
+  assert(manager && "manager was NULL");
+  return manager->getArrayManager();
+}
+
+const Array *ObjectState::getArray() const {
+  return updates.root;
 }
 
 /***/
@@ -179,7 +239,7 @@ const UpdateList &ObjectState::getUpdates() const {
     }
 
     static unsigned id = 0;
-    const Array *array = getArrayCache()->CreateArray(
+    const Array *array = getArrayManager()->CreateArray(
         "const_arr" + llvm::utostr(++id), size, &Contents[0],
         &Contents[0] + Contents.size());
     updates = UpdateList(array, 0);

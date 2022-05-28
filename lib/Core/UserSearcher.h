@@ -1,3 +1,7 @@
+/*
+ * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ */
+
 //===-- UserSearcher.h ------------------------------------------*- C++ -*-===//
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -10,6 +14,8 @@
 #ifndef KLEE_USERSEARCHER_H
 #define KLEE_USERSEARCHER_H
 
+#include <memory>
+
 namespace klee {
   class Executor;
   class Searcher;
@@ -19,7 +25,7 @@ namespace klee {
 
   void initializeSearchOptions();
 
-  Searcher *constructUserSearcher(Executor &executor);
+  std::unique_ptr<Searcher> constructUserSearcher(Executor &executor);
 }
 
 #endif /* KLEE_USERSEARCHER_H */

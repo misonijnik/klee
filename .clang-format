@@ -1,4 +1,4 @@
 ---
 BasedOnStyle:  LLVM
-Standard: Cpp11
+Standard: c++17
 ...

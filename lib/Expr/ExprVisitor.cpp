@@ -1,3 +1,7 @@
+/*
+ * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ */
+
 //===-- ExprVisitor.cpp ---------------------------------------------------===//
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -27,33 +31,41 @@ ref<Expr> ExprVisitor::visit(const ref<Expr> &e) {
   if (!UseVisitorHash || isa<ConstantExpr>(e)) {
     return visitActual(e);
   } else {
-    visited_ty::iterator it = visited.find(e);
+    visited_ty::iterator it = visited->find(e);
 
-    if (it!=visited.end()) {
+    if (it!=visited->end()) {
       return it->second;
     } else {
       ref<Expr> res = visitActual(e);
-      visited.insert(std::make_pair(e, res));
-      return res;
+      if (!aborted) {
+        visited->insert(std::make_pair(e, res));
+        return res;
+      } else {
+        return e;
+      }
     }
   }
 }
 
 ref<Expr> ExprVisitor::visitActual(const ref<Expr> &e) {
-  if (isa<ConstantExpr>(e)) {    
+  if (isa<ConstantExpr>(e) || aborted) {
     return e;
   } else {
     Expr &ep = *e.get();
 
     Action res = visitExpr(ep);
     switch(res.kind) {
-    case Action::DoChildren:
-      // continue with normal action
-      break;
-    case Action::SkipChildren:
-      return e;
-    case Action::ChangeTo:
-      return res.argument;
+      case Action::DoChildren:
+        // continue with normal action
+        break;
+      case Action::SkipChildren:
+        return e;
+      case Action::ChangeTo:
+        return res.argument;
+      case Action::Abort: {
+        aborted = true;
+        return e;
+      }
     }
 
     switch(ep.getKind()) {
@@ -94,34 +106,38 @@ ref<Expr> ExprVisitor::visitActual(const ref<Expr> &e) {
     }
 
     switch(res.kind) {
-    default:
-      assert(0 && "invalid kind");
-    case Action::DoChildren: {  
-      bool rebuild = false;
-      ref<Expr> e(&ep), kids[8];
-      unsigned count = ep.getNumKids();
-      for (unsigned i=0; i<count; i++) {
-        ref<Expr> kid = ep.getKid(i);
-        kids[i] = visit(kid);
-        if (kids[i] != kid)
-          rebuild = true;
+      default:
+        assert(0 && "invalid kind");
+      case Action::DoChildren: {
+        bool rebuild = false;
+        ref<Expr> e(&ep), kids[8];
+        unsigned count = ep.getNumKids();
+        for (unsigned i=0; i<count; i++) {
+          ref<Expr> kid = ep.getKid(i);
+          kids[i] = visit(kid);
+          if (kids[i] != kid)
+            rebuild = true;
+        }
+        if (rebuild) {
+          e = ep.rebuild(kids);
+          if (recursive)
+            e = visit(e);
+        }
+        if (!isa<ConstantExpr>(e)) {
+          res = visitExprPost(*e.get());
+          if (res.kind==Action::ChangeTo)
+            e = res.argument;
+        }
+        return e;
       }
-      if (rebuild) {
-        e = ep.rebuild(kids);
-        if (recursive)
-          e = visit(e);
+      case Action::SkipChildren:
+        return e;
+      case Action::ChangeTo:
+        return res.argument;
+      case Action::Abort: {
+        aborted = true;
+        return e;
       }
-      if (!isa<ConstantExpr>(e)) {
-        res = visitExprPost(*e.get());
-        if (res.kind==Action::ChangeTo)
-          e = res.argument;
-      }
-      return e;
-    }
-    case Action::SkipChildren:
-      return e;
-    case Action::ChangeTo:
-      return res.argument;
     }
   }
 }
@@ -257,4 +273,3 @@ ExprVisitor::Action ExprVisitor::visitSgt(const SgtExpr&) {
 ExprVisitor::Action ExprVisitor::visitSge(const SgeExpr&) {
   return Action::doChildren(); 
 }
-

@@ -1,3 +1,7 @@
+# /*
+#  * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+#  */
+
 #===------------------------------------------------------------------------===#
 #
 #                     The KLEE Symbolic Virtual Machine
@@ -14,7 +18,7 @@ if (HAVE_PTY_H OR HAVE_UTIL_H OR HAVE_LIBUTIL_H)
     klee_init_env.c
   )
 
-  target_link_libraries(klee-replay PRIVATE kleeBasic)
+  target_link_libraries(klee-replay PRIVATE kleeBasic kleeADT)
 
   if(LIBCAP_LIBRARIES)
     target_link_libraries(klee-replay PRIVATE ${LIBCAP_LIBRARIES})

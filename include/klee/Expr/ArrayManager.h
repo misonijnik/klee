@@ -1,8 +1,8 @@
 /*
- * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ * This source file has been created by Yummy Research Team. Copyright (c) 2022
  */
 
-//===-- ArrayCache.h --------------------------------------------*- C++ -*-===//
+//===-- ArrayManager.h --------------------------------------------*- C++ -*-===//
 //
 //                     The KLEE Symbolic Virtual Machine
 //
@@ -11,8 +11,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef KLEE_ARRAYCACHE_H
-#define KLEE_ARRAYCACHE_H
+#ifndef KLEE_ARRAYMANAGER_H
+#define KLEE_ARRAYMANAGER_H
 
 #include "klee/Expr/Expr.h"
 #include "klee/Expr/ArrayExprHash.h" // For klee::ArrayHashFn
@@ -23,21 +23,20 @@
 
 namespace klee {
 
-struct EquivArrayCmpFn {
+struct WeakEquivArrayCmpFn {
   bool operator()(const Array *array1, const Array *array2) const {
     if (array1 == NULL || array2 == NULL)
       return false;
     if (!array1->liSource.isNull() && !array2->liSource.isNull())
       return array1->liSource == array2->liSource;
-    return (array1->size == array2->size) && (array1->name == array2->name) && (array1->index == array2->index);
+    return (array1->size == array2->size) && (array1->name == array2->name);
   }
 };
 
-/// Provides an interface for creating and destroying Array objects.
-class ArrayCache {
+class ArrayManager {
 public:
-  ArrayCache() {}
-  ~ArrayCache();
+  ArrayManager(ArrayCache *_arrayCache);
+  ~ArrayManager();
   /// Create an Array object.
   //
   /// Symbolic Arrays are cached so that only one instance exists. This
@@ -60,26 +59,22 @@ public:
   /// the array)
   /// \param _range The size of range (i.e. the bitvector that is indexed to)
   const Array *CreateArray(const std::string &_name, uint64_t _size,
-                           int _index, bool _isExternal, ref<Expr> _liSource = ref<Expr>(),
                            const ref<ConstantExpr> *constantValuesBegin = 0,
                            const ref<ConstantExpr> *constantValuesEnd = 0,
                            Expr::Width _domain = Expr::Int32,
                            Expr::Width _range = Expr::Int8);
 
-  const Array *CreateArray(const std::string &_name, uint64_t _size,
-                           const ref<ConstantExpr> *constantValuesBegin = 0,
-                           const ref<ConstantExpr> *constantValuesEnd = 0,
-                           Expr::Width _domain = Expr::Int32,
-                           Expr::Width _range = Expr::Int8);
+  const Array *CreateArray(const std::string &name, uint64_t size, bool isExternal, ref<Expr> liSource = ref<Expr>());
+
+  const Array *CreateArray(const Array *array, int index, ref<Expr> liSource = ref<Expr>());
 
 private:
-  typedef std::unordered_set<const Array *, klee::ArrayHashFn,
-                             klee::EquivArrayCmpFn>
-      ArrayHashMap;
-  ArrayHashMap cachedSymbolicArrays;
-  typedef std::vector<const Array *> ArrayPtrVec;
-  ArrayPtrVec concreteArrays;
+  typedef std::unordered_map<const Array *,  std::unordered_map<int, const Array *>, klee::ArrayHashFn,
+                             klee::WeakEquivArrayCmpFn>
+      ArrayIndexMap;
+  ArrayCache *const arrayCache;
+  ArrayIndexMap indexedSymbolicArrays;
 };
 }
 
-#endif /* KLEE_ARRAYCACHE_H */
+#endif /* KLEE_ARRAYMANAGER_H */

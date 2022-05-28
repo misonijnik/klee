@@ -1,3 +1,7 @@
+/*
+ * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ */
+
 //===-- ExprPPrinter.cpp -   ----------------------------------------------===//
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -10,6 +14,7 @@
 #include "klee/Expr/ExprPPrinter.h"
 
 #include "klee/Expr/Constraints.h"
+#include "klee/Expr/ExprHashMap.h"
 #include "klee/Support/OptionCategories.h"
 #include "klee/Support/PrintContext.h"
 
@@ -59,9 +64,9 @@ class PPrinter : public ExprPPrinter {
 public:
   std::set<const Array*> usedArrays;
 private:
-  std::map<ref<Expr>, unsigned> bindings;
+  ExprHashMap<unsigned> bindings;
   std::map<const UpdateNode*, unsigned> updateBindings;
-  std::set< ref<Expr> > couldPrint, shouldPrint;
+  ExprHashSet couldPrint, shouldPrint;
   std::set<const UpdateNode*> couldPrintUpdates, shouldPrintUpdates;
   llvm::raw_ostream &os;
   unsigned counter;
@@ -146,7 +151,15 @@ private:
     if (!head) {
       // FIXME: We need to do something (assert, mangle, etc.) so that printing
       // distinct arrays with the same name doesn't fail.
-      PC << updates.root->name;
+      if (!updates.root->liSource.isNull()) {
+        PC << "(LI ";
+        print(updates.root->liSource, PC);
+        PC << ")";
+      } else {
+        PC << updates.root->name;
+      }
+      if (updates.root->index)
+        PC << "%" << updates.root->index;
       return;
     }
 
@@ -195,8 +208,15 @@ private:
 
     if (openedList)
       PC << ']';
-
-    PC << " @ " << updates.root->name;
+    if (!updates.root->liSource.isNull()) {
+      PC << " @ (LI ";
+      print(updates.root->liSource, PC);
+      PC << ")";
+    } else {
+      PC << " @ " << updates.root->name;
+    }
+    if (updates.root->index)
+      PC << "%" << updates.root->index;
   }
 
   void printWidth(PrintContext &PC, ref<Expr> e) {
@@ -381,7 +401,7 @@ public:
     if (ConstantExpr *CE = dyn_cast<ConstantExpr>(e))
       printConst(CE, PC, printConstWidth);
     else {
-      std::map<ref<Expr>, unsigned>::iterator it = bindings.find(e);
+      ExprHashMap<unsigned>::iterator it = bindings.find(e);
       if (it!=bindings.end()) {
         PC << 'N' << it->second;
       } else {
@@ -398,18 +418,18 @@ public:
         // or they are (base + offset) and base will get printed with
         // a declaration.
         if (PCMultibyteReads && e->getKind() == Expr::Concat) {
-	  const ReadExpr *base = hasOrderedReads(e, -1);
-	  const bool isLSB = (base != nullptr);
-	  if (!isLSB)
-	    base = hasOrderedReads(e, 1);
-	  if (base) {
-	    PC << "(Read" << (isLSB ? "LSB" : "MSB");
-	    printWidth(PC, e);
-	    PC << ' ';
-	    printRead(base, PC, PC.pos);
-	    PC << ')';
-	    return;
-	  }
+          const ReadExpr *base = hasOrderedReads(e, -1);
+          const bool isLSB = (base != nullptr);
+          if (!isLSB)
+            base = hasOrderedReads(e, 1);
+          if (base) {
+            PC << "(Read" << (isLSB ? "LSB" : "MSB");
+            printWidth(PC, e);
+            PC << ' ';
+            printRead(base, PC, PC.pos);
+            PC << ')';
+            return;
+          }
         }
 
 	PC << '(' << e->getKind();

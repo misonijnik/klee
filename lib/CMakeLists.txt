@@ -1,4 +1,8 @@
-#===------------------------------------------------------------------------===#
+# /*
+#  * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+#  */
+
+ #===------------------------------------------------------------------------===#
 #
 #                     The KLEE Symbolic Virtual Machine
 #
@@ -12,3 +16,4 @@ add_subdirectory(Expr)
 add_subdirectory(Solver)
 add_subdirectory(Module)
 add_subdirectory(Core)
+add_subdirectory(ADT)

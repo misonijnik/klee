@@ -1,3 +1,7 @@
+/*
+ * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ */
+
 //===-- MemoryManager.h -----------------------------------------*- C++ -*-===//
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -10,6 +14,8 @@
 #ifndef KLEE_MEMORYMANAGER_H
 #define KLEE_MEMORYMANAGER_H
 
+#include "klee/Expr/Expr.h"
+
 #include <cstddef>
 #include <set>
 #include <cstdint>
@@ -20,20 +26,20 @@ class Value;
 
 namespace klee {
 class MemoryObject;
-class ArrayCache;
+class ArrayManager;
 
 class MemoryManager {
 private:
   typedef std::set<MemoryObject *> objects_ty;
   objects_ty objects;
-  ArrayCache *const arrayCache;
+  ArrayManager *const arrayManager;
 
   char *deterministicSpace;
   char *nextFreeSlot;
   size_t spaceSize;
 
 public:
-  MemoryManager(ArrayCache *arrayCache);
+  MemoryManager(ArrayManager *arrayManager);
   ~MemoryManager();
 
   /**
@@ -41,12 +47,16 @@ public:
    * memory.
    */
   MemoryObject *allocate(uint64_t size, bool isLocal, bool isGlobal,
-                         const llvm::Value *allocSite, size_t alignment);
+                         const llvm::Value *allocSite, size_t alignment,
+                         ref<Expr> lazyInitializedSource = ref<Expr>());
   MemoryObject *allocateFixed(uint64_t address, uint64_t size,
                               const llvm::Value *allocSite);
-  void deallocate(const MemoryObject *mo);
+  MemoryObject *allocateTransparent(uint64_t size, bool isLocal, bool isGlobal,
+                         const llvm::Value *allocSite, size_t alignment,
+                         ref<Expr> lazyInitializedSource = ref<Expr>());
+  void deallocate(MemoryObject *mo);
   void markFreed(MemoryObject *mo);
-  ArrayCache *getArrayCache() const { return arrayCache; }
+  ArrayManager *getArrayManager() const { return arrayManager; }
 
   /*
    * Returns the size used by deterministic allocation in bytes

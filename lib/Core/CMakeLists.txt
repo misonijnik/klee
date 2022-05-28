@@ -1,3 +1,7 @@
+# /*
+#  * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+#  */
+
 #===------------------------------------------------------------------------===#
 #
 #                     The KLEE Symbolic Virtual Machine
@@ -19,6 +23,7 @@ klee_add_component(kleeCore
   ImpliedValue.cpp
   Memory.cpp
   MemoryManager.cpp
+  PForest.cpp
   PTree.cpp
   Searcher.cpp
   SeedInfo.cpp
@@ -26,6 +31,7 @@ klee_add_component(kleeCore
   StatsTracker.cpp
   TimingSolver.cpp
   UserSearcher.cpp
+  Composer.cpp
 )
 
 # TODO: Work out what the correct LLVM components are for
@@ -41,6 +47,7 @@ set(LLVM_COMPONENTS
 klee_get_llvm_libs(LLVM_LIBS ${LLVM_COMPONENTS})
 target_link_libraries(kleeCore PUBLIC ${LLVM_LIBS} ${SQLITE3_LIBRARIES})
 target_link_libraries(kleeCore PRIVATE
+  kleeADT
   kleeBasic
   kleeModule
   kleaverSolver

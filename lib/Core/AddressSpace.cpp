@@ -1,3 +1,7 @@
+/*
+ * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ */
+
 //===-- AddressSpace.cpp --------------------------------------------------===//
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -54,7 +58,7 @@ ObjectState *AddressSpace::getWriteable(const MemoryObject *mo,
 
 /// 
 
-bool AddressSpace::resolveOne(const ref<ConstantExpr> &addr, 
+bool AddressSpace::resolveOne(const ref<ConstantExpr> &addr,
                               ObjectPair &result) const {
   uint64_t address = addr->getZExtValue();
   MemoryObject hack(address);
@@ -84,6 +88,21 @@ bool AddressSpace::resolveOne(ExecutionState &state,
     return true;
   } else {
     TimerStatIncrementer timer(stats::resolveTime);
+
+    auto isPointer = [=](Symbolic x) {
+      return !x.first->isTransparent && x.first->isLazyInitialized() && x.first->getLazyInitializedSource() == address;
+    };
+    auto symPointer = std::find_if(begin(state.symbolics), end(state.symbolics), isPointer);
+    if (symPointer != end(state.symbolics)) {
+      const MemoryObject *symMO = symPointer->first.get();
+      auto os = findObject(symMO);
+      if (os) {
+        result.first = symMO;
+        result.second = os;
+        success = true;
+        return true;
+      }
+    }
 
     // try cheap search, will succeed for any inbounds pointer
 
@@ -168,7 +187,7 @@ bool AddressSpace::resolveOne(ExecutionState &state,
   }
 }
 
-int AddressSpace::checkPointerInObject(ExecutionState &state,
+int AddressSpace::checkPointerInObject(const ExecutionState &state,
                                        TimingSolver *solver, ref<Expr> p,
                                        const ObjectPair &op, ResolutionList &rl,
                                        unsigned maxResolutions) const {
@@ -204,7 +223,7 @@ int AddressSpace::checkPointerInObject(ExecutionState &state,
   return 2;
 }
 
-bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
+bool AddressSpace::resolve(const ExecutionState &state, TimingSolver *solver,
                            ref<Expr> p, ResolutionList &rl,
                            unsigned maxResolutions, time::Span timeout) const {
   if (ConstantExpr *CE = dyn_cast<ConstantExpr>(p)) {
@@ -214,6 +233,19 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
     return false;
   } else {
     TimerStatIncrementer timer(stats::resolveTime);
+
+    auto isPointer = [=](Symbolic x) {
+      return !x.first->isTransparent && x.first->isLazyInitialized() && x.first->getLazyInitializedSource() == p;
+    };
+    auto symPointer = std::find_if(begin(state.symbolics), end(state.symbolics), isPointer);
+    if (symPointer != end(state.symbolics)) {
+      const MemoryObject *symMO = symPointer->first.get();
+      auto os = findObject(symMO);
+      if (os) {
+        rl.push_back(ObjectPair(symMO, os));
+        return false;
+      }
+    }
 
     // XXX in general this isn't exactly what we want... for
     // a multiple resolution case (or for example, a \in {b,c,0})
@@ -247,6 +279,8 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
     while (oi != begin) {
       --oi;
       const MemoryObject *mo = oi->first;
+      if (mo->isTransparent || mo->isLocal)
+        continue;
       if (timeout && timeout < timer.delta())
         return true;
 
@@ -269,6 +303,8 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
     // search forwards
     for (oi = start; oi != end; ++oi) {
       const MemoryObject *mo = oi->first;
+      if (mo->isTransparent || mo->isLocal)
+        continue;
       if (timeout && timeout < timer.delta())
         return true;
 
@@ -344,6 +380,16 @@ bool AddressSpace::copyInConcrete(const MemoryObject *mo, const ObjectState *os,
 /***/
 
 bool MemoryObjectLT::operator()(const MemoryObject *a, const MemoryObject *b) const {
-  return a->address < b->address;
+  if (a->lazyInitializedSource.isNull() && b->lazyInitializedSource.isNull())
+    return a->address < b->address;
+  else if (a->lazyInitializedSource.isNull())
+    return true;
+  else if (b->lazyInitializedSource.isNull())
+    return false;
+  else {
+    if (a->lazyInitializedSource != b->lazyInitializedSource)
+      assert(a->lazyInitializedSource->hash() != b->lazyInitializedSource->hash());
+    return a->lazyInitializedSource->hash() < b->lazyInitializedSource->hash();
+  }
 }
 

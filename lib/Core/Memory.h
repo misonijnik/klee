@@ -1,3 +1,7 @@
+/*
+ * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ */
+
 //===-- Memory.h ------------------------------------------------*- C++ -*-===//
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -26,7 +30,7 @@ namespace llvm {
 
 namespace klee {
 
-class ArrayCache;
+class ArrayManager;
 class BitArray;
 class ExecutionState;
 class MemoryManager;
@@ -47,6 +51,7 @@ private:
 public:
   unsigned id;
   uint64_t address;
+  ref<Expr> lazyInitializedSource;
 
   /// size in bytes
   unsigned size;
@@ -57,6 +62,7 @@ public:
   bool isFixed;
 
   bool isUserSpecified;
+  bool isTransparent;
 
   MemoryManager *parent;
 
@@ -81,6 +87,17 @@ public:
   MemoryObject(uint64_t _address) 
     : id(counter++),
       address(_address),
+      lazyInitializedSource(nullptr),
+      size(0),
+      isFixed(true),
+      parent(NULL),
+      allocSite(0) {
+  }
+
+  MemoryObject(ref<Expr> _lazyInitializedSource)
+    : id(counter++),
+      address((uint64_t)0xffffffffffffffff),
+      lazyInitializedSource(_lazyInitializedSource),
       size(0),
       isFixed(true),
       parent(NULL),
@@ -90,15 +107,18 @@ public:
   MemoryObject(uint64_t _address, unsigned _size, 
                bool _isLocal, bool _isGlobal, bool _isFixed,
                const llvm::Value *_allocSite,
-               MemoryManager *_parent)
+               MemoryManager *_parent,
+               ref<Expr> _lazyInitializedSource = nullptr)
     : id(counter++),
       address(_address),
+      lazyInitializedSource(_lazyInitializedSource),
       size(_size),
       name("unnamed"),
       isLocal(_isLocal),
       isGlobal(_isGlobal),
       isFixed(_isFixed),
       isUserSpecified(false),
+      isTransparent(false),
       parent(_parent), 
       allocSite(_allocSite) {
   }
@@ -112,30 +132,62 @@ public:
     this->name = name;
   }
 
-  ref<ConstantExpr> getBaseExpr() const { 
+  bool isLazyInitialized() const {
+    return !lazyInitializedSource.isNull();
+  }
+
+  ref<Expr> getLazyInitializedSource() const {
+    return this->lazyInitializedSource;
+  }
+
+  void setLazyInitializedSource(ref<Expr> source) {
+    this->lazyInitializedSource = source;
+  }
+
+  ref<ConstantExpr> getBaseConstantExpr() const {
     return ConstantExpr::create(address, Context::get().getPointerWidth());
   }
+
+  ref<Expr> getBaseExpr() const {
+    if(lazyInitializedSource.isNull())
+        return getBaseConstantExpr();
+    else
+        return lazyInitializedSource;
+  }
+
   ref<ConstantExpr> getSizeExpr() const { 
     return ConstantExpr::create(size, Context::get().getPointerWidth());
   }
+
   ref<Expr> getOffsetExpr(ref<Expr> pointer) const {
     return SubExpr::create(pointer, getBaseExpr());
   }
+
   ref<Expr> getBoundsCheckPointer(ref<Expr> pointer) const {
-    return getBoundsCheckOffset(getOffsetExpr(pointer));
+    if (size!=0 && isa<ConstantExpr>(getBaseExpr())) {
+      return EqExpr::create(pointer, getBaseExpr());
+    } else {
+      return getBoundsCheckOffset(getOffsetExpr(pointer));
+    }
   }
+
   ref<Expr> getBoundsCheckPointer(ref<Expr> pointer, unsigned bytes) const {
-    return getBoundsCheckOffset(getOffsetExpr(pointer), bytes);
+    if (size==bytes && isa<ConstantExpr>(getBaseExpr())) {
+      return EqExpr::create(pointer, getBaseExpr());
+    } else {
+      return getBoundsCheckOffset(getOffsetExpr(pointer), bytes);
+    }
   }
 
   ref<Expr> getBoundsCheckOffset(ref<Expr> offset) const {
     if (size==0) {
-      return EqExpr::create(offset, 
+      return EqExpr::create(offset,
                             ConstantExpr::alloc(0, Context::get().getPointerWidth()));
     } else {
       return UltExpr::create(offset, getSizeExpr());
     }
   }
+
   ref<Expr> getBoundsCheckOffset(ref<Expr> offset, unsigned bytes) const {
     if (bytes<=size) {
       return UltExpr::create(offset, 
@@ -161,6 +213,9 @@ public:
 
     if (allocSite != b.allocSite)
       return (allocSite < b.allocSite ? -1 : 1);
+
+    if (lazyInitializedSource != b.lazyInitializedSource)
+      return (lazyInitializedSource->hash() < b.lazyInitializedSource->hash() ? -1 : 1);
 
     return 0;
   }
@@ -191,6 +246,8 @@ private:
   // mutable because we may need flush during read of const
   mutable UpdateList updates;
 
+  MemoryManager *manager;
+
 public:
   unsigned size;
 
@@ -202,9 +259,15 @@ public:
   /// responsibility to initialize the object contents appropriately.
   ObjectState(const MemoryObject *mo);
 
+  ObjectState(unsigned size, MemoryManager *manager);
+
+  ObjectState(const Array *array, MemoryManager *manager);
+
   /// Create a new object state for the given memory object with symbolic
   /// contents.
   ObjectState(const MemoryObject *mo, const Array *array);
+
+  ObjectState(const MemoryObject *mo, UpdateList ul);
 
   ObjectState(const ObjectState &os);
   ~ObjectState();
@@ -265,7 +328,9 @@ private:
   void markByteUnflushed(unsigned offset);
   void setKnownSymbolic(unsigned offset, Expr *value);
 
-  ArrayCache *getArrayCache() const;
+  ArrayManager *getArrayManager() const;
+public:
+  const Array *getArray() const;
 };
   
 } // End klee namespace

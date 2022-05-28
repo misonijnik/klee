@@ -1,3 +1,7 @@
+# /*
+#  * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+#  */
+
 #===------------------------------------------------------------------------===#
 #
 #                     The KLEE Symbolic Virtual Machine
@@ -12,6 +16,7 @@ add_executable(klee
 
 set(KLEE_LIBS
   kleeCore
+  kleeADT
 )
 
 target_link_libraries(klee ${KLEE_LIBS})

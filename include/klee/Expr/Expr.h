@@ -1,3 +1,7 @@
+/*
+ * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ */
+
 //===-- Expr.h --------------------------------------------------*- C++ -*-===//
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -35,6 +39,7 @@ class Array;
 class ArrayCache;
 class ConstantExpr;
 class ObjectState;
+class MemoryObject;
 
 template<class T> class ref;
 
@@ -176,7 +181,7 @@ public:
   /// @brief Required by klee::ref-managed objects
   class ReferenceCounter _refCount;
 
-protected:  
+protected:
   unsigned hashValue;
 
   /// Compares `b` to `this` Expr and determines how they are ordered
@@ -209,10 +214,10 @@ public:
 
   virtual Kind getKind() const = 0;
   virtual Width getWidth() const = 0;
-  
+
   virtual unsigned getNumKids() const = 0;
   virtual ref<Expr> getKid(unsigned i) const = 0;
-    
+
   virtual void print(llvm::raw_ostream &os) const;
 
   /// dump - Print the expression to stderr.
@@ -224,7 +229,7 @@ public:
   /// (Re)computes the hash of the current expression.
   /// Returns the hash value. 
   virtual unsigned computeHash();
-  
+
   /// Compares `b` to `this` Expr for structural equivalence.
   ///
   /// This method effectively defines a total order over all Expr.
@@ -288,6 +293,7 @@ public:
 private:
   typedef llvm::DenseSet<std::pair<const Expr *, const Expr *> > ExprEquivSet;
   int compare(const Expr &b, ExprEquivSet &equivs) const;
+  int hashCompare(const Expr &b, ExprEquivSet &equivs) const;
 };
 
 struct Expr::CreateArg {
@@ -488,6 +494,13 @@ public:
   // FIXME: Not 64-bit clean.
   const unsigned size;
 
+  // Index of the array with same name and size.
+  const int index;
+
+  const bool isExternal;
+
+  ref<Expr> liSource;
+
   /// Domain is how many bits can be used to access the array [32 bits]
   /// Range is the size (in bits) of the number stored there (array of bytes -> 8)
   const Expr::Width domain, range;
@@ -496,6 +509,9 @@ public:
   /// a symbolic array. If non-empty, this size of this array is equivalent to
   /// the array size.
   const std::vector<ref<ConstantExpr> > constantValues;
+
+  /// a binding to a symbolic object
+  const MemoryObject *binding = nullptr;
 
 private:
   unsigned hashValue;
@@ -506,8 +522,6 @@ private:
   // FIXME: Make =delete when we switch to C++11
   Array& operator =(const Array& array);
 
-  ~Array();
-
   /// Array - Construct a new array object.
   ///
   /// \param _name - The name for this array. Names should generally be unique
@@ -516,6 +530,7 @@ private:
   /// not parse correctly since two arrays with the same name cannot be
   /// distinguished once printed.
   Array(const std::string &_name, uint64_t _size,
+        unsigned _index, bool _isExternal, ref<Expr> _liSource = ref<Expr>(),
         const ref<ConstantExpr> *constantValuesBegin = 0,
         const ref<ConstantExpr> *constantValuesEnd = 0,
         Expr::Width _domain = Expr::Int32, Expr::Width _range = Expr::Int8);
@@ -526,6 +541,7 @@ public:
 
   const std::string getName() const { return name; }
   unsigned getSize() const { return size; }
+  unsigned getIndex() const { return index; }
   Expr::Width getDomain() const { return domain; }
   Expr::Width getRange() const { return range; }
 
@@ -677,7 +693,7 @@ public:
 
 private:
   Width width;
-  ref<Expr> left, right;  
+  ref<Expr> left, right;
 
 public:
   static ref<Expr> alloc(const ref<Expr> &l, const ref<Expr> &r) {
@@ -695,7 +711,7 @@ public:
 
   unsigned getNumKids() const { return numKids; }
   ref<Expr> getKid(unsigned i) const { 
-    if (i == 0) return left; 
+    if (i == 0) return left;
     else if (i == 1) return right;
     else return NULL;
   }
@@ -833,8 +849,6 @@ protected:
     return 0;
   }
 };
-
-
 
 // Casting
 

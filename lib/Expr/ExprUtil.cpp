@@ -1,3 +1,7 @@
+/*
+ * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ */
+
 //===-- ExprUtil.cpp ------------------------------------------------------===//
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -9,9 +13,11 @@
 
 #include "klee/Expr/ExprUtil.h"
 #include "klee/Expr/Expr.h"
+#include "klee/Expr/ArrayExprVisitor.h"
 #include "klee/Expr/ExprHashMap.h"
 #include "klee/Expr/ExprVisitor.h"
 
+#include <llvm/Support/Casting.h>
 #include <set>
 
 using namespace klee;
@@ -139,3 +145,17 @@ template void klee::findSymbolicObjects<A>(A, A, std::vector<const Array*> &);
 
 typedef std::set< ref<Expr> >::iterator B;
 template void klee::findSymbolicObjects<B>(B, B, std::vector<const Array*> &);
+
+bool klee::isReadFromSymbolicArray(ref<Expr> e) {
+  if(isa<ReadExpr>(e)) {
+    ref<ReadExpr> base = llvm::dyn_cast<ReadExpr>(e);
+    return !base->updates.root->isConstantArray();
+  }
+
+  for(size_t i = 0; i<e->getNumKids(); i++) {
+    if(!isReadFromSymbolicArray(e->getKid(i))) {
+      return false;
+    }
+  }
+  return true;
+}

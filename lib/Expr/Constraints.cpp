@@ -1,3 +1,7 @@
+/*
+ * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ */
+
 //===-- Constraints.cpp ---------------------------------------------------===//
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -17,6 +21,7 @@
 #include "llvm/Support/CommandLine.h"
 
 #include <map>
+#include <stack>
 
 using namespace klee;
 
@@ -54,11 +59,20 @@ public:
 
 class ExprReplaceVisitor2 : public ExprVisitor {
 private:
-  const std::map< ref<Expr>, ref<Expr> > &replacements;
+   ExprHashMap<ref<Expr>> &replacements;
+
+   explicit ExprReplaceVisitor2(
+      ExprHashMap<ref<Expr>> &_replacements,
+      visited_ty *visitorHash)
+      : ExprVisitor(true), replacements(_replacements) {
+     usedExternalVisitorHash = true;
+     delete visited;
+     visited = visitorHash;
+   }
 
 public:
   explicit ExprReplaceVisitor2(
-      const std::map<ref<Expr>, ref<Expr>> &_replacements)
+      ExprHashMap<ref<Expr>> &_replacements)
       : ExprVisitor(true), replacements(_replacements) {}
 
   Action visitExprPost(const Expr &e) override {
@@ -67,6 +81,83 @@ public:
       return Action::changeTo(it->second);
     }
     return Action::doChildren();
+  }
+
+  ref<Expr> processSelect(const SelectExpr& sexpr) {
+    ref<Expr> cond = sexpr.cond;
+    Action res = visitExprPost(*cond.get());
+    if (res.kind == Action::ChangeTo)
+      cond = res.argument;
+
+    cond = visit(cond);
+    if (ConstantExpr *CE = dyn_cast<ConstantExpr>(cond)) {
+      return CE->isTrue() ? visit(sexpr.trueExpr) : visit(sexpr.falseExpr);
+    }
+
+    visited_ty currentVisited = *visited;
+
+    ref<Expr> er;
+    if (const EqExpr *ee = dyn_cast<EqExpr>(cond)) {
+      if (isa<ConstantExpr>(ee->left)) {
+        replacements.insert(std::make_pair(ee->right, ee->left));
+        er = ee->right;
+      } else {
+        replacements.insert(std::make_pair(cond, ConstantExpr::alloc(1, Expr::Bool)));
+        er = cond;
+      }
+    } else {
+      replacements.insert(std::make_pair(cond, ConstantExpr::alloc(1, Expr::Bool)));
+      er = cond;
+    }
+    ref<Expr> trueExpr =
+        ExprReplaceVisitor2(replacements, &currentVisited).visit(sexpr.trueExpr);
+    replacements.erase(er);
+
+    replacements.insert(std::make_pair(cond, ConstantExpr::alloc(0, Expr::Bool)));
+    ref<Expr> falseExpr =
+        ExprReplaceVisitor2(replacements, &currentVisited).visit(sexpr.falseExpr);
+    replacements.erase(cond);
+
+    ref<Expr> seres = SelectExpr::create(cond, trueExpr, falseExpr);
+    res = visitExprPost(*seres.get());
+    if (res.kind == Action::ChangeTo)
+      seres = res.argument;
+    return seres;
+  }
+
+  ref<Expr> processRead(const ReadExpr& re) {
+    UpdateList updates = UpdateList(re.updates.root, 0);
+    std::stack<ref<UpdateNode>> forward;
+
+    for(auto it = re.updates.head;
+             !it.isNull();
+             it = it->next) {
+      forward.push( it );
+    }
+
+    while(!forward.empty()) {
+      ref<UpdateNode> UNode = forward.top();
+      forward.pop();
+      ref<Expr> newIndex = visit(UNode->index);
+      ref<Expr> newValue = visit(UNode->value);
+      updates.extend(newIndex, newValue);
+    }
+
+    ref<Expr> index = visit(re.index);
+    ref<Expr> reres = ReadExpr::create(updates, index);
+    Action res = visitExprPost(*reres.get());
+    if (res.kind == Action::ChangeTo) {
+      reres = res.argument;
+    }
+    return reres;
+  }
+
+  Action visitSelect(const SelectExpr& sexpr) override {
+    return Action::changeTo(processSelect(sexpr));
+  }
+
+  Action visitRead(const ReadExpr& re) override {
+    return Action::changeTo(processRead(re));
   }
 };
 
@@ -95,7 +186,7 @@ ref<Expr> ConstraintManager::simplifyExpr(const ConstraintSet &constraints,
   if (isa<ConstantExpr>(e))
     return e;
 
-  std::map< ref<Expr>, ref<Expr> > equalities;
+  ExprHashMap<ref<Expr>> equalities;
 
   for (auto &constraint : constraints) {
     if (const EqExpr *ee = dyn_cast<EqExpr>(constraint)) {
@@ -141,8 +232,8 @@ void ConstraintManager::addConstraintInternal(const ref<Expr> &e) {
       // (byte-constant comparison).
       BinaryExpr *be = cast<BinaryExpr>(e);
       if (isa<ConstantExpr>(be->left)) {
-	ExprReplaceVisitor visitor(be->right, be->left);
-	rewriteConstraints(visitor);
+        ExprReplaceVisitor visitor(be->right, be->left);
+        rewriteConstraints(visitor);
       }
     }
     constraints.push_back(e);

@@ -1,3 +1,7 @@
+/*
+ * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ */
+
 //===-- Interpreter.h - Abstract Execution Engine Interface -----*- C++ -*-===//
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -16,9 +20,11 @@
 #include <vector>
 
 struct KTest;
+struct TestCase;
 
 namespace llvm {
 class Function;
+class BasicBlock;
 class LLVMContext;
 class Module;
 class raw_ostream;
@@ -42,9 +48,14 @@ public:
 
   virtual void incPathsExplored() = 0;
 
-  virtual void processTestCase(const ExecutionState &state,
+  virtual void processTestCase(ExecutionState &state,
                                const char *err,
                                const char *suffix) = 0;
+};
+
+enum class ExecutionKind {
+  Default, // Defualt symbolic execution
+  Guided,  // Use GuidedSearcher and guidedRun
 };
 
 class Interpreter {
@@ -135,7 +146,6 @@ public:
                                  int argc,
                                  char **argv,
                                  char **envp) = 0;
-
   /*** Runtime options ***/
 
   virtual void setHaltExecution(bool value) = 0;
@@ -155,13 +165,16 @@ public:
                                 LogType logFormat = STP) = 0;
 
   virtual bool getSymbolicSolution(const ExecutionState &state,
-                                   std::vector<
-                                   std::pair<std::string,
-                                   std::vector<unsigned char> > >
-                                   &res) = 0;
+                                   TestCase &res) = 0;
 
   virtual void getCoveredLines(const ExecutionState &state,
                                std::map<const std::string*, std::set<unsigned> > &res) = 0;
+  
+  virtual int resolveLazyInstantiation(ExecutionState& state) = 0;
+  virtual void setInstantiationGraph(ExecutionState& state, TestCase& tc) = 0;
+
+  virtual void logState(ExecutionState &state, int id,
+                        std::unique_ptr<llvm::raw_fd_ostream> &f) = 0;
 };
 
 } // End klee namespace

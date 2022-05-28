@@ -1,3 +1,7 @@
+/*
+ * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ */
+
 //===-- MemoryManager.cpp -------------------------------------------------===//
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -59,8 +63,8 @@ llvm::cl::opt<unsigned long long> DeterministicStartAddress(
 } // namespace
 
 /***/
-MemoryManager::MemoryManager(ArrayCache *_arrayCache)
-    : arrayCache(_arrayCache), deterministicSpace(0), nextFreeSlot(0),
+MemoryManager::MemoryManager(ArrayManager *_arrayManager)
+    : arrayManager(_arrayManager), deterministicSpace(0), nextFreeSlot(0),
       spaceSize(DeterministicAllocationSize.getValue() * 1024 * 1024) {
   if (DeterministicAllocation) {
     // Page boundary
@@ -99,7 +103,8 @@ MemoryManager::~MemoryManager() {
 MemoryObject *MemoryManager::allocate(uint64_t size, bool isLocal,
                                       bool isGlobal,
                                       const llvm::Value *allocSite,
-                                      size_t alignment) {
+                                      size_t alignment,
+                                      ref<Expr> lazyInitializedSource) {
   if (size > 10 * 1024 * 1024)
     klee_warning_once(0, "Large alloc: %" PRIu64
                          " bytes.  KLEE may run out of memory.",
@@ -152,7 +157,7 @@ MemoryObject *MemoryManager::allocate(uint64_t size, bool isLocal,
 
   ++stats::allocations;
   MemoryObject *res = new MemoryObject(address, size, isLocal, isGlobal, false,
-                                       allocSite, this);
+                                       allocSite, this, lazyInitializedSource);
   objects.insert(res);
   return res;
 }
@@ -175,7 +180,19 @@ MemoryObject *MemoryManager::allocateFixed(uint64_t address, uint64_t size,
   return res;
 }
 
-void MemoryManager::deallocate(const MemoryObject *mo) { assert(0); }
+MemoryObject *
+MemoryManager::allocateTransparent(uint64_t size,
+                                   bool isLocal,
+                                   bool isGlobal, 
+                                   const llvm::Value *allocSite, 
+                                   size_t alignment,
+                                   ref<Expr> lazyInitializedSource) {
+  MemoryObject *mo = allocate(size, isLocal, isGlobal, allocSite, alignment, lazyInitializedSource);
+  mo->isTransparent = true;
+  return mo;
+}
+
+void MemoryManager::deallocate(MemoryObject *mo) { objects.erase(mo); }
 
 void MemoryManager::markFreed(MemoryObject *mo) {
   if (objects.find(mo) != objects.end()) {

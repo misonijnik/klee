@@ -1,3 +1,7 @@
+/*
+ * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ */
+
 //===-- KInstruction.h ------------------------------------------*- C++ -*-===//
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -15,6 +19,7 @@
 
 #include "llvm/Support/DataTypes.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/IR/Instruction.h"
 
 #include <vector>
 
@@ -23,15 +28,15 @@ namespace llvm {
 }
 
 namespace klee {
-  class Executor;
   struct InstructionInfo;
   class KModule;
+  struct KBlock;
 
 
   /// KInstruction - Intermediate instruction representation used
   /// during execution.
   struct KInstruction {
-    llvm::Instruction *inst;    
+    llvm::Instruction *inst;
     const InstructionInfo *info;
 
     /// Value numbers for each operand. -1 is an invalid value,
@@ -41,10 +46,15 @@ namespace klee {
     int *operands;
     /// Destination register index.
     unsigned dest;
+    KBlock *parent;
 
   public:
+    KInstruction() = default;
+    explicit KInstruction(const KInstruction& ki);
     virtual ~KInstruction();
     std::string getSourceLocation() const;
+    std::string toString() const;
+    bool isCallOrInvokeInst();
 
   };
 
@@ -58,6 +68,10 @@ namespace klee {
     /// offset - A constant offset to add to the pointer operand to execute the
     /// instruction.
     uint64_t offset;
+
+  public:
+    KGEPInstruction() = default;
+    explicit KGEPInstruction(const KGEPInstruction& ki);
   };
 }
 

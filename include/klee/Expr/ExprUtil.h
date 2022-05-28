@@ -1,3 +1,7 @@
+/*
+ * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ */
+
 //===-- ExprUtil.h ----------------------------------------------*- C++ -*-===//
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -39,6 +43,8 @@ namespace klee {
   void findSymbolicObjects(InputIterator begin, 
                            InputIterator end,
                            std::vector<const Array*> &results);
+
+  bool isReadFromSymbolicArray(ref<Expr> e);
 
   class ConstantArrayFinder : public ExprVisitor {
   protected:

@@ -1,3 +1,7 @@
+/*
+ * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ */
+
 //===-- StatsTracker.cpp --------------------------------------------------===//
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -356,17 +360,20 @@ void StatsTracker::stepInstruction(ExecutionState &es) {
       ++es.instsSinceCovNew;
 
     if (sf.kf->trackCoverage && instructionIsCoverable(inst)) {
-      if (!theStatisticManager->getIndexedValue(stats::coveredInstructions, ii.id)) {
+      if (!theStatisticManager->getIndexedValue(stats::coveredInstructions,
+                                                ii.id)) {
         // Checking for actual stoppoints avoids inconsistencies due
         // to line number propogation.
         //
         // FIXME: This trick no longer works, we should fix this in the line
         // number propogation.
-          es.coveredLines[&ii.file].insert(ii.line);
-	es.coveredNew = true;
+        es.coveredLines[&ii.file].insert(ii.line);
+        es.coveredNew = true;
         es.instsSinceCovNew = 1;
-	++stats::coveredInstructions;
-	stats::uncoveredInstructions += (uint64_t)-1;
+        if(!es.isIsolated()) {
+          ++stats::coveredInstructions;
+          stats::uncoveredInstructions += (uint64_t)-1;
+        }
       }
     }
   }
@@ -460,7 +467,8 @@ void StatsTracker::writeStatsHeader() {
              << "ResolveTime INTEGER,"
              << "QueryCexCacheMisses INTEGER,"
              << "QueryCexCacheHits INTEGER,"
-             << "ArrayHashTime INTEGER"
+             << "ArrayHashTime INTEGER,"
+             << "SummarizedLocations INTEGER"
          << ')';
   char *zErrMsg = nullptr;
   if(sqlite3_exec(statsFile, create.str().c_str(), nullptr, nullptr, &zErrMsg)) {

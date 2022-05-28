@@ -1,3 +1,7 @@
+/*
+ * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ */
+
 //===-- ExecutionState.h ----------------------------------------*- C++ -*-===//
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -18,18 +22,26 @@
 #include "klee/Expr/Expr.h"
 #include "klee/Module/KInstIterator.h"
 #include "klee/Solver/Solver.h"
+#include "TimingSolver.h"
 #include "klee/System/Time.h"
+
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/Instructions.h"
 
 #include <map>
 #include <memory>
-#include <set>
 #include <vector>
+#include <unordered_set>
+#include <unordered_map>
 
 namespace klee {
 class Array;
 class CallPathNode;
 struct Cell;
 struct KFunction;
+struct KBlock;
 struct KInstruction;
 class MemoryObject;
 class PTreeNode;
@@ -142,6 +154,8 @@ struct CleanupPhaseUnwindingInformation : public UnwindingInformation {
   }
 };
 
+typedef std::pair<ref<const MemoryObject>, const Array *> Symbolic;
+
 /// @brief ExecutionState representing a path under exploration
 class ExecutionState {
 #ifdef KLEE_UNITTEST
@@ -155,7 +169,12 @@ private:
 public:
   using stack_ty = std::vector<StackFrame>;
 
+  std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> pointers;
+
   // Execution - Control Flow specific
+
+  /// @brief Pointer to initial instruction
+  KInstIterator initPC;
 
   /// @brief Pointer to instruction to be executed after the current
   /// instruction
@@ -167,9 +186,11 @@ public:
   /// @brief Stack representing the current instruction stream
   stack_ty stack;
 
+  int stackBalance;
+
   /// @brief Remember from which Basic Block control flow arrived
   /// (i.e. to select the right phi values)
-  std::uint32_t incomingBBIndex;
+  std::int32_t incomingBBIndex;
 
   // Overall state of the state - Data specific
 
@@ -205,7 +226,7 @@ public:
   /// @brief Ordered list of symbolics: used to generate test cases.
   //
   // FIXME: Move to a shared list structure (not critical).
-  std::vector<std::pair<ref<const MemoryObject>, const Array *>> symbolics;
+  std::vector<Symbolic> symbolics;
 
   /// @brief Set of used array names for this state.  Used to avoid collisions.
   std::set<std::string> arrayNames;
@@ -235,6 +256,11 @@ public:
   /// @brief Disables forking for this state. Set by user code
   bool forkDisabled;
 
+  bool isolated;
+
+  /// @brief Index of current symbolic in case of pre-loaded symbolics.
+  size_t symbolicCounter;
+
 public:
   #ifdef KLEE_UNITTEST
   // provide this function only in the context of unittests
@@ -242,6 +268,7 @@ public:
   #endif
   // only to create the initial state
   explicit ExecutionState(KFunction *kf);
+  explicit ExecutionState(KFunction *kf, KBlock *kb);
   // no copy assignment, use copy constructor
   ExecutionState &operator=(const ExecutionState &) = delete;
   // no move ctor
@@ -252,6 +279,10 @@ public:
   ~ExecutionState();
 
   ExecutionState *branch();
+  ExecutionState *withKFunction(KFunction *kf) const;
+  ExecutionState *withKBlock(KBlock *kb) const;
+  ExecutionState *withKInstruction(KInstruction* ki) const;
+  ExecutionState *copy() const;
 
   void pushFrame(KInstIterator caller, KFunction *kf);
   void popFrame();
@@ -259,17 +290,26 @@ public:
   void addSymbolic(const MemoryObject *mo, const Array *array);
 
   void addConstraint(ref<Expr> e);
+  int resolveLazyInstantiation(std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> &);
+  void extractSourcedSymbolics(std::vector<Symbolic> &);
 
   bool merge(const ExecutionState &b);
   void dumpStack(llvm::raw_ostream &out) const;
 
   std::uint32_t getID() const { return id; };
   void setID() { id = nextID++; };
+
+  llvm::BasicBlock *getInitPCBlock() const;
+  llvm::BasicBlock *getPrevPCBlock() const;
+  llvm::BasicBlock *getPCBlock() const;
+
+  bool isEmpty() const;
+  bool isIsolated() const;
 };
 
 struct ExecutionStateIDCompare {
   bool operator()(const ExecutionState *a, const ExecutionState *b) const {
-    return a->getID() < b->getID();
+    return a->id < b->id;
   }
 };
 }

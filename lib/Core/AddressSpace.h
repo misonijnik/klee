@@ -1,3 +1,7 @@
+/*
+ * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ */
+
 //===-- AddressSpace.h ------------------------------------------*- C++ -*-===//
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -25,7 +29,7 @@ namespace klee {
   template<class T> class ref;
 
   typedef std::pair<const MemoryObject*, const ObjectState*> ObjectPair;
-  typedef std::vector<ObjectPair> ResolutionList;  
+  typedef std::vector<ObjectPair> ResolutionList;
 
   /// Function object ordering MemoryObject's by address.
   struct MemoryObjectLT {
@@ -50,7 +54,7 @@ namespace klee {
     /// is non-zero and it was reached, or a query timed out), 0 iff
     /// the resolution is complete (`p` can only point to the given
     /// memory object), and 2 otherwise.
-    int checkPointerInObject(ExecutionState &state, TimingSolver *solver,
+    int checkPointerInObject(const ExecutionState &state, TimingSolver *solver,
                              ref<Expr> p, const ObjectPair &op,
                              ResolutionList &rl, unsigned maxResolutions) const;
 
@@ -94,10 +98,10 @@ namespace klee {
     ///
     /// \return true iff the resolution is incomplete (`maxResolutions`
     /// is non-zero and it was reached, or a query timed out).
-    bool resolve(ExecutionState &state,
+    bool resolve(const ExecutionState &state,
                  TimingSolver *solver,
                  ref<Expr> p,
-                 ResolutionList &rl, 
+                 ResolutionList &rl,
                  unsigned maxResolutions=0,
                  time::Span timeout=time::Span()) const;
 

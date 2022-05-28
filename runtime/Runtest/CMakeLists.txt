@@ -1,3 +1,7 @@
+# /*
+#  * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+#  */
+
 #===------------------------------------------------------------------------===#
 #
 #                     The KLEE Symbolic Virtual Machine
@@ -11,6 +15,7 @@ add_library(kleeRuntest SHARED
   intrinsics.c
   # HACK:
   ${CMAKE_SOURCE_DIR}/lib/Basic/KTest.cpp
+  ${CMAKE_SOURCE_DIR}/lib/ADT/TestCase.cpp
 )
 # Increment version appropriately if ABI/API changes, more details:
 # http://tldp.org/HOWTO/Program-Library-HOWTO/shared-libraries.html#AEN135

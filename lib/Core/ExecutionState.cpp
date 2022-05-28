@@ -1,3 +1,7 @@
+/*
+ * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ */
+
 //===-- ExecutionState.cpp ------------------------------------------------===//
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -11,7 +15,9 @@
 
 #include "Memory.h"
 
+#include "klee/Expr/ArrayExprVisitor.h"
 #include "klee/Expr/Expr.h"
+#include "klee/Expr/ExprHashMap.h"
 #include "klee/Module/Cell.h"
 #include "klee/Module/InstructionInfoTable.h"
 #include "klee/Module/KInstruction.h"
@@ -29,6 +35,8 @@
 #include <set>
 #include <sstream>
 #include <stdarg.h>
+
+#include <string>
 
 using namespace llvm;
 using namespace klee;
@@ -65,22 +73,51 @@ StackFrame::StackFrame(const StackFrame &s)
 }
 
 StackFrame::~StackFrame() { 
-  delete[] locals; 
+  delete[] locals;
 }
 
 /***/
 
 ExecutionState::ExecutionState(KFunction *kf) :
-    pc(kf->instructions),
-    prevPC(pc),
+    initPC(nullptr),
+    pc(nullptr),
+    prevPC(nullptr),
+    stackBalance(0),
+    incomingBBIndex(-1),
     depth(0),
     ptreeNode(nullptr),
     steppedInstructions(0),
     instsSinceCovNew(0),
     coveredNew(false),
-    forkDisabled(false) {
+    forkDisabled(false),
+    isolated(false),
+    symbolicCounter(0)
+
+{
   pushFrame(nullptr, kf);
   setID();
+  stackBalance = 0;
+}
+
+ExecutionState::ExecutionState(KFunction *kf, KBlock *kb) :
+    initPC(kb->instructions),
+    pc(initPC),
+    prevPC(pc),
+    stackBalance(0),
+    incomingBBIndex(-1),
+    depth(0),
+    ptreeNode(nullptr),
+    steppedInstructions(0),
+    instsSinceCovNew(0),
+    coveredNew(false),
+    forkDisabled(false),
+    isolated(false),
+    symbolicCounter(0)
+
+{
+  pushFrame(nullptr, kf);
+  setID();
+  stackBalance = 0;
 }
 
 ExecutionState::~ExecutionState() {
@@ -92,9 +129,11 @@ ExecutionState::~ExecutionState() {
 }
 
 ExecutionState::ExecutionState(const ExecutionState& state):
+    initPC(state.initPC),
     pc(state.pc),
     prevPC(state.prevPC),
     stack(state.stack),
+    stackBalance(state.stackBalance),
     incomingBBIndex(state.incomingBBIndex),
     depth(state.depth),
     addressSpace(state.addressSpace),
@@ -111,7 +150,10 @@ ExecutionState::ExecutionState(const ExecutionState& state):
                              ? state.unwindingInformation->clone()
                              : nullptr),
     coveredNew(state.coveredNew),
-    forkDisabled(state.forkDisabled) {
+    forkDisabled(state.forkDisabled),
+    isolated(state.isolated),
+    symbolicCounter(state.symbolicCounter)
+{
   for (const auto &cur_mergehandler: openMergeStack)
     cur_mergehandler->addOpenState(this);
 }
@@ -127,8 +169,49 @@ ExecutionState *ExecutionState::branch() {
   return falseState;
 }
 
+ExecutionState *ExecutionState::withKFunction(KFunction *kf) const {
+  assert(stack.size() == 0);
+  ExecutionState *newState = new ExecutionState(*this);
+  newState->pushFrame(nullptr, kf);
+  newState->stackBalance = 0;
+  newState->initPC = kf->blockMap[&*kf->function->begin()]->instructions;
+  newState->pc = newState->initPC;
+  newState->prevPC = newState->pc;
+  return newState;
+}
+
+ExecutionState *ExecutionState::withKBlock(KBlock *kb) const {
+  assert(stack.size() == 0);
+  ExecutionState *newState = new ExecutionState(*this);
+  newState->pushFrame(nullptr, kb->parent);
+  newState->stackBalance = 0;
+  newState->initPC = kb->instructions;
+  newState->pc = newState->initPC;
+  newState->prevPC = newState->pc;
+  return newState;
+}
+
+ExecutionState *ExecutionState::withKInstruction(KInstruction* ki) const {
+  assert(stack.size() == 0);
+  ExecutionState* newState = new ExecutionState(*this);
+  newState->pushFrame(nullptr, ki->parent->parent);
+  newState->stackBalance = 0;
+  newState->initPC = ki->parent->instructions;
+  while(newState->initPC != ki) {
+    ++newState->initPC;
+  }
+  newState->pc = newState->initPC;
+  newState->prevPC = newState->pc;
+  return newState;
+}
+
+ExecutionState *ExecutionState::copy() const {
+  return new ExecutionState(*this);
+}
+
 void ExecutionState::pushFrame(KInstIterator caller, KFunction *kf) {
   stack.emplace_back(StackFrame(caller, kf));
+  ++stackBalance;
 }
 
 void ExecutionState::popFrame() {
@@ -136,6 +219,7 @@ void ExecutionState::popFrame() {
   for (const auto * memoryObject : sf.allocas)
     addressSpace.unbindObject(memoryObject);
   stack.pop_back();
+  --stackBalance;
 }
 
 void ExecutionState::addSymbolic(const MemoryObject *mo, const Array *array) {
@@ -184,10 +268,10 @@ bool ExecutionState::merge(const ExecutionState &b) {
       return false;
   }
 
-  std::set< ref<Expr> > aConstraints(constraints.begin(), constraints.end());
-  std::set< ref<Expr> > bConstraints(b.constraints.begin(), 
+  ExprHashSet aConstraints(constraints.begin(), constraints.end());
+  ExprHashSet bConstraints(b.constraints.begin(), 
                                      b.constraints.end());
-  std::set< ref<Expr> > commonConstraints, aSuffix, bSuffix;
+  ExprHashSet commonConstraints, aSuffix, bSuffix;
   std::set_intersection(aConstraints.begin(), aConstraints.end(),
                         bConstraints.begin(), bConstraints.end(),
                         std::inserter(commonConstraints, commonConstraints.begin()));
@@ -199,19 +283,19 @@ bool ExecutionState::merge(const ExecutionState &b) {
                       std::inserter(bSuffix, bSuffix.end()));
   if (DebugLogStateMerge) {
     llvm::errs() << "\tconstraint prefix: [";
-    for (std::set<ref<Expr> >::iterator it = commonConstraints.begin(),
+    for (ExprHashSet::iterator it = commonConstraints.begin(),
                                         ie = commonConstraints.end();
          it != ie; ++it)
       llvm::errs() << *it << ", ";
     llvm::errs() << "]\n";
     llvm::errs() << "\tA suffix: [";
-    for (std::set<ref<Expr> >::iterator it = aSuffix.begin(),
+    for (ExprHashSet::iterator it = aSuffix.begin(),
                                         ie = aSuffix.end();
          it != ie; ++it)
       llvm::errs() << *it << ", ";
     llvm::errs() << "]\n";
     llvm::errs() << "\tB suffix: [";
-    for (std::set<ref<Expr> >::iterator it = bSuffix.begin(),
+    for (ExprHashSet::iterator it = bSuffix.begin(),
                                         ie = bSuffix.end();
          it != ie; ++it)
       llvm::errs() << *it << ", ";
@@ -265,10 +349,10 @@ bool ExecutionState::merge(const ExecutionState &b) {
 
   ref<Expr> inA = ConstantExpr::alloc(1, Expr::Bool);
   ref<Expr> inB = ConstantExpr::alloc(1, Expr::Bool);
-  for (std::set< ref<Expr> >::iterator it = aSuffix.begin(), 
+  for (ExprHashSet::iterator it = aSuffix.begin(), 
          ie = aSuffix.end(); it != ie; ++it)
     inA = AndExpr::create(inA, *it);
-  for (std::set< ref<Expr> >::iterator it = bSuffix.begin(), 
+  for (ExprHashSet::iterator it = bSuffix.begin(), 
          ie = bSuffix.end(); it != ie; ++it)
     inB = AndExpr::create(inB, *it);
 
@@ -357,4 +441,87 @@ void ExecutionState::dumpStack(llvm::raw_ostream &out) const {
 void ExecutionState::addConstraint(ref<Expr> e) {
   ConstraintManager c(constraints);
   c.addConstraint(e);
+}
+
+int ExecutionState::resolveLazyInstantiation(std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> &resolved) {
+  int status = 0;
+  for (auto &symbolic : symbolics) {
+    if (!symbolic.first->isLazyInitialized()) {
+      continue;
+    }
+    status = 1;
+    auto lisource = symbolic.first->lazyInitializedSource;
+    switch (lisource->getKind()) {
+    case Expr::Read: {
+      ref<ReadExpr> base = dyn_cast<ReadExpr>(lisource);
+      auto parent = base->updates.root->binding;
+      if (!parent) {
+        return -1;
+      }
+      resolved[lisource] = std::make_pair(
+        std::make_pair(parent, base->updates.root),
+        base->index);
+      break;
+    } 
+    case Expr::Concat: {
+      ref<ReadExpr> base =
+          ArrayExprHelper::hasOrderedReads(*dyn_cast<ConcatExpr>(lisource));
+      auto parent = base->updates.root->binding;
+      if (!parent) {
+        return -1;
+      }
+      resolved[lisource] = std::make_pair(
+        std::make_pair(parent, base->updates.root),
+        base->index);
+      break;
+    }
+    default:
+      return -1;
+    }
+  }
+  return status;
+}
+
+void ExecutionState::extractSourcedSymbolics(std::vector<Symbolic> &foreign) {
+  std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> resolved;
+  resolveLazyInstantiation(resolved);
+  for (auto &moArray : symbolics) {
+    if (moArray.second->isExternal)
+      foreign.push_back(moArray);
+  }
+
+  bool keepSearching = true;
+  Symbolic parent;
+  while (keepSearching) {
+    keepSearching = false;
+    for (auto &moArray : symbolics) {
+      if (moArray.first->isLazyInitialized()) {
+        parent = resolved[moArray.first->lazyInitializedSource].first;
+        if (std::find(foreign.begin(), foreign.end(), parent) != foreign.end()) {
+          foreign.push_back(moArray);
+          keepSearching = true;
+        }
+      }
+    }
+  }
+}
+
+BasicBlock *ExecutionState::getInitPCBlock() const{
+  return initPC->inst->getParent();
+}
+
+BasicBlock *ExecutionState::getPrevPCBlock() const {
+  return prevPC->inst->getParent();
+}
+
+BasicBlock *ExecutionState::getPCBlock() const {
+  return pc->inst->getParent();
+}
+
+bool ExecutionState::isEmpty() const {
+  return stack.empty();
+}
+
+bool ExecutionState::isIsolated() const {
+  return isolated;
 }

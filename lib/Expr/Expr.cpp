@@ -1,3 +1,7 @@
+/*
+ * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ */
+
 //===-- Expr.cpp ----------------------------------------------------------===//
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -21,6 +25,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <sstream>
+#include <string>
 
 using namespace klee;
 using namespace llvm;
@@ -94,6 +99,35 @@ int Expr::compare(const Expr &b) const {
   int r = compare(b, equivs);
   equivs.clear();
   return r;
+}
+
+int Expr::hashCompare(const Expr &b, ExprEquivSet &equivs) const {
+  if (this == &b) return 0;
+
+  const Expr *ap, *bp;
+  if (this < &b) {
+    ap = this; bp = &b;
+  } else {
+    ap = &b; bp = this;
+  }
+
+  if (equivs.count(std::make_pair(ap, bp)))
+    return 0;
+
+  Kind ak = getKind(), bk = b.getKind();
+  if (ak!=bk)
+    return (ak < bk) ? -1 : 1;
+
+  if (hashValue != b.hashValue)
+    return (hashValue < b.hashValue) ? -1 : 1;
+
+  unsigned aN = getNumKids();
+  for (unsigned i=0; i<aN; i++)
+    if (int res = getKid(i)->hashCompare(*b.getKid(i), equivs))
+      return res;
+
+  equivs.insert(std::make_pair(ap, bp));
+  return 0;
 }
 
 // returns 0 if b is structurally equal to *this
@@ -500,10 +534,12 @@ ref<Expr>  NotOptimizedExpr::create(ref<Expr> src) {
 /***/
 
 Array::Array(const std::string &_name, uint64_t _size,
+             unsigned _index, bool _isExternal, ref<Expr> _liSource,
              const ref<ConstantExpr> *constantValuesBegin,
              const ref<ConstantExpr> *constantValuesEnd, Expr::Width _domain,
              Expr::Width _range)
-    : name(_name), size(_size), domain(_domain), range(_range),
+    : name(_name), size(_size), index(_index), isExternal(_isExternal), liSource(_liSource),
+      domain(_domain), range(_range),
       constantValues(constantValuesBegin, constantValuesEnd) {
 
   assert((isSymbolicArray() || constantValues.size() == size) &&
@@ -517,14 +553,14 @@ Array::Array(const std::string &_name, uint64_t _size,
 #endif // NDEBUG
 }
 
-Array::~Array() {
-}
-
 unsigned Array::computeHash() {
   unsigned res = 0;
+  if (liSource.get())
+    res = liSource->hash();
   for (unsigned i = 0, e = name.size(); i != e; ++i)
     res = (res * Expr::MAGIC_HASH_CONSTANT) + name[i];
   res = (res * Expr::MAGIC_HASH_CONSTANT) + size;
+  res = (res * Expr::MAGIC_HASH_CONSTANT) + index;
   hashValue = res;
   return hashValue; 
 }

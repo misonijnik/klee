@@ -1,3 +1,7 @@
+/*
+ * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ */
+
 //===-- UserSearcher.cpp --------------------------------------------------===//
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -104,13 +108,13 @@ bool klee::userSearcherRequiresMD2U() {
 }
 
 
-Searcher *getNewSearcher(Searcher::CoreSearchType type, RNG &rng, PTree &processTree) {
+Searcher *getNewSearcher(Searcher::CoreSearchType type, RNG &rng, PForest &processForest) {
   Searcher *searcher = nullptr;
   switch (type) {
     case Searcher::DFS: searcher = new DFSSearcher(); break;
     case Searcher::BFS: searcher = new BFSSearcher(); break;
     case Searcher::RandomState: searcher = new RandomSearcher(rng); break;
-    case Searcher::RandomPath: searcher = new RandomPathSearcher(processTree, rng); break;
+    case Searcher::RandomPath: searcher = new RandomPathSearcher(processForest, rng); break;
     case Searcher::NURS_CovNew: searcher = new WeightedRandomSearcher(WeightedRandomSearcher::CoveringNew, rng); break;
     case Searcher::NURS_MD2U: searcher = new WeightedRandomSearcher(WeightedRandomSearcher::MinDistToUncovered, rng); break;
     case Searcher::NURS_Depth: searcher = new WeightedRandomSearcher(WeightedRandomSearcher::Depth, rng); break;
@@ -123,34 +127,33 @@ Searcher *getNewSearcher(Searcher::CoreSearchType type, RNG &rng, PTree &process
   return searcher;
 }
 
-Searcher *klee::constructUserSearcher(Executor &executor) {
+std::unique_ptr<Searcher> klee::constructUserSearcher(Executor &executor) {
 
-  Searcher *searcher = getNewSearcher(CoreSearch[0], executor.theRNG, *executor.processTree);
+  std::unique_ptr<Searcher> searcher(getNewSearcher(CoreSearch[0], executor.theRNG, *executor.processForest));
 
   if (CoreSearch.size() > 1) {
     std::vector<Searcher *> s;
-    s.push_back(searcher);
+    s.push_back(searcher.release());
 
     for (unsigned i = 1; i < CoreSearch.size(); i++)
-      s.push_back(getNewSearcher(CoreSearch[i], executor.theRNG, *executor.processTree));
+      s.push_back(getNewSearcher(CoreSearch[i], executor.theRNG, *executor.processForest));
 
-    searcher = new InterleavedSearcher(s);
+    searcher.reset(new InterleavedSearcher(s));
   }
 
   if (UseBatchingSearch) {
-    searcher = new BatchingSearcher(searcher, time::Span(BatchTime),
-                                    BatchInstructions);
+    searcher.reset(new BatchingSearcher(searcher.release(), time::Span(BatchTime),
+                                    BatchInstructions));
   }
 
   if (UseIterativeDeepeningTimeSearch) {
-    searcher = new IterativeDeepeningTimeSearcher(searcher);
+    searcher.reset(new IterativeDeepeningTimeSearcher(searcher.release()));
   }
 
   if (UseMerge) {
-    auto *ms = new MergingSearcher(searcher);
-    executor.setMergingSearcher(ms);
-
-    searcher = ms;
+    auto mt = std::make_unique<MergingSearcher>(searcher.release());
+    executor.setMergingSearcher(mt.get());
+    searcher = std::move(mt);
   }
 
   llvm::raw_ostream &os = executor.getHandler().getInfoStream();

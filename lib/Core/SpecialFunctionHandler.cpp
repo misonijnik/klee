@@ -1,3 +1,7 @@
+/*
+ * This source file has been modified by Yummy Research Team. Copyright (c) 2022
+ */
+
 //===-- SpecialFunctionHandler.cpp ----------------------------------------===//
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -18,6 +22,7 @@
 #include "StatsTracker.h"
 #include "TimingSolver.h"
 
+#include "klee/Expr/Expr.h"
 #include "klee/Module/KInstruction.h"
 #include "klee/Module/KModule.h"
 #include "klee/Solver/SolverCmdLine.h"
@@ -30,6 +35,7 @@
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/Format.h"
 
 #include <errno.h>
 #include <sstream>
@@ -845,14 +851,14 @@ void SpecialFunctionHandler::handleMakeSymbolic(ExecutionState &state,
          ie = rl.end(); it != ie; ++it) {
     const MemoryObject *mo = it->first.first;
     mo->setName(name);
-    
+
     const ObjectState *old = it->first.second;
     ExecutionState *s = it->second;
     
     if (old->readOnly) {
       executor.terminateStateOnError(*s, "cannot make readonly object symbolic",
                                      Executor::User);
-      return;
+      continue;
     } 
 
     // FIXME: Type coercion should be done consistently somewhere.
@@ -864,10 +870,13 @@ void SpecialFunctionHandler::handleMakeSymbolic(ExecutionState &state,
             mo->getSizeExpr()),
         res, s->queryMetaData);
     assert(success && "FIXME: Unhandled solver failure");
-    
+
     if (res) {
-      executor.executeMakeSymbolic(*s, mo, name);
-    } else {      
+      executor.executeMakeSymbolic(*s, mo, name, false);
+      // Increment symbolic counter to track the current klee_make_symbolic
+      // symbolic in case of pre-loaded symbolics.
+      s->symbolicCounter++;
+    } else {
       executor.terminateStateOnError(*s, 
                                      "wrong size given to klee_make_symbolic[_name]", 
                                      Executor::User);
