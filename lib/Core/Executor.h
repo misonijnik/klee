@@ -70,6 +70,7 @@ namespace klee {
   class ExternalDispatcher;
   class Expr;
   class InstructionInfoTable;
+  class KCallable;
   struct KFunction;
   struct KInstruction;
   class KInstIterator;
@@ -274,7 +275,7 @@ private:
 
   void callExternalFunction(ExecutionState &state,
                             KInstruction *target,
-                            llvm::Function *function,
+                            KCallable *callable,
                             std::vector< ref<Expr> > &arguments);
 
   ObjectState *bindObjectInState(ExecutionState &state, const MemoryObject *mo,
