@@ -26,7 +26,7 @@ namespace expr {
   // These are the language types we manipulate.
   typedef ref<Expr> ExprHandle;
   typedef UpdateList VersionHandle;
-  
+
   /// Identifier - Wrapper for a uniqued string.
   struct Identifier {
     const std::string Name;
@@ -45,7 +45,7 @@ namespace expr {
       ExprVarDeclKind,
       VersionVarDeclKind,
       QueryCommandDeclKind,
-      
+
       DeclKindLast = QueryCommandDeclKind,
       VarDeclKindFirst = ExprVarDeclKind,
       VarDeclKindLast = VersionVarDeclKind,
@@ -79,6 +79,8 @@ namespace expr {
     /// Name - The name of this array.
     const Identifier *Name;
 
+    const ref<Expr> LISource;
+
     /// Domain - The width of indices.
     const unsigned Domain;
 
@@ -89,11 +91,11 @@ namespace expr {
     const Array *Root;
 
   public:
-    ArrayDecl(const Identifier *_Name, uint64_t _Size, 
+    ArrayDecl(const Identifier *_Name, ref<Expr> _LISource, uint64_t _Size,
               unsigned _Domain, unsigned _Range,
               const Array *_Root)
-      : Decl(ArrayDeclKind), Name(_Name), 
-        Domain(_Domain), Range(_Range), 
+        : Decl(ArrayDeclKind), Name(_Name), LISource(_LISource),
+        Domain(_Domain), Range(_Range),
         Root(_Root) {
     }
 
@@ -107,12 +109,12 @@ namespace expr {
 
   /// VarDecl - Variable declarations, used to associate names to
   /// expressions or array versions outside of expressions.
-  /// 
+  ///
   /// For example:
   // FIXME: What syntax are we going to use for this? We need it.
   class VarDecl : public Decl {
   public:
-    const Identifier *Name;    
+    const Identifier *Name;
 
     static bool classof(const Decl *D) {
       return (Decl::VarDeclKindFirst <= D->getKind() &&
@@ -170,7 +172,7 @@ namespace expr {
     /// Constraints - The list of constraints to assume for this
     /// expression.
     const std::vector<ExprHandle> Constraints;
-    
+
     /// Query - The expression being queried.
     ExprHandle Query;
 
@@ -201,7 +203,7 @@ namespace expr {
     }
     static bool classof(const QueryCommand *) { return true; }
   };
-  
+
   /// Parser - Public interface for parsing a .kquery language file.
   class Parser {
   protected:
@@ -211,7 +213,7 @@ namespace expr {
 
     /// SetMaxErrors - Suppress anything beyond the first N errors.
     virtual void SetMaxErrors(unsigned N) = 0;
-    
+
     /// GetNumErrors - Return the number of encountered errors.
     virtual unsigned GetNumErrors() const = 0;
 
@@ -221,6 +223,11 @@ namespace expr {
     /// \return NULL indicates the end of the file has been reached.
     virtual Decl *ParseTopLevelDecl() = 0;
 
+
+    // TODO verify
+    virtual const Array *ParseSingleArray() = 0;
+    virtual ExprHandle ParseSingleExpr() = 0;
+
     /// CreateParser - Create a parser implementation for the given
     /// MemoryBuffer.
     ///
@@ -229,7 +236,9 @@ namespace expr {
     /// \arg Builder - The expression builder to use for constructing
     /// expressions.
     static Parser *Create(const std::string Name, const llvm::MemoryBuffer *MB,
-                          ExprBuilder *Builder, bool ClearArrayAfterQuery);
+                          ExprBuilder *Builder, ArrayCache* Cache, bool ClearArrayAfterQuery);
+
+    virtual void ResetLexer(const llvm::MemoryBuffer *MB) = 0;
   };
 }
 }

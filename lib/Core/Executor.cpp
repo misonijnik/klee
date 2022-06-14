@@ -134,6 +134,12 @@ cl::opt<std::string> MaxTime(
     cl::init("0s"),
     cl::cat(TerminationCat));
 
+cl::opt<std::string>
+  SummaryDB("summaryDB",
+              cl::init(""),
+              cl::desc("Summary DB path"),
+              cl::cat(TerminationCat));
+
 cl::opt<unsigned long long> MaxCycles(
     "max-cycles",
     cl::desc("stop execution after visiting some basic block this amount of times (default=1)."),
@@ -563,7 +569,13 @@ Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
       klee_error("Could not open file %s : %s", summary_file_name.c_str(),
                  error.c_str());
   }
-  summary =  std::make_unique<Summary>(summaryFile.get());
+  std::string summaryDBFilename =
+      (SummaryDB == ""
+           ? interpreterHandler->getOutputFilename("summary.sqlite3")
+           : SummaryDB);
+
+  summary = std::make_unique<Summary>(summaryFile.get(), summaryDBFilename);
+  summary->setArrayCache(arrayManager.arrayCache);
 
   Composer::executor = this;
 }
@@ -630,6 +642,7 @@ Executor::setModule(std::vector<std::unique_ptr<llvm::Module>> &modules,
   Context::initialize(TD->isLittleEndian(),
                       (Expr::Width)TD->getPointerSizeInBits());
 
+  summary->setModule(kmodule.get());
   return kmodule->module.get();
 }
 
@@ -5351,6 +5364,7 @@ void Executor::run(ExecutionState &state) {
   cfg.executor = this;
 
   searcher = std::make_unique<BidirectionalSearcher>(cfg);
+  summary->loadAllFromDB();
 
   while (!haltExecution) {
     auto &action = searcher->selectAction();
@@ -5383,6 +5397,7 @@ void Executor::run(ExecutionState &state) {
   }
 
   doDumpStates();
+  summary->storeAllToDB();
   searcher = nullptr;
   delete initialState;
   delete emptyState;

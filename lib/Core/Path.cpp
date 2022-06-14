@@ -6,6 +6,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include <string>
 #include <vector>
+#include <stack>
 
 using namespace klee;
 
@@ -32,10 +33,7 @@ std::string Path::toString() const {
       repr += ": ";
       stackCount++;
     }
-    std::string label;
-    llvm::raw_string_ostream label_stream(label);
-    path[i]->basicBlock->printAsOperand(label_stream);
-    repr += label_stream.str().erase(0, 6) + " ";
+    repr += path[i]->getLabel() + " ";
     if (i == path.size() - 1 || (path[i]->parent != path[i + 1]->parent &&
                                  path[i]->getKBlockType() != KBlockType::Call)) {
       repr.pop_back();
@@ -69,4 +67,39 @@ Path klee::concat(const Path& lhs, const Path& rhs) {
   path.insert(path.end(), lhs.path.begin(), lhs.path.end());
   path.insert(path.end(), rhs.path.begin() + 1, rhs.path.end());
   return Path(std::move(path));
+}
+
+Path klee::parse(std::string str, KModule *m) {
+  std::stack<KFunction *> functionStack;
+  std::vector<KBlock *> path;
+  size_t index = 0;
+  while (true) {
+    while (index < str.size() && str[index] == ' ') {
+      ++index;
+    }
+    if (index == str.size())
+      break;
+    if (str[index] == '(') {
+      ++index;
+      std::string functionName;
+      while (str[index] != ':') {
+        functionName += str[index];
+        ++index;
+      }
+      functionStack.push(m->functionNameMap[functionName]);
+      ++index;
+    } else if (str[index] == ')') {
+      ++index;
+      functionStack.pop();
+    } else if (str[index] == '%') {
+      std::string label = "%";
+      ++index;
+      while (str[index] != ' ' && str[index] != ')') {
+        label += str[index];
+        ++index;
+      }
+      path.push_back(functionStack.top()->labelMap[label]);
+    }
+  }
+  return Path(path);
 }

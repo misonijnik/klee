@@ -68,7 +68,9 @@ private:
   typedef std::unordered_map<const Array *,  std::unordered_map<int, const Array *>, klee::ArrayHashFn,
                              klee::WeakEquivArrayCmpFn>
       ArrayIndexMap;
+public:
   ArrayCache *const arrayCache;
+private:
   ArrayIndexMap indexedSymbolicArrays;
 };
 }

@@ -31,14 +31,16 @@ namespace klee {
   /// Return a list of all unique symbolic objects referenced by the given
   /// expression.
   void findSymbolicObjects(ref<Expr> e,
-                           std::vector<const Array*> &results);
+                           std::vector<const Array*> &results,
+                           bool recursive = true);
 
   /// Return a list of all unique symbolic objects referenced by the
   /// given expression range.
   template<typename InputIterator>
   void findSymbolicObjects(InputIterator begin, 
                            InputIterator end,
-                           std::vector<const Array*> &results);
+                           std::vector<const Array*> &results,
+                           bool recursive = true);
 
   bool isReadFromSymbolicArray(ref<Expr> e);
 

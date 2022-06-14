@@ -140,6 +140,7 @@ private:
     }
   }
 
+public:
   void printUpdateList(const UpdateList &updates, PrintContext &PC) {
     auto head = updates.head;
 
@@ -214,7 +215,7 @@ private:
     if (updates.root->index)
       PC << "%" << updates.root->index;
   }
-
+private:
   void printWidth(PrintContext &PC, ref<Expr> e) {
     if (!shouldPrintWidth(e))
       return;
@@ -376,7 +377,7 @@ public:
     else {
       if (PCAllConstWidths)
 	printWidth = true;
-    
+
       if (printWidth)
 	PC << "(w" << e->getWidth() << " ";
 
@@ -390,7 +391,7 @@ public:
 
       if (printWidth)
 	PC << ")";
-    }    
+    }
   }
 
   void print(const ref<Expr> &e, PrintContext &PC, bool printConstWidth=false) {
@@ -485,6 +486,26 @@ void ExprPPrinter::printSingleExpr(llvm::raw_ostream &os, const ref<Expr> &e) {
   // "forward declaration" with whatever syntax we pick for that.
   PrintContext PC(os);
   p.print(e, PC);
+}
+
+void ExprPPrinter::printSingleArray(llvm::raw_ostream &os, const Array *A) {
+  PrintContext PC(os);
+  PC << "array "
+     << (A->isLazilyInitialized() ? A->liSource->toString() : A->name) << " "
+     << A->index << " " << (A->isExternal ? "true" : "false") << " "
+     << "[" << A->size << "]"
+     << " : w" << A->domain << " -> w" << A->range << " = ";
+  if (A->isSymbolicArray()) {
+    PC << "symbolic";
+  } else {
+    PC << "[";
+    for (unsigned i = 0, e = A->size; i != e; ++i) {
+      if (i)
+        PC << " ";
+      PC << A->constantValues[i];
+    }
+    PC << "]";
+  }
 }
 
 void ExprPPrinter::printConstraints(llvm::raw_ostream &os,

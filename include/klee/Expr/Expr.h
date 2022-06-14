@@ -512,6 +512,9 @@ public:
   /// a binding to a symbolic object
   const MemoryObject *binding = nullptr;
 
+  // There might be some trouble due to constant arrays not being cached.
+  std::vector<const Array *> parents;
+
 private:
   unsigned hashValue;
 
@@ -537,6 +540,7 @@ private:
 public:
   bool isSymbolicArray() const { return constantValues.empty(); }
   bool isConstantArray() const { return !isSymbolicArray(); }
+  bool isLazilyInitialized() const { return !liSource.isNull(); }
 
   const std::string getName() const { return name; }
   unsigned getSize() const { return size; }

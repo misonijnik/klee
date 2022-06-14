@@ -43,6 +43,13 @@ public:
   friend bool operator==(const Path& lhs, const Path& rhs) {
     return lhs.path == rhs.path;
   }
+  friend bool operator!=(const Path& lhs, const Path& rhs) {
+    return lhs.path != rhs.path;
+  }
+
+  friend bool operator<(const Path& lhs, const Path& rhs) {
+    return lhs.path < rhs.path;
+  }
 
   Path() = default;
   explicit Path(std::vector<KBlock*> path) : path(path) {}
@@ -53,4 +60,5 @@ private:
 
 Path concat(const Path& lhs, const Path& rhs);
 
+Path parse(std::string str, KModule *m);
 };

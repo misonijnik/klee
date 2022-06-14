@@ -60,12 +60,19 @@ void Token::dump() {
 ///
 
 static inline bool isInternalIdentifierChar(int Char) {
-  return isalnum(Char) || Char == '_' || Char == '.' || Char == '-';
+  return isalnum(Char) || Char == '_' || Char == '.' || Char == '-' || Char == '%';
 }
 
-Lexer::Lexer(const llvm::MemoryBuffer *MB) 
-  : BufferPos(MB->getBufferStart()), BufferEnd(MB->getBufferEnd()), 
+Lexer::Lexer(const llvm::MemoryBuffer *MB)
+  : BufferPos(MB->getBufferStart()), BufferEnd(MB->getBufferEnd()),
     LineNumber(1), ColumnNumber(0) {
+}
+
+void Lexer::Reset(const llvm::MemoryBuffer *MB) {
+  BufferPos = MB->getBufferStart();
+  BufferEnd = MB->getBufferEnd();
+  LineNumber = 1;
+  ColumnNumber = 0;
 }
 
 Lexer::~Lexer() {

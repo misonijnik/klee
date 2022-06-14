@@ -94,15 +94,20 @@ protected:
       if (results.insert(ul.root).second)
         objects.push_back(ul.root);
 
+    if (recursive && ul.root->isLazilyInitialized()) {
+      visit(ul.root->liSource);
+    }
+
     return Action::doChildren();
   }
 
 public:
   std::set<const Array*> results;
   std::vector<const Array*> &objects;
-  
-  SymbolicObjectFinder(std::vector<const Array*> &_objects)
-    : objects(_objects) {}
+  bool recursive;
+
+  SymbolicObjectFinder(std::vector<const Array*> &_objects, bool _recursive)
+      : objects(_objects), recursive(_recursive) {}
 };
 
 ExprVisitor::Action ConstantArrayFinder::visitRead(const ReadExpr &re) {
@@ -125,22 +130,24 @@ ExprVisitor::Action ConstantArrayFinder::visitRead(const ReadExpr &re) {
 template<typename InputIterator>
 void klee::findSymbolicObjects(InputIterator begin, 
                                InputIterator end,
-                               std::vector<const Array*> &results) {
-  SymbolicObjectFinder of(results);
+                               std::vector<const Array*> &results,
+                               bool recursive) {
+  SymbolicObjectFinder of(results, recursive);
   for (; begin!=end; ++begin)
     of.visit(*begin);
 }
 
 void klee::findSymbolicObjects(ref<Expr> e,
-                               std::vector<const Array*> &results) {
-  findSymbolicObjects(&e, &e+1, results);
+                               std::vector<const Array*> &results,
+                               bool recursive) {
+  findSymbolicObjects(&e, &e+1, results, recursive);
 }
 
 typedef std::vector< ref<Expr> >::iterator A;
-template void klee::findSymbolicObjects<A>(A, A, std::vector<const Array*> &);
+template void klee::findSymbolicObjects<A>(A, A, std::vector<const Array*> &, bool);
 
 typedef std::set< ref<Expr> >::iterator B;
-template void klee::findSymbolicObjects<B>(B, B, std::vector<const Array*> &);
+template void klee::findSymbolicObjects<B>(B, B, std::vector<const Array*> &, bool);
 
 bool klee::isReadFromSymbolicArray(ref<Expr> e) {
   if(isa<ReadExpr>(e)) {

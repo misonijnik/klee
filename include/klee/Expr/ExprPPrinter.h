@@ -60,6 +60,8 @@ namespace klee {
     /// correct position following any output line breaks.
     static void printSingleExpr(llvm::raw_ostream &os, const ref<Expr> &e);
 
+    static void printSingleArray(llvm::raw_ostream &os, const Array *A);
+
     static void printConstraints(llvm::raw_ostream &os,
                                  const ConstraintSet &constraints);
 

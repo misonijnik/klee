@@ -438,6 +438,7 @@ void KModule::manifest(InterpreterHandler *ih, bool forceSourceOutput) {
     }
 
     functionMap.insert(std::make_pair(&Function, kf.get()));
+    functionNameMap.insert(std::make_pair(kf.get()->function->getName(), kf.get()));
     functions.push_back(std::move(kf));
   }
 
@@ -681,6 +682,7 @@ KFunction::KFunction(llvm::Function *_function,
     }
     blockMap[&*bbit] = kb;
     blocks.push_back(std::unique_ptr<KBlock>(kb));
+    labelMap[kb->getLabel()] = kb;
     if (isa<ReturnInst>(kb->instructions[kb->numInstructions - 1]->inst) ||
         isa<UnreachableInst>(kb->instructions[kb->numInstructions - 1]->inst)) {
       finalKBlocks.push_back(kb);
@@ -839,6 +841,13 @@ std::string KBlock::getIRLocation() const {
   repr += " in function ";
   repr += parent->function->getName();
   return repr;
+}
+
+std::string KBlock::getLabel() const {
+  std::string label;
+  llvm::raw_string_ostream label_stream(label);
+  basicBlock->printAsOperand(label_stream);
+  return label_stream.str().erase(0, 6);
 }
 
 KCallBlock::KCallBlock(KFunction *_kfunction, llvm::BasicBlock *block, KModule *km,

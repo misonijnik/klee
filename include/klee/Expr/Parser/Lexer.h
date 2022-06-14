@@ -108,6 +108,9 @@ namespace expr {
 
   public:
     explicit Lexer(const llvm::MemoryBuffer *_buf);
+
+    void Reset(const llvm::MemoryBuffer *_buf);
+
     ~Lexer();
 
     /// Lex - Return the next token from the file or EOF continually

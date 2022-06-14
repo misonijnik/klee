@@ -11,6 +11,7 @@
 
 #include "klee/Config/Version.h"
 #include "klee/Expr/ExprPPrinter.h"
+#include "klee/Expr/ExprUtil.h"
 #include "klee/Support/OptionCategories.h"
 // FIXME: We shouldn't need this once fast constant support moves into
 // Core. If we need to do arithmetic, we probably want to use APInt.
@@ -214,7 +215,7 @@ unsigned Expr::computeHash() {
     res <<= 1;
     res ^= getKid(i)->hash() * Expr::MAGIC_HASH_CONSTANT;
   }
-  
+
   hashValue = res;
   return hashValue;
 }
@@ -548,6 +549,9 @@ Array::Array(const std::string &_name, uint64_t _size,
   assert((isSymbolicArray() || constantValues.size() == size) &&
          "Invalid size for constant array!");
   computeHash();
+
+  findSymbolicObjects(this->liSource, parents, false);
+
 #ifndef NDEBUG
   for (const ref<ConstantExpr> *it = constantValuesBegin;
        it != constantValuesEnd; ++it)

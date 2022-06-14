@@ -16,6 +16,7 @@
 #include "klee/Expr/ExprVisitor.h"
 #include "klee/Expr/Parser/Lexer.h"
 #include "klee/Expr/Parser/Parser.h"
+#include "klee/Expr/ArrayCache.h"
 #include "klee/Solver/Common.h"
 #include "klee/Support/OptionCategories.h"
 #include "klee/Statistics/Statistics.h"
@@ -154,7 +155,7 @@ static bool PrintInputAST(const char *Filename,
                           const MemoryBuffer *MB,
                           ExprBuilder *Builder) {
   std::vector<Decl*> Decls;
-  Parser *P = Parser::Create(Filename, MB, Builder, ClearArrayAfterQuery);
+  Parser *P = Parser::Create(Filename, MB, Builder, new ArrayCache(), ClearArrayAfterQuery);
   P->SetMaxErrors(20);
 
   unsigned NumQueries = 0;
@@ -187,7 +188,7 @@ static bool EvaluateInputAST(const char *Filename,
                              const MemoryBuffer *MB,
                              ExprBuilder *Builder) {
   std::vector<Decl*> Decls;
-  Parser *P = Parser::Create(Filename, MB, Builder, ClearArrayAfterQuery);
+  Parser *P = Parser::Create(Filename, MB, Builder, new ArrayCache(), ClearArrayAfterQuery);
   P->SetMaxErrors(20);
   while (Decl *D = P->ParseTopLevelDecl()) {
     Decls.push_back(D);
@@ -326,7 +327,7 @@ static bool printInputAsSMTLIBv2(const char *Filename,
 {
 	//Parse the input file
 	std::vector<Decl*> Decls;
-        Parser *P = Parser::Create(Filename, MB, Builder, ClearArrayAfterQuery);
+    Parser *P = Parser::Create(Filename, MB, Builder, new ArrayCache(), ClearArrayAfterQuery);
         P->SetMaxErrors(20);
 	while (Decl *D = P->ParseTopLevelDecl())
 	{
