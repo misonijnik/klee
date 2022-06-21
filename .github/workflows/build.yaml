@@ -2,9 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches: master
+    branches: database
   push:
-    branches: master
+    branches: database
 
 # Defaults for building KLEE
 env:
