@@ -464,69 +464,6 @@ void ExecutionState::addConstraint(ref<Expr> e, KInstruction *loc, bool *sat) {
   c.addConstraint(e, loc, sat);
 }
 
-int ExecutionState::resolveLazyInstantiation(std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> &resolved) {
-  int status = 0;
-  for (auto &symbolic : symbolics) {
-    if (!symbolic.first->isLazyInitialized()) {
-      continue;
-    }
-    status = 1;
-    auto lisource = symbolic.first->lazyInitializedSource;
-    switch (lisource->getKind()) {
-    case Expr::Read: {
-      ref<ReadExpr> base = dyn_cast<ReadExpr>(lisource);
-      auto parent = base->updates.root->binding;
-      if (!parent) {
-        return -1;
-      }
-      resolved[lisource] = std::make_pair(
-        std::make_pair(parent, base->updates.root),
-        base->index);
-      break;
-    } 
-    case Expr::Concat: {
-      ref<ReadExpr> base =
-          ArrayExprHelper::hasOrderedReads(*dyn_cast<ConcatExpr>(lisource));
-      auto parent = base->updates.root->binding;
-      if (!parent) {
-        return -1;
-      }
-      resolved[lisource] = std::make_pair(
-        std::make_pair(parent, base->updates.root),
-        base->index);
-      break;
-    }
-    default:
-      return -1;
-    }
-  }
-  return status;
-}
-
-void ExecutionState::extractSourcedSymbolics(std::vector<Symbolic> &foreign) {
-  std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> resolved;
-  resolveLazyInstantiation(resolved);
-  for (auto &moArray : symbolics) {
-    if (moArray.second->isExternal)
-      foreign.push_back(moArray);
-  }
-
-  bool keepSearching = true;
-  Symbolic parent;
-  while (keepSearching) {
-    keepSearching = false;
-    for (auto &moArray : symbolics) {
-      if (moArray.first->isLazyInitialized()) {
-        parent = resolved[moArray.first->lazyInitializedSource].first;
-        if (std::find(foreign.begin(), foreign.end(), parent) != foreign.end()) {
-          foreign.push_back(moArray);
-          keepSearching = true;
-        }
-      }
-    }
-  }
-}
-
 BasicBlock *ExecutionState::getInitPCBlock() const{
   return initPC->inst->getParent();
 }

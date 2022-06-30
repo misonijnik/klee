@@ -138,7 +138,7 @@ bool Composer::tryRebuild(const ProofObligation &old, ExecutionState &state,
   }
   rebuilt.condition = composer.copy.constraintInfos;
   std::vector<Symbolic> sourced;
-  composer.copy.extractSourcedSymbolics(sourced);
+  executor->extractSourcedSymbolics(composer.copy, sourced);
   rebuilt.sourcedSymbolics.insert(rebuilt.sourcedSymbolics.end(),
                                   sourced.begin(), sourced.end());
   rebuilt.path = concat(state.path, old.path);

@@ -2900,10 +2900,13 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
                              Expr::createPointer(kgepi->offset));
     ref<Expr> address = AddExpr::create(base, offset);
     if (UseGEPExpr && !isa<ConstantExpr>(address) && !isa<ConstantExpr>(base)) {
-      if (isGEPExpr(base))
+      if (isGEPExpr(base)) {
         gepExprBases[address] = gepExprBases[base];
-      else
+        gepExprOffsets[address] = gepExprOffsets[base];
+      } else {
         gepExprBases[address] = {base, size};
+        gepExprOffsets[address] = ExtractExpr::create(offset, 0, Expr::Int32);
+      }
     }
     bindLocal(ki, state, address);
     break;
@@ -4960,10 +4963,6 @@ void Executor::logState(ExecutionState& state, int id,
   }
 }
 
-int Executor::resolveLazyInstantiation(ExecutionState &state) {
-  return state.resolveLazyInstantiation(state.pointers);
-}
-
 void Executor::setInstantiationGraph(ExecutionState &state, TestCase &tc) {
   std::map<size_t, std::vector<Offset>> ofst;
   for(size_t i = 0; i < state.symbolics.size(); i++) {
@@ -5287,7 +5286,8 @@ void Executor::dumpStates() {
 }
 
 bool Executor::isGEPExpr(ref<Expr> expr) {
-  return gepExprBases.find(expr) != gepExprBases.end();
+  return gepExprBases.find(expr) != gepExprBases.end() &&
+         gepExprOffsets.find(expr) != gepExprOffsets.end();
 }
 
 void Executor::addHistoryResult(ExecutionState &state) {
@@ -5685,6 +5685,115 @@ ref<BackwardResult> Executor::goBackward(ref<BackwardAction> action) {
     if (state->isIsolated() && conflictCore.size())
       summary->summarize(pob, makeConflict(*state, conflictCore), rebuildMap);
     return new BackwardResult({}, pob);
-
   }
+}
+
+int Executor::getBase(ref<Expr> expr,
+                      std::pair<Symbolic, ref<Expr>> &resolved) {
+  switch (expr->getKind()) {
+  case Expr::Read: {
+    ref<ReadExpr> base = dyn_cast<ReadExpr>(expr);
+    auto parent = base->updates.root->binding;
+    if (!parent) {
+      llvm::errs() << "base " << base->toString() << "\n";
+      return -1;
+    }
+    llvm::errs() << "base->index width " << base->index->getWidth() << "\n";
+    resolved =
+        std::make_pair(std::make_pair(parent, base->updates.root), base->index);
+    break;
+  }
+  case Expr::Concat: {
+    ref<ReadExpr> base =
+        ArrayExprHelper::hasOrderedReads(*dyn_cast<ConcatExpr>(expr));
+    auto parent = base->updates.root->binding;
+    if (!parent) {
+      llvm::errs() << "base " << base->toString() << "\n";
+      return -1;
+    }
+    llvm::errs() << "base->index width " << base->index->getWidth() << "\n";
+    resolved =
+        std::make_pair(std::make_pair(parent, base->updates.root), base->index);
+    break;
+  }
+  default: {
+    if (UseGEPExpr && isGEPExpr(expr)) {
+      ref<Expr> gepBase = gepExprBases[expr].first;
+      ref<Expr> offset = gepExprOffsets[expr];
+      std::pair<Symbolic, ref<Expr>> gepResolved;
+      int status = getBase(gepBase, gepResolved);
+      if (status == 1) {
+        auto parent = gepResolved.first.first;
+        auto array = gepResolved.first.second;
+        auto gepIndex = gepResolved.second;
+        llvm::errs() << "gepIndex width " << gepIndex->getWidth() << "\n";
+        llvm::errs() << "offset width " << offset->getWidth() << "\n";
+        auto index = AddExpr::create(gepIndex, offset);
+        resolved = std::make_pair(std::make_pair(parent, array), index);
+      } else
+        return status;
+    } else {
+      llvm::errs() << "expr " << expr->toString() << "\n";
+      return -1;
+    }
+    break;
+  }
+  }
+  return 1;
+}
+
+int Executor::resolveLazyInstantiation(ExecutionState &state, 
+  std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> &resolved) {
+  int status = 0;
+  for (auto &symbolic : state.symbolics) {
+    if (!symbolic.first->isLazyInitialized()) {
+      continue;
+    }
+    auto lisource = symbolic.first->lazyInitializedSource;
+    std::pair<Symbolic, ref<Expr>> resolvedSymbolic;
+    int localStatus = getBase(lisource, resolvedSymbolic);
+    resolved[lisource] = resolvedSymbolic;
+    if (status != -1)
+      return status = localStatus;
+  }
+  return status;
+}
+
+void Executor::extractSourcedSymbolics(ExecutionState &state,
+                                       std::vector<Symbolic> &sourced) {
+  std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> resolved;
+
+  // TODO: We should check status, but we have some troubles with the result of
+  // tryCompose. Symbolics may consist lazy initialized arrays, that we cannot
+  // get from executeMemoryOperation. resolveLazyInstantiation doesn't expect it
+  // and may return failed status. These arrays cannot be sourced, so we can
+  // ignore status.
+  int status = resolveLazyInstantiation(state, resolved);
+
+  for (auto &moArray : state.symbolics) {
+    if (moArray.second->isExternal)
+      sourced.push_back(moArray);
+  }
+
+  bool keepSearching = true;
+  Symbolic parent;
+  while (keepSearching) {
+    keepSearching = false;
+    for (auto &moArray : state.symbolics) {
+      if (moArray.first->isLazyInitialized()) {
+        parent = resolved[moArray.first->lazyInitializedSource].first;
+        if (parent.first && parent.second &&
+            std::find(sourced.begin(), sourced.end(), parent) !=
+                sourced.end()) {
+          sourced.push_back(moArray);
+          keepSearching = true;
+        }
+      }
+    }
+  }
+}
+
+
+int Executor::resolveLazyInstantiation(ExecutionState &state) {
+  return resolveLazyInstantiation(state, state.pointers);
 }

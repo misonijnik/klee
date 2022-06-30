@@ -187,6 +187,7 @@ private:
   TimerGroup timers;
   std::unique_ptr<PForest> processForest;
   ExprHashMap<std::pair<ref<Expr>, unsigned>> gepExprBases;
+  ExprHashMap<ref<Expr>> gepExprOffsets;
 
   /// Used to track states that have been added during the current
   /// instructions step.
@@ -592,6 +593,11 @@ private:
   void dumpPForest();
 
   void replayStateFromPob(ProofObligation *pob);
+  int getBase(ref<Expr> expr, std::pair<Symbolic, ref<Expr>> &resolved);
+  int resolveLazyInstantiation(
+      ExecutionState &state,
+      std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> &resolved);
+  void extractSourcedSymbolics(ExecutionState &state, std::vector<Symbolic> &);
 
 public:
   Executor(llvm::LLVMContext &ctx, const InterpreterOptions &opts,
