@@ -16,7 +16,7 @@ for file in test_bc/*.bc; do
 done
 
 for file in test_bc/*.bc; do
-    timeout 3m ./klee --emit-all-errors --search=bfs --execution-mode=default --max-time=2min --output-dir=results_noguide/${file#*/} test_bc/${file#*/} >results_noguide/li_log 2>results_noguide/li_log
+    timeout 3m ./klee --emit-all-errors --search=bfs --execution-mode=forward --max-time=2min --output-dir=results_noguide/${file#*/} test_bc/${file#*/} >results_noguide/li_log 2>results_noguide/li_log
     mv results_noguide/li_log results_noguide/${file#*/}/li_log
 done
 

@@ -2,11 +2,11 @@
 
 // RUN: %clang %s -emit-llvm -O2 -g -c -D_FORTIFY_SOURCE=1 -o %t2.bc
 // RUN: rm -rf %t.klee-out
-// RUN: %klee --output-dir=%t.klee-out --libc=uclibc --exit-on-error --produce-unsat-core=false %t2.bc
+// RUN: %klee --output-dir=%t.klee-out --libc=uclibc --exit-on-error --execution-mode=forward %t2.bc
 
 // RUN: %clang %s -emit-llvm -O2 -g -c -D_FORTIFY_SOURCE=2 -o %t3.bc
 // RUN: rm -rf %t.klee-out
-// RUN: %klee --output-dir=%t.klee-out --libc=uclibc --exit-on-error --produce-unsat-core=false %t3.bc
+// RUN: %klee --output-dir=%t.klee-out --libc=uclibc --exit-on-error --execution-mode=forward %t3.bc
 
 #include "klee/klee.h"
 

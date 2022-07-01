@@ -4,7 +4,7 @@
 // REQUIRES: uclibc
 // RUN: %clangxx %s -emit-llvm %O0opt -c -std=c++11 -I "%libcxx_include" -g -nostdinc++ -o %t1.bc
 // RUN: rm -rf %t.klee-out
-// RUN: %klee --output-dir=%t.klee-out --libc=uclibc --libcxx --produce-unsat-core=false %t1.bc 2>&1 | FileCheck %s
+// RUN: %klee --output-dir=%t.klee-out --libc=uclibc --libcxx --execution-mode=forward %t1.bc 2>&1 | FileCheck %s
 
 #include "klee/klee.h"
 #include <iostream>
