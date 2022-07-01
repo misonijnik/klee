@@ -885,8 +885,8 @@ std::string KBlock::getIRLocation() const {
 std::string KBlock::getLabel() const {
   std::string label;
   llvm::raw_string_ostream label_stream(label);
-  basicBlock->printAsOperand(label_stream);
-  return label_stream.str().erase(0, 6);
+  basicBlock->printAsOperand(label_stream, false);
+  return label_stream.str();
 }
 
 KCallBlock::KCallBlock(KFunction *_kfunction, llvm::BasicBlock *block, KModule *km,
