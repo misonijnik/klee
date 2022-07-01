@@ -173,19 +173,6 @@ namespace {
                    cl::desc("Issue a warning on startup for all external symbols (default=false)."),
                    cl::cat(StartCat));
 
-  cl::opt<ExecutionKind> ExecutionMode(
-      "execution-mode",
-      cl::values(
-          clEnumValN(ExecutionKind::Default, "default", "Use basic klee symbolic execution"),
-          clEnumValN(ExecutionKind::Guided, "guided", "Takes place in two steps. First, all acyclic paths are executed, "
-                                                      "then the execution is guided to sections of the program not yet covered. "
-                                                      "These steps are repeated until all blocks of the program are covered")
-              KLEE_LLVM_CL_VAL_END),
-      cl::init(ExecutionKind::Guided),
-      cl::desc("Kind of execution mode"),
-      cl::cat(StartCat));
-  
-
   /*** Linking options ***/
 
   cl::OptionCategory LinkCat("Linking options",
@@ -1585,7 +1572,7 @@ int main(int argc, char **argv, char **envp) {
   IOpts.MakeConcreteSymbolic = MakeConcreteSymbolic;
   KleeHandler *handler = new KleeHandler(pArgc, pArgv);
   Interpreter *interpreter =
-    theInterpreter = Interpreter::create(ctx, IOpts, handler, ExecutionMode);
+    theInterpreter = Interpreter::create(ctx, IOpts, handler);
   assert(interpreter);
   handler->setInterpreter(interpreter);
 

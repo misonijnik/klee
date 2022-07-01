@@ -51,8 +51,8 @@ public:
 };
 
 enum class ExecutionKind {
-  Default, // Defualt symbolic execution
-  Guided,  // Use GuidedSearcher and guidedRun
+  Forward,
+  Bidirectional,
 };
 
 class Interpreter {
@@ -107,8 +107,7 @@ public:
 
   static Interpreter *create(llvm::LLVMContext &ctx,
                              const InterpreterOptions &_interpreterOpts,
-                             InterpreterHandler *ih,
-                             ExecutionKind executionKind);
+                             InterpreterHandler *ih);
 
   /// Register the module to be executed.
   /// \param modules A list of modules that should form the final

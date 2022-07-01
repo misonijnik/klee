@@ -26,7 +26,6 @@ public:
   virtual ref<BidirectionalAction> selectAction() = 0;
   virtual void update(ref<ActionResult>) = 0;
   virtual void closeProofObligation(ProofObligation *) = 0;
-  virtual bool empty() = 0;
   virtual ~IBidirectionalSearcher() {}
 };
 
@@ -36,7 +35,6 @@ public:
   ref<BidirectionalAction> selectAction() override;
   void update(ref<ActionResult>) override;
   void closeProofObligation(ProofObligation *) override;
-  bool empty() override;
   explicit BidirectionalSearcher(const SearcherConfig &);
   ~BidirectionalSearcher() override;
 
@@ -73,6 +71,18 @@ private:
   void removePob(ProofObligation *);
   void answerPob(ProofObligation *);
   bool isStuck(ExecutionState &);
+};
+
+class ForwardOnlySearcher : public IBidirectionalSearcher {
+  public:
+  ref<BidirectionalAction> selectAction() override;
+  void update(ref<ActionResult>) override;
+  void closeProofObligation(ProofObligation *) override;
+  explicit ForwardOnlySearcher(const SearcherConfig &);
+  ~ForwardOnlySearcher() override;
+
+private:
+  std::unique_ptr<ForwardSearcher> searcher;
 };
 
 } // namespace klee

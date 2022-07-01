@@ -5,7 +5,7 @@
 namespace klee {
 
 Interpreter *Interpreter::create(llvm::LLVMContext &ctx, const InterpreterOptions &opts,
-                                 InterpreterHandler *ih, ExecutionKind executionKind) {
+                                 InterpreterHandler *ih) {
   
   Interpreter* res = new Executor(ctx,opts,ih);
   return res;

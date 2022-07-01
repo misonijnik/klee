@@ -300,8 +300,35 @@ void BidirectionalSearcher::answerPob(ProofObligation *pob) {
   }
 }
 
-bool BidirectionalSearcher::empty() {
-  return forward->empty() && backward->empty() && initializer->empty();
+ref<BidirectionalAction> ForwardOnlySearcher::selectAction() {
+  if (searcher->empty()) {
+    return new TerminateAction();
+  }
+  return new ForwardAction(&searcher->selectState());
 }
+
+void ForwardOnlySearcher::update(ref<ActionResult> r) {
+  switch (r->getKind()) {
+  case ActionResult::Kind::Forward: {
+    auto fr = cast<ForwardResult>(r);
+    searcher->update(fr->current, fr->addedStates, fr->removedStates);
+    break;
+  }
+  case ActionResult::Kind::Terminate: {
+    break;
+  }
+  default: {
+    klee_error("ForwardOnlySearcher received non-forward action result.");
+  }
+  }
+}
+
+void ForwardOnlySearcher::closeProofObligation(ProofObligation *) {}
+
+ForwardOnlySearcher::ForwardOnlySearcher(const SearcherConfig &cfg) {
+  searcher = constructUserSearcher(*cfg.executor);
+}
+
+ForwardOnlySearcher::~ForwardOnlySearcher() {}
 
 } // namespace klee

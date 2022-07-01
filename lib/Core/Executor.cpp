@@ -139,6 +139,16 @@ cl::opt<bool> UseGEPOptimization(
     cl::desc("Make executor lazily initialize whole object during accesses to its attributes."),
     cl::cat(ExecCat));
 
+cl::opt<ExecutionKind> ExecutionMode(
+      "execution-mode",
+      cl::values(
+          clEnumValN(ExecutionKind::Forward, "forward", "Use basic klee symbolic execution"),
+          clEnumValN(ExecutionKind::Bidirectional, "bidirectional", "Use bidirectional execution")
+              KLEE_LLVM_CL_VAL_END),
+      cl::init(ExecutionKind::Bidirectional),
+      cl::desc("Execution mode"),
+      cl::cat(ExecCat));
+
 cl::opt<bool> LazyInstantiation(
     "lazy-instantiation",
      cl::init(true),
@@ -5533,7 +5543,12 @@ void Executor::run(ExecutionState &state) {
     }
   }
 
-  searcher = std::make_unique<BidirectionalSearcher>(cfg);
+  if (ExecutionMode == ExecutionKind::Forward) {
+    searcher = std::make_unique<ForwardOnlySearcher>(cfg);
+  } else {
+    searcher = std::make_unique<BidirectionalSearcher>(cfg);
+  }
+
   std::vector<ExecutionState *> newStates(states.begin(), states.end());
   std::vector<ExecutionState *> removed{};
   ref<ForwardResult> res = new ForwardResult(nullptr, newStates, removed);
