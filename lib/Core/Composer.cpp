@@ -331,8 +331,6 @@ ref<Expr> ComposeVisitor::processObject(const MemoryObject *object, const Array 
 }
 
 ref<Expr> ComposeVisitor::processRead(const ReadExpr &re) {
-  ExecutionState &state = caller.copy;
-
   ref<Expr> index = visit(re.index);
   ref<ObjectState> os;
   if (re.updates.root->isExternal ||
@@ -355,8 +353,6 @@ ref<Expr> ComposeVisitor::processRead(const ReadExpr &re) {
 
 
 ref<Expr> ComposeVisitor::processOrderedRead(const ConcatExpr &ce, const ReadExpr &base) {
-  ExecutionState &state = caller.copy;
-
   ref<Expr> index = visit(base.index);
   ref<ObjectState> os;
   if (base.updates.root->isExternal ||

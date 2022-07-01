@@ -54,18 +54,30 @@ BidirectionalSearcher::StepKind BidirectionalSearcher::selectStep() {
 
   do {
     switch (choice) {
-    case 0:
-      if (!forward->empty())
+    case 0: {
+      if (!forward->empty()) {
         return StepKind::Forward;
-    case 1:
-      if (!branch->empty())
+      }
+      break;
+    }
+    case 1: {
+      if (!branch->empty()) {
         return StepKind::Branch;
-    case 2:
-      if (!backward->empty())
+      }
+      break;
+    }
+    case 2: {
+      if (!backward->empty()) {
         return StepKind::Backward;
-    case 3:
-      if (!initializer->empty())
+      }
+      break;
+    }
+    case 3: {
+      if (!initializer->empty()) {
         return StepKind::Initialize;
+      }
+      break;
+    }
     }
     ticker.moveToNext();
     choice = ticker.getCurrent();
