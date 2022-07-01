@@ -133,10 +133,10 @@ cl::opt<std::string> MaxTime(
     cl::init("0s"),
     cl::cat(TerminationCat));
 
-cl::opt<bool> UseGEPExpr(
+cl::opt<bool> UseGEPOptimization(
     "use-gep-expr",
     cl::init(true),
-    cl::desc("Kind of execution mode"),
+    cl::desc("Make executor lazily initialize whole object during accesses to its attributes."),
     cl::cat(ExecCat));
 
 cl::opt<bool> LazyInstantiation(
@@ -2899,8 +2899,8 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       offset = AddExpr::create(offset,
                              Expr::createPointer(kgepi->offset));
     ref<Expr> address = AddExpr::create(base, offset);
-    if (UseGEPExpr && !isa<ConstantExpr>(address) && !isa<ConstantExpr>(base)) {
-      if (isGEPExpr(base)) {
+    if (UseGEPOptimization && !isa<ConstantExpr>(address) && !isa<ConstantExpr>(base)) {
+      if (isGEPExpr(base))
         gepExprBases[address] = gepExprBases[base];
         gepExprOffsets[address] = gepExprOffsets[base];
       } else {
@@ -2955,7 +2955,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     ref<Expr> result = eval(ki, 0, state).value;
     BitCastInst *bc = cast<BitCastInst>(ki->inst);
 
-    if(UseGEPExpr && isGEPExpr(result)) {
+    if(UseGEPOptimization && isGEPExpr(result)) {
       unsigned size = bc->getType()->isPointerTy() ?
             kmodule->targetData->getTypeStoreSize(ki->inst->getType()->getPointerElementType()) :
             kmodule->targetData->getTypeStoreSize(ki->inst->getType());
@@ -4354,8 +4354,8 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   }
   unsigned bytes = Expr::getMinBytesForWidth(type);
 
-  ref<Expr> base = UseGEPExpr && isGEPExpr(address) ? gepExprBases[address].first : address;
-  unsigned size = UseGEPExpr && isGEPExpr(address) ? gepExprBases[address].second : bytes;
+  ref<Expr> base = UseGEPOptimization && isGEPExpr(address) ? gepExprBases[address].first : address;
+  unsigned size = UseGEPOptimization && isGEPExpr(address) ? gepExprBases[address].second : bytes;
 
   if (SimplifySymIndices) {
     if (!isa<ConstantExpr>(address))
@@ -4486,7 +4486,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   if (unbound) {
     if (incomplete) {
       terminateStateEarly(*unbound, "Query timed out (resolve).");
-    } else if (LazyInstantiation && (isa<ReadExpr>(address) || isa<ConcatExpr>(address) || (UseGEPExpr && isGEPExpr(address)))) {
+    } else if (LazyInstantiation && (isa<ReadExpr>(address) || isa<ConcatExpr>(address) || (UseGEPOptimization && isGEPExpr(address)))) {
 
       if (!isReadFromSymbolicArray(base)) {
         terminateStateEarly(*unbound, "Instantiation source contains read from concrete array");
