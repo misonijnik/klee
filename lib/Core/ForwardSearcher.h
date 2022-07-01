@@ -1,5 +1,14 @@
-// -*- C++ -*-
-#pragma once
+//===-- Searcher.h ----------------------------------------------*- C++ -*-===//
+//
+//                     The KLEE Symbolic Virtual Machine
+//
+// This file is distributed under the University of Illinois Open Source
+// License. See LICENSE.TXT for details.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef KLEE_SEARCHER_H
+#define KLEE_SEARCHER_H
 
 #include "ExecutionState.h"
 #include "PForest.h"
@@ -131,10 +140,13 @@ namespace klee {
     std::vector<ExecutionState *> reachedOnLastUpdate;
 
     bool distanceInCallGraph(KFunction *kf, KBlock *kb, unsigned int &distance);
-    WeightResult tryGetLocalWeight(const ExecutionState &es, double &weight, const std::vector<KBlock*> &localTargets);
-    WeightResult tryGetPreTargetWeight(const ExecutionState &es, double &weight);
+    WeightResult tryGetLocalWeight(const ExecutionState &es, double &weight,
+                                   const std::vector<KBlock *> &localTargets);
+    WeightResult tryGetPreTargetWeight(const ExecutionState &es,
+                                       double &weight);
     WeightResult tryGetTargetWeight(const ExecutionState &es, double &weight);
-    WeightResult tryGetPostTargetWeight(const ExecutionState &es, double &weight);
+    WeightResult tryGetPostTargetWeight(const ExecutionState &es,
+                                        double &weight);
     WeightResult tryGetWeight(const ExecutionState &es, double &weight);
 
   public:
@@ -375,29 +387,6 @@ namespace klee {
     void printName(llvm::raw_ostream &os) override;
   };
 
-  struct ExecutionStateBinaryRank {
-    ExecutionStateBinaryRank () {}
-    virtual bool getRank(ExecutionState const &state) = 0;
-  };
-
-  struct ExecutionStateIsolationRank : klee::ExecutionStateBinaryRank {
-    ExecutionStateIsolationRank () {}
-    bool getRank(ExecutionState const &state) override;
-  };
-
-  class BinaryRankedSearcher final : public ForwardSearcher {
-    ExecutionStateBinaryRank &rank;
-    std::unique_ptr<ForwardSearcher> firstRankSearcher;
-    std::unique_ptr<ForwardSearcher> secondRankSearcher;
-
-  public:
-    explicit BinaryRankedSearcher(ExecutionStateBinaryRank &rank, std::unique_ptr<ForwardSearcher> first, std::unique_ptr<ForwardSearcher> second);
-    ExecutionState &selectState() override;
-    void update(ExecutionState *current,
-                const std::vector<ExecutionState *> &addedStates,
-                const std::vector<ExecutionState *> &removedStates) override;
-    bool empty() override;
-    void printName(llvm::raw_ostream &os) override;
-  };
-
 } // klee namespace
+
+#endif /* KLEE_SEARCHER_H */

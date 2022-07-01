@@ -9,15 +9,14 @@
 #pragma once
 #include "BackwardSearcher.h"
 #include "Executor.h"
-#include "SearcherUtil.h"
+#include "ForwardSearcher.h"
 #include "Initializer.h"
 #include "ProofObligation.h"
-#include "ForwardSearcher.h"
+#include "SearcherUtil.h"
 #include "klee/Module/KModule.h"
 #include <memory>
 #include <unordered_set>
 #include <vector>
-
 
 namespace klee {
 
@@ -28,7 +27,6 @@ public:
   virtual void closeProofObligation(ProofObligation *) = 0;
   virtual ~IBidirectionalSearcher() {}
 };
-
 
 class BidirectionalSearcher : public IBidirectionalSearcher {
 public:
@@ -64,7 +62,8 @@ private:
   void updateBranch(ExecutionState *current,
                     const std::vector<ExecutionState *> &addedStates,
                     const std::vector<ExecutionState *> &removedStates);
-  void updateBackward(std::vector<ProofObligation*> newPobs, ProofObligation *oldPob);
+  void updateBackward(std::vector<ProofObligation *> newPobs,
+                      ProofObligation *oldPob);
   void updateInitialize(KInstruction *location, ExecutionState &state);
 
   void addPob(ProofObligation *);
@@ -74,7 +73,7 @@ private:
 };
 
 class ForwardOnlySearcher : public IBidirectionalSearcher {
-  public:
+public:
   ref<BidirectionalAction> selectAction() override;
   void update(ref<ActionResult>) override;
   void closeProofObligation(ProofObligation *) override;

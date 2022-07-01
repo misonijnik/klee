@@ -1,4 +1,5 @@
-//===-- ArrayManager.h --------------------------------------------*- C++ -*-===//
+//===-- ArrayManager.h --------------------------------------------*- C++
+//-*-===//
 //
 //                     The KLEE Symbolic Virtual Machine
 //
@@ -10,8 +11,8 @@
 #ifndef KLEE_ARRAYMANAGER_H
 #define KLEE_ARRAYMANAGER_H
 
-#include "klee/Expr/Expr.h"
 #include "klee/Expr/ArrayExprHash.h" // For klee::ArrayHashFn
+#include "klee/Expr/Expr.h"
 
 #include <string>
 #include <unordered_set>
@@ -60,19 +61,24 @@ public:
                            Expr::Width _domain = Expr::Int32,
                            Expr::Width _range = Expr::Int8);
 
-  const Array *CreateArray(const std::string &name, uint64_t size, bool isExternal, ref<Expr> liSource = ref<Expr>());
+  const Array *CreateArray(const std::string &name, uint64_t size,
+                           bool isExternal, ref<Expr> liSource = ref<Expr>());
 
-  const Array *CreateArray(const Array *array, int index, ref<Expr> liSource = ref<Expr>());
+  const Array *CreateArray(const Array *array, int index,
+                           ref<Expr> liSource = ref<Expr>());
 
 private:
-  typedef std::unordered_map<const Array *,  std::unordered_map<int, const Array *>, klee::ArrayHashFn,
-                             klee::WeakEquivArrayCmpFn>
+  typedef std::unordered_map<const Array *,
+                             std::unordered_map<int, const Array *>,
+                             klee::ArrayHashFn, klee::WeakEquivArrayCmpFn>
       ArrayIndexMap;
+
 public:
   ArrayCache *const arrayCache;
+
 private:
   ArrayIndexMap indexedSymbolicArrays;
 };
-}
+} // namespace klee
 
 #endif /* KLEE_ARRAYMANAGER_H */
