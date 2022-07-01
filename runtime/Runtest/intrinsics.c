@@ -26,7 +26,7 @@
 static KTest *testData = 0;
 static unsigned testPosition = 0;
 static TestCase *input_tc;
-static uintptr_t* addresses;
+static uintptr_t *addresses;
 
 static unsigned char rand_byte(void) {
   unsigned x = rand();
@@ -52,33 +52,33 @@ static void report_internal_error(const char *msg, ...) {
   }
 }
 
-int ends_with(const char* name, const char* extension)
-{
-  const char* ldot = strrchr(name, '.');
-  if (ldot != NULL)
-  {
+int ends_with(const char *name, const char *extension) {
+  const char *ldot = strrchr(name, '.');
+  if (ldot != NULL) {
     int length = strlen(extension);
     return strncmp(ldot + 1, extension, length) == 0;
   }
   return 0;
 }
 
-void recursively_allocate(ConcretizedObject* obj, size_t index, void* addr, int lazy) {
+void recursively_allocate(ConcretizedObject *obj, size_t index, void *addr,
+                          int lazy) {
   /* Verify implementation */
-  if(!lazy) {
+  if (!lazy) {
     memcpy(addr, obj->values, obj->size);
     addresses[index] = (uintptr_t)addr;
-  } else  {
-    void* address = malloc(obj->size);
+  } else {
+    void *address = malloc(obj->size);
     memcpy(address, obj->values, obj->size);
     addresses[index] = (uintptr_t)address;
   }
-  for(size_t i = 0; i < obj->n_offsets; i++) {
-    if(!addresses[obj->offsets[i].index]) {
-      recursively_allocate(&input_tc->objects[obj->offsets[i].index], obj->offsets[i].index, 0, 1);
+  for (size_t i = 0; i < obj->n_offsets; i++) {
+    if (!addresses[obj->offsets[i].index]) {
+      recursively_allocate(&input_tc->objects[obj->offsets[i].index],
+                           obj->offsets[i].index, 0, 1);
     }
-    void* offset_addr = (void*)(addresses[index] + (obj->offsets[i].offset));
-    memcpy(offset_addr, &addresses[obj->offsets[i].index], sizeof(void*));
+    void *offset_addr = (void *)(addresses[index] + (obj->offsets[i].offset));
+    memcpy(offset_addr, &addresses[obj->offsets[i].index], sizeof(void *));
   }
   return;
 }
@@ -120,18 +120,20 @@ void klee_make_symbolic(void *array, size_t nbytes, const char *name) {
     char *name = getenv("KTEST_FILE");
 
     if (!name) {
-      fprintf(stdout, "KLEE-RUNTIME: KTEST_FILE not set, please enter .ktest path: ");
+      fprintf(stdout,
+              "KLEE-RUNTIME: KTEST_FILE not set, please enter .ktest path: ");
       fflush(stdout);
       name = tmp;
       if (!fgets(tmp, sizeof tmp, stdin) || !strlen(tmp)) {
-        fprintf(stderr, "KLEE-RUNTIME: cannot replay, no KTEST_FILE or user input\n");
+        fprintf(stderr,
+                "KLEE-RUNTIME: cannot replay, no KTEST_FILE or user input\n");
         exit(1);
       }
       tmp[strlen(tmp) - 1] = '\0'; /* kill newline */
     }
-    if(ends_with(name,"ktestjson")) {
+    if (ends_with(name, "ktestjson")) {
       input_tc = TC_fromFile(name);
-    } else if(ends_with(name,"ktest")) {
+    } else if (ends_with(name, "ktest")) {
       testData = kTest_fromFile(name);
     } else {
       fprintf(stderr, "KLEE-RUNTIME: unknown test file type\n");
@@ -141,12 +143,12 @@ void klee_make_symbolic(void *array, size_t nbytes, const char *name) {
       fprintf(stderr, "KLEE-RUNTIME: unable to open .ktest file\n");
       exit(1);
     }
-    if(input_tc) {
+    if (input_tc) {
       addresses = calloc(input_tc->n_objects, sizeof(uintptr_t));
     }
   }
 
-  if(input_tc) {
+  if (input_tc) {
     for (;; ++testPosition) {
       while (addresses[testPosition] && testPosition < input_tc->n_objects)
         testPosition++;

@@ -26,18 +26,6 @@ struct std::hash<KInstruction> {
 
     std::size_t seed = 0;
     hash_combine(seed, ki.toString());
-    // hash_combine(seed, ki.inst->getOpcode());
-    // for (unsigned i = 0; i < ki.inst->getNumOperands(); ++i) {
-    //   int vnumber = ki.operands[i];
-    //   if (vnumber < 0) {
-    //     unsigned index = - vnumber - 2;
-    //     auto constant = module->constantTable[index];
-    //     hash_combine(seed, constant.value->computeHash());
-    //   } else {
-    //     hash_combine(seed, vnumber);
-    //   }
-    // }
-    // hash_combine(seed, ki.dest);
 
     return seed;
   }

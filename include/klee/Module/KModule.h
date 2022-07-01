@@ -136,7 +136,7 @@ namespace klee {
     std::map<KBlock *, unsigned int>& getBackwardDistance(KBlock *kb);
     std::vector<std::pair<KBlock *, unsigned int>>& getSortedBackwardDistance(KBlock *kb);
     KBlock *getNearestJoinBlock(KBlock *kb);
-    KBlock* getNearestJoinOrCallBlock(KBlock* kb);
+    KBlock *getNearestJoinOrCallBlock(KBlock *kb);
     std::string argToString(llvm::Argument *arg);
   };
 
@@ -190,7 +190,7 @@ namespace klee {
       std::pair<KFunction *, unsigned int>>> sortedDistance;
     std::map<KFunction *, std::vector<
       std::pair<KFunction *, unsigned int>>> sortedBackwardDistance;
-    std::map<KFunction*, size_t> functionHashMap;
+    std::map<KFunction *, size_t> functionHashMap;
 
     // Mark function with functionName as part of the KLEE runtime
     void addInternalFunction(const char* functionName);

@@ -196,11 +196,9 @@ void TreeOStream::flush() {
   writer->flush();
 }
 
-TreeOStream TreeOStream::copy() const
-{
-  if(writer) {
+TreeOStream TreeOStream::copy() const {
+  if (writer) {
     return writer->open(*this);
   }
   return TreeOStream();
 }
-
