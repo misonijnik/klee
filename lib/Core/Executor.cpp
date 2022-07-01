@@ -3954,11 +3954,6 @@ void Executor::terminateStateOnError(ExecutionState &state,
     haltExecution = true;
 }
 
-void Executor::terminateStateOnOutOfBound(ExecutionState &state, ref<Expr> ptr) {
-  terminateStateOnError(state, "memory error: out of bound pointer", Ptr,
-                        NULL/*, getAddressInfo(state, ptr)*/);
-}
-
 // XXX shoot me
 static const char *okExternalsList[] = { "printf",
                                          "fprintf",
@@ -5228,13 +5223,9 @@ const KFunction *Executor::getKFunction(const llvm::Function *f) const {
   return (kfIt == kmodule->functionMap.end()) ? nullptr : kfIt->second;
 }
 
-PForest *Executor::getProcessForest() { return processForest.get(); }
-
 ArrayManager *Executor::getArrayManager() { return &arrayManager; }
 
 MemoryManager *Executor::getMemoryManager() { return memory.get(); }
-
-ExprOptimizer *Executor::getOptimizer() { return &optimizer; }
 
 void Executor::dumpPForest() {
   if (!::dumpPForest) return;
@@ -5440,10 +5431,6 @@ KBlock *Executor::calculateTargetByBlockHistory(ExecutionState &state) {
     }
   }
   return nearestBlock;
-}
-
-void Executor::addState(ExecutionState &state) {
-  addedStates.push_back(&state);
 }
 
 

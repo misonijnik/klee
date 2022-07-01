@@ -556,9 +556,6 @@ private:
     terminateStateOnError(state, message, Exec, NULL, info);
   }
 
-  // terminate state on out of bound pointer error
-  void terminateStateOnOutOfBound(ExecutionState &state, ref<Expr> ptr);
-
   /// bindModuleConstants - Initialize the module constant table.
   void bindModuleConstants();
 
@@ -699,15 +696,11 @@ public:
 
   const KFunction *getKFunction(const llvm::Function *f) const;
 
-  PForest *getProcessForest();
-
   ArrayManager *getArrayManager();
 
   MemoryManager *getMemoryManager();
 
   ExecutionManager *getExecutionManager();
-
-  ExprOptimizer *getOptimizer();
 
   MergingSearcher *getMergingSearcher() const { return mergingSearcher; };
   void setMergingSearcher(MergingSearcher *ms) { mergingSearcher = ms; };
@@ -751,7 +744,6 @@ public:
   KBlock *calculateTargetByTransitionHistory(ExecutionState &state);
   KBlock *calculateTargetByBlockHistory(ExecutionState &state);
   void initializeRoots(ExecutionState *initialState);
-  void addState(ExecutionState &state);
 };
 
 } // namespace klee
