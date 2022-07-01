@@ -2910,7 +2910,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
                              Expr::createPointer(kgepi->offset));
     ref<Expr> address = AddExpr::create(base, offset);
     if (UseGEPOptimization && !isa<ConstantExpr>(address) && !isa<ConstantExpr>(base)) {
-      if (isGEPExpr(base))
+      if (isGEPExpr(base)) {
         gepExprBases[address] = gepExprBases[base];
         gepExprOffsets[address] = gepExprOffsets[base];
       } else {
