@@ -3637,14 +3637,18 @@ void Executor::doDumpStates() {
     return;
 
   klee_message("halting execution, dumping remaining states");
-  for (const auto &state : states) {
-    terminateStateEarly(*state, "Execution halting.");
+  if (!states.empty()) {
+    for (const auto &state : states) {
+      terminateStateEarly(*state, "Execution halting.");
+    }
+    updateResult(new ForwardResult(nullptr, addedStates, removedStates));
   }
-  updateResult(new ForwardResult(nullptr, addedStates, removedStates));
-  for (const auto state : isolatedStates) {
-    terminateStateEarly(*state, "Execution halting.");
+  if (!isolatedStates.empty()) {
+    for (const auto state : isolatedStates) {
+      terminateStateEarly(*state, "Execution halting.");
+    }
+    updateResult(new BranchResult(nullptr, addedStates, removedStates));
   }
-  updateResult(new BranchResult(nullptr, addedStates, removedStates));
 }
 
 void Executor::seed(ExecutionState &initialState) {
