@@ -59,7 +59,7 @@ namespace klee {
     Return
   };
 
-  struct KBlock : Indexer<KBlock>, IndexToMemMapper<KBlock> {
+  struct KBlock : Indexer<KBlock> {
     KFunction *parent;
     llvm::BasicBlock *basicBlock;
 
