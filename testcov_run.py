@@ -22,7 +22,7 @@ resu = open(args.o, "w+")
 res = os.path.abspath(os.getcwd() + args.r)
 benchs = os.path.abspath(os.getcwd() + args.b)
 testtool = os.path.abspath(os.getcwd() + args.t)
-files = [f for f in os.listdir(res) if re.match(r'[a-zA-Z0-9.-_]*.zip', f)]
+files = [f for f in os.listdir(res) if re.match(r'.*.zip', f)]
 for file in files:
     file_chop = file[:-4]
     cor = glob.glob(benchs + f"/**/{file_chop}", recursive=True)[0]
