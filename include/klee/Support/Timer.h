@@ -34,25 +34,6 @@ namespace klee {
   };
 
 
-  /*
-   * Like a wall timer but a bit more functional
-   * and comvenient
-   */
-  class SimpleTimer {
-      typedef std::chrono::steady_clock clock;
-  public:
-      SimpleTimer() { set(); }
-      /// Sets a starting point
-      void set();
-      /// Returns a "now - start" in seconds
-      double get();
-      /// Returns a "now - start" in seconds with \param precision decimals
-      std::string getFixed(unsigned precision);
-  private:
-      std::chrono::time_point<clock> store;
-  };
-
-
   /**
    * A Timer repeatedly executes a `callback` after a specified `interval`.
    * An object of this class is _passive_ and only keeps track of the next invocation time.

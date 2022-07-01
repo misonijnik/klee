@@ -25,21 +25,6 @@ time::Span WallTimer::delta() const {
   return {time::getWallTime() - start};
 }
 
-// SimpleTimer
-
-void SimpleTimer::set() { store = clock::now(); }
-
-double SimpleTimer::get() {
-  std::chrono::duration<double> period = clock::now() - store;
-  return period.count();
-}
-
-std::string SimpleTimer::getFixed(unsigned precision) {
-  std::stringstream ss;
-  ss << std::fixed << std::setprecision(precision) << get();
-  return ss.str();
-}
-
 
 // Timer
 
