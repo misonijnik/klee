@@ -1479,7 +1479,7 @@ void Executor::printDebugInstructions(ExecutionState &state) {
     (*stream) << "     " << state.pc->getSourceLocation() << ':';
   }
 
-  (*stream) << state.pc->info->assemblyLine << ':' << state.id;
+  (*stream) << state.pc->info->assemblyLine << ':' << state.getID();
 
   if (DebugPrintInstructions.isSet(STDERR_ALL) ||
       DebugPrintInstructions.isSet(FILE_ALL))
@@ -3931,7 +3931,7 @@ void Executor::terminateStateOnError(ExecutionState &state,
       msg << "File: " << ii.file << '\n'
           << "Line: " << ii.line << '\n'
           << "assembly.ll line: " << ii.assemblyLine << '\n'
-          << "State: " << state.id << '\n';
+          << "State: " << state.getID() << '\n';
     }
     msg << "Stack: \n";
     state.dumpStack(msg);

@@ -10,8 +10,6 @@
 #ifndef KLEE_KMODULE_H
 #define KLEE_KMODULE_H
 
-#include "Indexer.h"
-
 #include "klee/Config/Version.h"
 #include "klee/Core/Interpreter.h"
 #include "klee/Module/KInstruction.h"
@@ -59,7 +57,7 @@ namespace klee {
     Return
   };
 
-  struct KBlock : Indexer<KBlock> {
+  struct KBlock {
     KFunction *parent;
     llvm::BasicBlock *basicBlock;
 
