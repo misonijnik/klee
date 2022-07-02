@@ -123,10 +123,13 @@ else()
   endif()
 
   # build Google Test with KLEE's defines and compile flags
+  set(KLEE_GTEST_FLAGS "-DGTEST_HAS_PTHREAD=0")
+  list(APPEND KLEE_GTEST_FLAGS ${KLEE_COMPONENT_CXX_FLAGS})
+
   target_compile_definitions(gtest PRIVATE ${KLEE_COMPONENT_CXX_DEFINES})
   target_compile_definitions(gtest_main PRIVATE ${KLEE_COMPONENT_CXX_DEFINES})
-  target_compile_options(gtest PRIVATE ${KLEE_COMPONENT_CXX_FLAGS})
-  target_compile_options(gtest_main PRIVATE ${KLEE_COMPONENT_CXX_FLAGS})
+  target_compile_options(gtest PRIVATE ${KLEE_GTEST_FLAGS})
+  target_compile_options(gtest_main PRIVATE ${KLEE_GTEST_FLAGS})
 endif()
 
 
@@ -185,7 +188,7 @@ get_property(UNIT_TEST_DEPENDS
 )
 add_custom_target(unittests
   COMMAND
-    "${LIT_TOOL}" ${LIT_ARGS} "${CMAKE_CURRENT_BINARY_DIR}"
+    "${LIT_TOOL}" ${LIT_ARGS} "-j1" "${CMAKE_CURRENT_BINARY_DIR}"
     DEPENDS ${UNIT_TEST_DEPENDS}
     COMMENT "Running unittests"
     USES_TERMINAL
