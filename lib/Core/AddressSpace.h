@@ -146,8 +146,6 @@ namespace klee {
     /// @return
     bool copyInConcrete(const MemoryObject *mo, const ObjectState *os,
                         uint64_t src_address);
-
-    void clear();
   };
 } // End klee namespace
 

@@ -47,7 +47,7 @@ private:
 public:
   unsigned id;
   uint64_t address;
-  ref<Expr> lazyInstantiatedSource;
+  ref<Expr> lazyInitializationSource;
 
   /// size in bytes
   unsigned size;
@@ -76,38 +76,38 @@ public:
   MemoryObject(uint64_t _address) 
     : id(counter++),
       address(_address),
-      lazyInstantiatedSource(nullptr),
+      lazyInitializationSource(nullptr),
       size(0),
       isFixed(true),
       parent(NULL),
       allocSite(0) {
   }
 
-  MemoryObject(ref<Expr> _lazyInstantiatedSource)
+  MemoryObject(ref<Expr> _lazyInitializationSource)
     : id(counter++),
       address((uint64_t)0xffffffffffffffff),
-      lazyInstantiatedSource(_lazyInstantiatedSource),
+      lazyInitializationSource(_lazyInitializationSource),
       size(0),
       isFixed(true),
       parent(NULL),
       allocSite(0) {
   }
 
-  MemoryObject(uint64_t _address, unsigned _size, 
+  MemoryObject(uint64_t _address, unsigned _size,
                bool _isLocal, bool _isGlobal, bool _isFixed,
                const llvm::Value *_allocSite,
                MemoryManager *_parent,
-               ref<Expr> _lazyInstantiatedSource = nullptr)
+               ref<Expr> _lazyInitializationSource = nullptr)
     : id(counter++),
       address(_address),
-      lazyInstantiatedSource(_lazyInstantiatedSource),
+      lazyInitializationSource(_lazyInitializationSource),
       size(_size),
       name("unnamed"),
       isLocal(_isLocal),
       isGlobal(_isGlobal),
       isFixed(_isFixed),
       isUserSpecified(false),
-      parent(_parent), 
+      parent(_parent),
       allocSite(_allocSite) {
   }
 
@@ -120,21 +120,22 @@ public:
     this->name = name;
   }
 
-  bool isLazyInstantiated() const { return !lazyInstantiatedSource.isNull(); }
-  ref<Expr> getLazyInstantiatedSource() const {
-    return this->lazyInstantiatedSource;
+  bool isLazyInitialized() const { return !lazyInitializationSource.isNull(); }
+  ref<Expr> getLazyInitializationSource() const {
+    return lazyInitializationSource;
   }
-  void setLazyInstantiatedSource(ref<Expr> source) {
-    this->lazyInstantiatedSource = source;
+  void setlazyInitializationSource(ref<Expr> source) {
+    lazyInitializationSource = source;
   }
   ref<ConstantExpr> getBaseConstantExpr() const {
     return ConstantExpr::create(address, Context::get().getPointerWidth());
   }
   ref<Expr> getBaseExpr() const {
-    if (lazyInstantiatedSource.isNull())
+    if (lazyInitializationSource.isNull()) {
       return getBaseConstantExpr();
-    else
-      return lazyInstantiatedSource;
+    } else {
+      return lazyInitializationSource;
+    }
   }
   ref<ConstantExpr> getSizeExpr() const { 
     return ConstantExpr::create(size, Context::get().getPointerWidth());
@@ -183,7 +184,7 @@ public:
     if (allocSite != b.allocSite)
       return (allocSite < b.allocSite ? -1 : 1);
 
-    assert(lazyInstantiatedSource == b.lazyInstantiatedSource);
+    assert(lazyInitializationSource == b.lazyInitializationSource);
     return 0;
   }
 };

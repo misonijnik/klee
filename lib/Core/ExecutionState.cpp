@@ -78,12 +78,6 @@ ExecutionState::ExecutionState(KFunction *kf)
   setID();
 }
 
-ExecutionState::ExecutionState(KFunction *kf, KBlock *kb)
-    : initPC(kb->instructions), pc(initPC), prevPC(pc), incomingBBIndex(-1) {
-  pushFrame(nullptr, kf);
-  setID();
-}
-
 ExecutionState::~ExecutionState() {
   for (const auto &cur_mergehandler: openMergeStack){
     cur_mergehandler->removeOpenState(this);
@@ -139,22 +133,6 @@ ExecutionState *ExecutionState::withKFunction(KFunction *kf) {
   newState->setID();
   newState->pushFrame(nullptr, kf);
   newState->initPC = kf->blockMap[&*kf->function->begin()]->instructions;
-  newState->pc = newState->initPC;
-  newState->prevPC = newState->pc;
-  return newState;
-}
-
-ExecutionState *ExecutionState::withStackFrame(KFunction *kf) {
-  ExecutionState *newState = new ExecutionState(*this);
-  newState->setID();
-  newState->pushFrame(nullptr, kf);
-  return newState;
-}
-
-ExecutionState *ExecutionState::withKBlock(KBlock *kb) {
-  ExecutionState *newState = new ExecutionState(*this);
-  newState->setID();
-  newState->initPC = kb->instructions;
   newState->pc = newState->initPC;
   newState->prevPC = newState->pc;
   return newState;

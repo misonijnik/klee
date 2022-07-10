@@ -14,7 +14,6 @@
 #include "klee/Core/Interpreter.h"
 #include "klee/Expr/Expr.h"
 #include "klee/ADT/KTest.h"
-#include "klee/ADT/TestCaseUtils.h"
 #include "klee/Support/OptionCategories.h"
 #include "klee/Statistics/Statistics.h"
 #include "klee/Solver/SolverCmdLine.h"
@@ -58,9 +57,6 @@
 #include <iomanip>
 #include <iterator>
 #include <sstream>
-
-#include <klee/Misc/json.hpp>
-using json = nlohmann::json;
 
 using namespace llvm;
 using namespace klee;
@@ -120,16 +116,12 @@ namespace {
                 cl::desc("Write .sym.path files for each test case (default=false)"),
                 cl::cat(TestCaseCat));
 
-  cl::opt<bool> WriteKTestFiles(
-      "write-ktest-files", cl::init(true),
-      cl::desc(
-          "Write KTest files alongside json-formatted TestCase (default=true)"),
-      cl::cat(TestCaseCat));
-
   cl::opt<bool>
-      WriteStates("write-states", cl::init(false),
-                  cl::desc("Write state info for debug (default=false)"),
-                  cl::cat(TestCaseCat));
+  WriteStates("write-states",
+	      cl::init(false),
+	      cl::desc("Write state info for debug (default=false)"),
+	      cl::cat(TestCaseCat));
+
 
   /*** Startup options ***/
 
@@ -170,13 +162,13 @@ namespace {
                    cl::cat(StartCat));
 
   enum class ExecutionKind {
-    Default, // Defualt symbolic execution
+    NonGuided, // Defualt symbolic execution
     Guided,  // Use GuidedSearcher and guidedRun
   };
 
   cl::opt<ExecutionKind> ExecutionMode(
       "execution-mode",
-      cl::values(clEnumValN(ExecutionKind::Default, "default",
+      cl::values(clEnumValN(ExecutionKind::NonGuided, "nonguided",
                             "Use basic klee symbolic execution"),
                  clEnumValN(ExecutionKind::Guided, "guided",
                             "Takes place in two steps. First, all acyclic "
@@ -184,7 +176,7 @@ namespace {
                             "then the execution is guided to sections of the "
                             "program not yet covered. "
                             "These steps are repeated until all blocks of the "
-                            "program are covered")),
+                            "program are covered (default)")),
       cl::init(ExecutionKind::Guided), cl::desc("Kind of execution mode"),
       cl::cat(StartCat));
 
@@ -359,15 +351,7 @@ private:
   int m_argc;
   char **m_argv;
 
-  void writeTestCaseKTest(const TestCase &tc, unsigned id);
-
-  void writeTestCaseXML(
-      bool isError,
-      const std::vector<std::pair<std::string, std::vector<unsigned char>>>
-          &out,
-      unsigned id);
-
-  void writeTestCasePlain(const TestCase &tc, unsigned id);
+  void writeTestCase(const KTest &tc, unsigned id);
 
 public:
   KleeHandler(int argc, char **argv);
@@ -528,128 +512,13 @@ KleeHandler::openTestFile(const std::string &suffix, unsigned id) {
   return openOutputFile(getTestFilename(suffix, id));
 }
 
-void KleeHandler::writeTestCaseKTest(const TestCase &tc, unsigned id) {
-  KTest b;
-  b.numArgs = m_argc;
-  b.args = m_argv;
-  b.symArgvs = 0;
-  b.symArgvLen = 0;
-  b.numObjects = tc.n_objects;
-  b.objects = new KTestObject[b.numObjects];
-  assert(b.objects);
-  for (unsigned i = 0; i < b.numObjects; i++) {
-    KTestObject *o = &b.objects[i];
-    o->name = const_cast<char *>(tc.objects[i].name);
-    o->numBytes = tc.objects[i].size;
-    o->bytes = new unsigned char[o->numBytes];
-    assert(o->bytes);
-    for (unsigned j = 0; j < o->numBytes; j++) {
-      o->bytes[j] = tc.objects[i].values[j];
-    }
-  }
-  if (!kTest_toFile(&b,
+void KleeHandler::writeTestCase(const KTest &ktest, unsigned id) {
+  if (!kTest_toFile(&ktest,
                     getOutputFilename(getTestFilename("ktest", id)).c_str())) {
     klee_warning("unable to write output test case, losing it");
   } else {
     // ++m_numGeneratedTests;
   }
-  for (unsigned i = 0; i < b.numObjects; i++)
-    delete[] b.objects[i].bytes;
-  delete[] b.objects;
-}
-
-void KleeHandler::writeTestCaseXML(
-    bool isError,
-    const std::vector<std::pair<std::string, std::vector<unsigned char>>>
-        &assignments,
-    unsigned id) {
-
-  // TODO: This is super specific to test-comp and assumes that the name is the
-  // type information
-  auto file = openTestFile("xml", id);
-  if (!file)
-    return;
-
-  *file << "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n";
-  *file << "<!DOCTYPE testcase PUBLIC \"+//IDN sosy-lab.org//DTD test-format "
-           "testcase 1.0//EN\" "
-           "\"https://sosy-lab.org/test-format/testcase-1.0.dtd\">\n";
-  *file << "<testcase";
-  if (isError)
-    *file << " coversError=\"true\"";
-  *file << ">\n";
-  for (auto &item : assignments) {
-    *file << "\t<input variable=\"" << item.first << "\" ";
-    *file << "type =\"";
-    // print type of the input
-    *file << item.first;
-    *file << "\">";
-    // Ignore the type
-    auto type_size_bytes = item.second.size() * 8;
-    llvm::APInt v(type_size_bytes, 0, false);
-    for (auto i = item.second.rbegin(), e = item.second.rend(); i != e; ++i) {
-      v <<= 8;
-      v |= *i;
-    }
-    // print value
-
-    // Check if this is an unsigned type
-    if (item.first.find("u") == 0) {
-      v.print(*file, false);
-    } else if (item.first.rfind("*") != std::string::npos) {
-      // Pointer types
-      v.print(*file, false);
-    } else if (item.first.find("float") == 0) {
-      llvm::APFloat(APFloatBase::IEEEhalf(), v).print(*file);
-    } else if (item.first.find("double") == 0) {
-      llvm::APFloat(APFloatBase::IEEEdouble(), v).print(*file);
-    } else if (item.first.rfind("_t") != std::string::npos) {
-      // arbitrary type, e.g. sector_t
-      v.print(*file, false);
-    } else if (item.first.find("_") == 0) {
-      // _Bool
-      v.print(*file, false);
-    } else {
-      // the rest must be signed
-      v.print(*file, true);
-    }
-    *file << "</input>\n";
-  }
-  *file << "</testcase>\n";
-
-  // ++m_numGeneratedTests;
-}
-
-void KleeHandler::writeTestCasePlain(const TestCase &tc, unsigned id) {
-  // _-_ Test and correct
-  json out;
-
-  out["n_objects"] = tc.n_objects;
-  out["numArgs"] = tc.numArgs;
-  for (size_t i = 0; i < tc.numArgs; i++) {
-    out["args"].push_back(std::string(tc.args[i]));
-  }
-  out["symArgvs"] = tc.symArgvs;
-  out["symArgvLen"] = tc.symArgvLen;
-
-  for (unsigned i = 0; i < tc.n_objects; i++) {
-    json out_obj;
-    out_obj["name"] = std::string(tc.objects[i].name);
-    out_obj["values"] = std::vector<unsigned char>(
-        tc.objects[i].values, tc.objects[i].values + tc.objects[i].size);
-    out_obj["size"] = tc.objects[i].size;
-    out_obj["address"] = tc.objects[i].address;
-    out_obj["n_offsets"] = tc.objects[i].n_offsets;
-    for (unsigned j = 0; j < tc.objects[i].n_offsets; j++) {
-      json offset_obj;
-      offset_obj["offset"] = tc.objects[i].offsets[j].offset;
-      offset_obj["index"] = tc.objects[i].offsets[j].index;
-      out_obj["offsets"].push_back(offset_obj);
-    }
-    out["objects"].push_back(out_obj);
-  }
-  auto file = openTestFile("ktestjson", id);
-  *file << out.dump(4);
 }
 
 // _-_ Temporarily dropped the const qualifier of ExecutionState &state
@@ -663,23 +532,23 @@ void KleeHandler::processTestCase(ExecutionState &state,
 
   if (!WriteNone) {
     const auto start_time = time::getWallTime();
-    TestCase assignments{};
-    assignments.numArgs = m_argc;
-    assignments.args = new char *[m_argc];
-    for (int i = 0; i < m_argc; i++) {
-      assignments.args[i] = new char[std::strlen(m_argv[i]) + 1];
-      std::strcpy(assignments.args[i], m_argv[i]);
+    KTest ktest;
+    ktest.numArgs = m_argc;
+    ktest.args = new char*[m_argc];
+    for(int i = 0; i<m_argc; i++) {
+      ktest.args[i] = new char[std::strlen(m_argv[i])+1];
+      std::strcpy(ktest.args[i], m_argv[i]);
     }
-    assignments.symArgvs = 0;
-    assignments.symArgvLen = 0;
+    ktest.symArgvs = 0;
+    ktest.symArgvLen = 0;
 
-    bool success = m_interpreter->getSymbolicSolution(state, assignments);
+    bool success = m_interpreter->getSymbolicSolution(state, ktest);
 
-    // _-_ Should it be done before or after getSymbolicSolution?
-    int lazy_instantiation_resolved =
-        m_interpreter->resolveLazyInstantiation(state);
-    if (lazy_instantiation_resolved == 1) {
-      m_interpreter->setInstantiationGraph(state, assignments);
+    std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> resolved;
+
+    int lazy_initilalization_resolved = m_interpreter->resolveLazyInitialization(state, resolved);
+    if(lazy_initilalization_resolved == 1) {
+      m_interpreter->setInitializationGraph(state, resolved, ktest);
     }
 
     if (!success)
@@ -687,28 +556,20 @@ void KleeHandler::processTestCase(ExecutionState &state,
 
     unsigned test_id = ++m_numTotalTests;
 
-    if (WriteKTestFiles && success && lazy_instantiation_resolved == 0) {
-      writeTestCaseKTest(assignments, test_id);
-    }
-
-    if (success && lazy_instantiation_resolved != -1) {
-      writeTestCasePlain(assignments, test_id);
+    if (success && lazy_initilalization_resolved != -1) {
+      writeTestCase(ktest, test_id);
       if (WriteStates) {
         auto f = openTestFile("state", test_id);
         m_interpreter->logState(state, test_id, f);
       }
     }
 
-    TestCase_free(&assignments);
+    kTest_free(&ktest);
 
-    if (WriteStates && lazy_instantiation_resolved == -1) {
+    if (WriteStates && lazy_initilalization_resolved == -1) {
       auto f_s = openTestFile("state_li_unresolved", test_id);
       m_interpreter->logState(state, state_id, f_s);
-    }
-
-    if (errorMessage) {
       auto f = openTestFile(errorSuffix, test_id);
-      if (f)
         *f << errorMessage;
     }
 
@@ -1710,7 +1571,7 @@ int main(int argc, char **argv, char **envp) {
                    << " (" << ++i << "/" << kTestFiles.size() << ")\n";
       // XXX should put envp in .ktest ?
       switch (ExecutionMode) {
-      case ExecutionKind::Default:
+      case ExecutionKind::NonGuided:
         interpreter->runFunctionAsMain(mainFn, out->numArgs, out->args, pEnvp);
         break;
       case ExecutionKind::Guided:
@@ -1766,7 +1627,7 @@ int main(int argc, char **argv, char **envp) {
       }
     }
     switch (ExecutionMode) {
-    case ExecutionKind::Default:
+    case ExecutionKind::NonGuided:
       interpreter->runFunctionAsMain(mainFn, pArgc, pArgv, pEnvp);
       break;
     case ExecutionKind::Guided:

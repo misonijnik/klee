@@ -14,18 +14,26 @@
 extern "C" {
 #endif
 
+  typedef struct Offset Offset;
+  struct Offset {
+    unsigned offset;
+    unsigned index;
+  };
+
   typedef struct KTestObject KTestObject;
   struct KTestObject {
     char *name;
     unsigned numBytes;
     unsigned char *bytes;
+    unsigned numOffsets;
+    Offset *offsets;
   };
-  
+
   typedef struct KTest KTest;
   struct KTest {
     /* file format version */
-    unsigned version; 
-    
+    unsigned version;
+
     unsigned numArgs;
     char **args;
 
@@ -36,19 +44,18 @@ extern "C" {
     KTestObject *objects;
   };
 
-  
   /* returns the current .ktest file format version */
   unsigned kTest_getCurrentVersion();
-  
+
   /* return true iff file at path matches KTest header */
-  int   kTest_isKTestFile(const char *path);
+  int kTest_isKTestFile(const char *path);
 
   /* returns NULL on (unspecified) error */
   KTest* kTest_fromFile(const char *path);
 
   /* returns 1 on success, 0 on (unspecified) error */
-  int   kTest_toFile(KTest *, const char *path);
-  
+  int kTest_toFile(const KTest *, const char *path);
+
   /* returns total number of object bytes */
   unsigned kTest_numBytes(KTest *);
 

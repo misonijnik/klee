@@ -87,8 +87,8 @@ bool AddressSpace::resolveOne(ExecutionState &state,
 
     MemoryObject *symHack = nullptr;
     for (auto &moa : state.symbolics) {
-      if (moa.first->isLazyInstantiated() &&
-          moa.first->getLazyInstantiatedSource() == address) {
+      if (moa.first->isLazyInitialized() &&
+          moa.first->getLazyInitializationSource() == address) {
         symHack = const_cast<MemoryObject *>(moa.first.get());
         break;
       }
@@ -236,8 +236,8 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
 
     MemoryObject *symHack = nullptr;
     for (auto &moa : state.symbolics) {
-      if (moa.first->isLazyInstantiated() &&
-          moa.first->getLazyInstantiatedSource() == p) {
+      if (moa.first->isLazyInitialized() &&
+          moa.first->getLazyInitializationSource() == p) {
         symHack = const_cast<MemoryObject *>(moa.first.get());
         break;
       }
@@ -377,15 +377,14 @@ bool AddressSpace::copyInConcrete(const MemoryObject *mo, const ObjectState *os,
   return true;
 }
 
-void AddressSpace::clear() { objects.clear(); }
-
 /***/
 
 bool MemoryObjectLT::operator()(const MemoryObject *a,
                                 const MemoryObject *b) const {
   bool res = true;
-  if (!a->lazyInstantiatedSource.isNull() &&
-      !b->lazyInstantiatedSource.isNull())
-    res = a->lazyInstantiatedSource != b->lazyInstantiatedSource;
+  if (!a->lazyInitializationSource.isNull() &&
+      !b->lazyInitializationSource.isNull()) {
+    res = a->lazyInitializationSource != b->lazyInitializationSource;
+  }
   return res ? a->address < b->address : false;
 }

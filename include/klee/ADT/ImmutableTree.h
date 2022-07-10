@@ -33,7 +33,6 @@ namespace klee {
     ImmutableTree &operator=(const ImmutableTree &s);
 
     bool empty() const;
-    void clear();
 
     size_t count(const key_type &key) const; // always 0 or 1
     const value_type *lookup(const key_type &key) const;
@@ -447,11 +446,6 @@ namespace klee {
     node->decref();
     node = n;
     return *this;
-  }
-
-  template<class K, class V, class KOV, class CMP>
-  void ImmutableTree<K,V,KOV,CMP>::clear() {
-    node = &Node::terminator;
   }
 
   template<class K, class V, class KOV, class CMP>

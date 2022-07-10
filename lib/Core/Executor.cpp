@@ -27,7 +27,6 @@
 
 #include "klee/ADT/KTest.h"
 #include "klee/ADT/RNG.h"
-#include "klee/ADT/TestCaseUtils.h"
 #include "klee/Config/Version.h"
 #include "klee/Core/Interpreter.h"
 #include "klee/Expr/ArrayExprOptimizer.h"
@@ -103,7 +102,7 @@ using namespace klee;
 
 namespace klee {
 cl::OptionCategory ExecCat("Execution option",
-                           "This opntions control kind of execution");
+                           "These options configure execution.");
 
 cl::OptionCategory DebugCat("Debugging options",
                             "These are debugging options.");
@@ -130,12 +129,15 @@ cl::opt<std::string> MaxTime(
     cl::init("0s"),
     cl::cat(TerminationCat));
 
-cl::opt<bool> UseGEPExpr("use-gep-expr", cl::init(true),
-                         cl::desc("Kind of execution mode"), cl::cat(ExecCat));
+cl::opt<bool> UseGEPOptimization(
+    "use-gep-opt", cl::init(true),
+    cl::desc("Lazily initialize whole objects referenced by gep expressions "
+             "instead of only the referenced parts (default=true)"),
+    cl::cat(ExecCat));
 
 cl::opt<bool>
-    LazyInstantiation("lazy-instantiation", cl::init(true),
-                      cl::desc("Enable lazy instantiation (default=true)"),
+    LazyInitialization("lazy-initilalization", cl::init(true),
+                      cl::desc("Enable lazy initilalization (default=true)"),
                       cl::cat(ExecCat));
 
 } // namespace klee
@@ -2763,11 +2765,15 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     if (kgepi->offset)
       offset = AddExpr::create(offset, Expr::createPointer(kgepi->offset));
     ref<Expr> address = AddExpr::create(base, offset);
-    if (UseGEPExpr && !isa<ConstantExpr>(address) && !isa<ConstantExpr>(base)) {
-      if (isGEPExpr(base))
+    if (UseGEPOptimization && !isa<ConstantExpr>(address) && !isa<ConstantExpr>(base)) {
+      if (isGEPExpr(base)) {
         gepExprBases[address] = gepExprBases[base];
-      else
+        gepExprOffsets[address] = gepExprOffsets[base];
+      }
+      else {
         gepExprBases[address] = {base, sourceSize};
+        gepExprOffsets[address] = ExtractExpr::create(offset, 0, Expr::Int32);
+      }
     }
     bindLocal(ki, state, address);
     break;
@@ -2816,7 +2822,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     ref<Expr> result = eval(ki, 0, state).value;
     BitCastInst *bc = cast<BitCastInst>(ki->inst);
 
-    if (UseGEPExpr && isGEPExpr(result)) {
+    if (UseGEPOptimization && isGEPExpr(result)) {
       unsigned size =
           bc->getType()->isPointerTy()
               ? kmodule->targetData->getTypeStoreSize(
@@ -4424,8 +4430,8 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   }
   unsigned bytes = Expr::getMinBytesForWidth(type);
 
-  ref<Expr> base = UseGEPExpr && isGEPExpr(address) ? gepExprBases[address].first : address;
-  unsigned size = UseGEPExpr && isGEPExpr(address) ? gepExprBases[address].second : bytes;
+  ref<Expr> base = UseGEPOptimization && isGEPExpr(address) ? gepExprBases[address].first : address;
+  unsigned size = UseGEPOptimization && isGEPExpr(address) ? gepExprBases[address].second : bytes;
 
   if (SimplifySymIndices) {
     if (!isa<ConstantExpr>(address))
@@ -4502,7 +4508,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   ResolutionList rl;  
   solver->setTimeout(coreSolverTimeout);
   bool incomplete;
-  if (UseGEPExpr && isGEPExpr(address))
+  if (UseGEPOptimization && isGEPExpr(address))
       incomplete = state.addressSpace.resolve(state, solver, base, rl, 0, coreSolverTimeout);
   else
       incomplete = state.addressSpace.resolve(state, solver, address, rl, 0, coreSolverTimeout);
@@ -4517,7 +4523,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     const ObjectState *os = i->second;
     ref<Expr> inBounds;
 
-    if (UseGEPExpr && isGEPExpr(address))
+    if (UseGEPOptimization && isGEPExpr(address))
       inBounds = mo->getBoundsCheckPointer(base, 1);
     else
       inBounds = mo->getBoundsCheckPointer(address, 1);
@@ -4528,7 +4534,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     // bound can be 0 on failure or overlapped
     if (bound) {
       ref<Expr> inBounds = mo->getBoundsCheckPointer(address, bytes);
-      if (UseGEPExpr && isGEPExpr(address)) {
+      if (UseGEPOptimization && isGEPExpr(address)) {
         inBounds =
             AndExpr::create(inBounds, mo->getBoundsCheckPointer(base, size));
       }
@@ -4572,18 +4578,18 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   if (unbound) {
     if (incomplete) {
       terminateStateOnSolverError(*unbound, "Query timed out (resolve).");
-    } else if (LazyInstantiation &&
+    } else if (LazyInitialization &&
                (isa<ReadExpr>(address) || isa<ConcatExpr>(address) ||
-                (UseGEPExpr && isGEPExpr(address)))) {
+                (UseGEPOptimization && isGEPExpr(address)))) {
 
       if (!isReadFromSymbolicArray(base)) {
         terminateStateEarly(
-            *unbound, "Instantiation source contains read from concrete array",
+            *unbound, "initilalization source contains read from concrete array",
             StateTerminationType::Execution);
         return;
       }
 
-      ObjectPair p = lazyInstantiateVariable(*unbound, base, target, size);
+      ObjectPair p = lazyinitializeVariable(*unbound, base, target, size);
       assert(p.first && p.second);
 
       const MemoryObject *mo = p.first;
@@ -4625,23 +4631,23 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   }
 }
 
-ObjectPair Executor::lazyInstantiate(ExecutionState &state, bool isLocal,
+ObjectPair Executor::lazyinitialize(ExecutionState &state, bool isLocal,
                                      const MemoryObject *mo) {
-  executeMakeSymbolic(state, mo, "lazy_instantiation", isLocal);
+  executeMakeSymbolic(state, mo, "lazy_initilalization", isLocal);
   ObjectPair op;
   state.addressSpace.resolveOne(mo->getBaseConstantExpr().get(), op);
   return op;
 }
 
-ObjectPair Executor::lazyInstantiateAlloca(ExecutionState &state,
+ObjectPair Executor::lazyinitializeAlloca(ExecutionState &state,
                                            const MemoryObject *mo,
                                            KInstruction *target, bool isLocal) {
-  ObjectPair op = lazyInstantiate(state, isLocal, mo);
+  ObjectPair op = lazyinitialize(state, isLocal, mo);
   bindLocal(target, state, op.first->getBaseExpr());
   return op;
 }
 
-ObjectPair Executor::lazyInstantiateVariable(ExecutionState &state,
+ObjectPair Executor::lazyinitializeVariable(ExecutionState &state,
                                              ref<Expr> address,
                                              KInstruction *target,
                                              uint64_t size) {
@@ -4650,7 +4656,7 @@ ObjectPair Executor::lazyInstantiateVariable(ExecutionState &state,
   MemoryObject *mo =
       memory->allocate(size, false, /*isGlobal=*/false, allocSite,
                        /*allocationAlignment=*/8, address);
-  return lazyInstantiate(state, /*isLocal=*/false, mo);
+  return lazyinitialize(state, /*isLocal=*/false, mo);
 }
 
 const Array *Executor::makeArray(ExecutionState &state, const uint64_t size,
@@ -4787,8 +4793,7 @@ ExecutionState* Executor::formState(Function *f,
     }
   }
 
-  ExecutionState *state = new ExecutionState(
-      kmodule->functionMap[f], kmodule->functionMap[f]->blockMap[&*f->begin()]);
+  ExecutionState *state = new ExecutionState(kmodule->functionMap[f]);
 
   assert(arguments.size() == f->arg_size() && "wrong number of arguments");
   for (unsigned i = 0, e = f->arg_size(); i != e; ++i)
@@ -4829,7 +4834,7 @@ void Executor::clearGlobal() {
   globalAddresses.clear();
 }
 
-void Executor:: prepareSymbolicValue(ExecutionState &state, KInstruction *target) {
+void Executor::prepareSymbolicValue(ExecutionState &state, KInstruction *target) {
   Instruction *allocSite = target->inst;
   uint64_t size = kmodule->targetData->getTypeStoreSize(allocSite->getType());
   uint64_t width = kmodule->targetData->getTypeSizeInBits(allocSite->getType());
@@ -4845,11 +4850,11 @@ void Executor:: prepareSymbolicValue(ExecutionState &state, KInstruction *target
         count = Expr::createZExtToPointerWidth(count);
         size = MulExpr::create(size, count);
       }
-      lazyInstantiateVariable(state, result, target, elementSize);
+      lazyinitializeVariable(state, result, target, elementSize);
   }
 }
 
-void Executor:: prepareSymbolicRegister(ExecutionState &state, StackFrame &sf, unsigned regNum) {
+void Executor::prepareSymbolicRegister(ExecutionState &state, StackFrame &sf, unsigned regNum) {
   KInstruction *allocInst = sf.kf->reg2inst[regNum];
   prepareSymbolicValue(state, allocInst);
 }
@@ -4992,13 +4997,13 @@ void Executor::logState(ExecutionState &state, int id,
     *f << "Symbolic number " << sc++ << "\n";
     *f << "Associated memory object: " << i.first.get()->id << "\n";
     *f << "Memory object size: " << i.first.get()->size << "\n";
-    if (!i.first->isLazyInstantiated()) {
-      *f << "<Not instantiated lazily>"
+    if (!i.first->isLazyInitialized()) {
+      *f << "<Not initialized lazily>"
          << "\n";
       continue;
     }
-    auto lisource = i.first->lazyInstantiatedSource;
-    *f << "Lazy Instantiation Source: ";
+    auto lisource = i.first->lazyInitializationSource;
+    *f << "Lazy Initializaion Source: ";
     lisource->print(*f);
     *f << "\n";
   }
@@ -5010,59 +5015,91 @@ void Executor::logState(ExecutionState &state, int id,
   }
 }
 
-int Executor::resolveLazyInstantiation(ExecutionState &state) {
-  int status = 0;
-  for (auto i : state.symbolics) {
-    if (!i.first->isLazyInstantiated()) {
-      continue;
-    }
-    status = 1;
-    auto lisource = i.first->lazyInstantiatedSource;
-    switch (lisource->getKind()) {
-    case Expr::Read: {
-      ref<ReadExpr> base = dyn_cast<ReadExpr>(lisource);
-      auto parent = base->updates.root->binding;
-      if (!parent) {
-        return -1;
-      }
-      state.pointers[lisource] = std::make_pair(parent, base->index);
-      break;
-    }
-    case Expr::Concat: {
-      ref<ReadExpr> base =
-          ArrayExprHelper::hasOrderedReads(*dyn_cast<ConcatExpr>(lisource));
-      auto parent = base->updates.root->binding;
-      if (!parent) {
-        return -1;
-      }
-      state.pointers[lisource] = std::make_pair(parent, base->index);
-      break;
-    }
-    default:
+int Executor::getBase(ref<Expr> expr,
+                      std::pair<Symbolic, ref<Expr>> &resolved) {
+  switch (expr->getKind()) {
+  case Expr::Read: {
+    ref<ReadExpr> base = dyn_cast<ReadExpr>(expr);
+    auto parent = base->updates.root->binding;
+    if (!parent) {
       return -1;
     }
+    resolved =
+        std::make_pair(std::make_pair(parent, base->updates.root), base->index);
+    break;
+  }
+  case Expr::Concat: {
+    ref<ReadExpr> base =
+        ArrayExprHelper::hasOrderedReads(*dyn_cast<ConcatExpr>(expr));
+    auto parent = base->updates.root->binding;
+    if (!parent) {
+      return -1;
+    }
+    resolved =
+        std::make_pair(std::make_pair(parent, base->updates.root), base->index);
+    break;
+  }
+  default: {
+    if (UseGEPOptimization && isGEPExpr(expr)) {
+      ref<Expr> gepBase = gepExprBases[expr].first;
+      ref<Expr> offset = gepExprOffsets[expr];
+      std::pair<Symbolic, ref<Expr>> gepResolved;
+      int status = getBase(gepBase, gepResolved);
+      if (status == 1) {
+        auto parent = gepResolved.first.first;
+        auto array = gepResolved.first.second;
+        auto gepIndex = gepResolved.second;
+        auto index = AddExpr::create(gepIndex, offset);
+        resolved = std::make_pair(std::make_pair(parent, array), index);
+      } else
+        return status;
+    } else {
+      return -1;
+    }
+    break;
+  }
+  }
+  return 1;
+}
+
+int Executor::resolveLazyInitialization(
+    const ExecutionState &state,
+    std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> &resolved) {
+  int status = 0;
+  for (auto &symbolic : state.symbolics) {
+    if (!symbolic.first->isLazyInitialized()) {
+      continue;
+    }
+    auto lisource = symbolic.first->lazyInitializationSource;
+    std::pair<Symbolic, ref<Expr>> resolvedSymbolic;
+    int localStatus = getBase(lisource, resolvedSymbolic);
+    resolved[lisource] = resolvedSymbolic;
+    if (status != -1)
+      return status = localStatus;
   }
   return status;
 }
 
-void Executor::setInstantiationGraph(ExecutionState &state, TestCase &tc) {
-  // Ugly hotfix
+void Executor::setInitializationGraph(
+    const ExecutionState &state,
+    const std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> &resolved,
+    KTest &ktest) {
   std::map<size_t, std::vector<Offset>> ofst;
   for (size_t i = 0; i < state.symbolics.size(); i++) {
-    if (!state.symbolics[i].first->isLazyInstantiated())
+    if (!state.symbolics[i].first->isLazyInitialized())
       continue;
     auto parent =
-        state.pointers[state.symbolics[i].first->lazyInstantiatedSource];
+        resolved.at(state.symbolics[i].first->lazyInitializationSource);
     // Resolve offset (parent.second)
     ref<ConstantExpr> offset;
     bool success = solver->getValue(state.constraints, parent.second, offset,
                                     state.queryMetaData);
     if (!success)
-      klee_error("Offset resolution failure (setInstantiationGraph)");
+      klee_error("Offset resolution failure (setinitilalizationGraph)");
     // Resolve indices of i and parent.first
     size_t index_parent;
     for (size_t j = 0; j < state.symbolics.size(); j++) {
-      if (state.symbolics[j].first == parent.first) {
+      if (state.symbolics[j].first == parent.first.first) {
         index_parent = j;
         break;
       }
@@ -5074,17 +5111,17 @@ void Executor::setInstantiationGraph(ExecutionState &state, TestCase &tc) {
     ofst[index_parent].push_back(o);
   }
   for (auto i : ofst) {
-    tc.objects[i.first].n_offsets = i.second.size();
-    tc.objects[i.first].offsets = new Offset[i.second.size()];
+    ktest.objects[i.first].numOffsets = i.second.size();
+    ktest.objects[i.first].offsets = new Offset[i.second.size()];
     for (size_t j = 0; j < i.second.size(); j++) {
-      tc.objects[i.first].offsets[j] = i.second[j];
+      ktest.objects[i.first].offsets[j] = i.second[j];
     }
   }
   return;
 }
 
 bool Executor::getSymbolicSolution(const ExecutionState &state,
-                                   TestCase &res) {
+                                   KTest &res) {
   solver->setTimeout(coreSolverTimeout);
 
   ConstraintSet extendedConstraints(state.constraints);
@@ -5125,14 +5162,19 @@ bool Executor::getSymbolicSolution(const ExecutionState &state,
                              ConstantExpr::alloc(0, Expr::Bool));
     return false;
   }
-  
-  res.objects = new ConcretizedObject[state.symbolics.size()];
-  res.n_objects = state.symbolics.size();
+
+  res.objects = new KTestObject[state.symbolics.size()];
+  res.numObjects = state.symbolics.size();
 
   for (unsigned i = 0; i != state.symbolics.size(); ++i) {
     auto mo = state.symbolics[i].first;
-    res.objects[i] =
-        createConcretizedObject(mo->name.c_str(), values[i], mo->address);
+    KTestObject *o = &res.objects[i];
+    o->name = const_cast<char*>(mo->name.c_str());
+    o->numBytes = values[i].size();
+    o->bytes = new unsigned char[o->numBytes];
+    std::copy(values[i].begin(), values[i].end(), o->bytes);
+    o->numOffsets = 0;
+    o->offsets = nullptr;
   }
 
   return true;

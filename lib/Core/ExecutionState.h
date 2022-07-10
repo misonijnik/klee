@@ -146,6 +146,8 @@ struct CleanupPhaseUnwindingInformation : public UnwindingInformation {
   }
 };
 
+typedef std::pair<ref<const MemoryObject>, const Array *> Symbolic;
+
 /// @brief ExecutionState representing a path under exploration
 class ExecutionState {
 #ifdef KLEE_UNITTEST
@@ -158,8 +160,6 @@ private:
 
 public:
   using stack_ty = std::vector<StackFrame>;
-
-  std::map<ref<Expr>, std::pair<const MemoryObject *, ref<Expr>>> pointers;
 
   // Execution - Control Flow specific
 
@@ -266,7 +266,6 @@ public:
 #endif
   // only to create the initial state
   explicit ExecutionState(KFunction *kf);
-  explicit ExecutionState(KFunction *kf, KBlock *kb);
   // no copy assignment, use copy constructor
   ExecutionState &operator=(const ExecutionState &) = delete;
   // no move ctor
@@ -278,9 +277,6 @@ public:
 
   ExecutionState *branch();
   ExecutionState *withKFunction(KFunction *kf);
-  ExecutionState *withStackFrame(KFunction *kf);
-  ExecutionState *withKBlock(KBlock *kb);
-  ExecutionState *empty();
   ExecutionState *copy();
 
   void pushFrame(KInstIterator caller, KFunction *kf);

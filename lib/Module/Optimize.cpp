@@ -160,7 +160,7 @@ static void AddStandardCompilePasses(legacy::PassManager &PM) {
 /// inter-procedural optimizations if applicable.
 void Optimize(Module *M, llvm::ArrayRef<const char *> preservedFunctions) {
 
-  // Instantiate the pass manager to organize the passes.
+  // initialize the pass manager to organize the passes.
   legacy::PassManager Passes;
 
   // If we're verifying, start off with a verification pass.

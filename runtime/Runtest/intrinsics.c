@@ -21,11 +21,9 @@
 #include "klee/klee.h"
 
 #include "klee/ADT/KTest.h"
-#include "klee/ADT/TestCase.h"
 
 static KTest *testData = 0;
 static unsigned testPosition = 0;
-static TestCase *input_tc;
 static uintptr_t *addresses;
 
 static unsigned char rand_byte(void) {
@@ -52,29 +50,19 @@ static void report_internal_error(const char *msg, ...) {
   }
 }
 
-int ends_with(const char *name, const char *extension) {
-  const char *ldot = strrchr(name, '.');
-  if (ldot != NULL) {
-    int length = strlen(extension);
-    return strncmp(ldot + 1, extension, length) == 0;
-  }
-  return 0;
-}
-
-void recursively_allocate(ConcretizedObject *obj, size_t index, void *addr,
+void recursively_allocate(KTestObject *obj, size_t index, void *addr,
                           int lazy) {
-  /* Verify implementation */
   if (!lazy) {
-    memcpy(addr, obj->values, obj->size);
+    memcpy(addr, obj->bytes, obj->numBytes);
     addresses[index] = (uintptr_t)addr;
   } else {
-    void *address = malloc(obj->size);
-    memcpy(address, obj->values, obj->size);
+    void *address = malloc(obj->numBytes);
+    memcpy(address, obj->bytes, obj->numBytes);
     addresses[index] = (uintptr_t)address;
   }
-  for (size_t i = 0; i < obj->n_offsets; i++) {
+  for (size_t i = 0; i < obj->numOffsets; i++) {
     if (!addresses[obj->offsets[i].index]) {
-      recursively_allocate(&input_tc->objects[obj->offsets[i].index],
+      recursively_allocate(&testData->objects[obj->offsets[i].index],
                            obj->offsets[i].index, 0, 1);
     }
     void *offset_addr = (void *)(addresses[index] + (obj->offsets[i].offset));
@@ -115,89 +103,50 @@ void klee_make_symbolic(void *array, size_t nbytes, const char *name) {
     return;
   }
 
-  if (!input_tc && !testData) {
+  if (!testData) {
     char tmp[256];
     char *name = getenv("KTEST_FILE");
 
     if (!name) {
-      fprintf(stdout, "KLEE-RUNTIME: KTEST_FILE not set, please enter .ktest path: ");
+      fprintf(stdout,
+              "KLEE-RUNTIME: KTEST_FILE not set, please enter .ktest path: ");
       fflush(stdout);
       name = tmp;
       if (!fgets(tmp, sizeof tmp, stdin) || !strlen(tmp)) {
-        fprintf(stderr, "KLEE-RUNTIME: cannot replay, no KTEST_FILE or user input\n");
+        fprintf(stderr,
+                "KLEE-RUNTIME: cannot replay, no KTEST_FILE or user input\n");
         exit(1);
       }
       tmp[strlen(tmp) - 1] = '\0'; /* kill newline */
     }
-    if (ends_with(name, "ktestjson")) {
-      input_tc = TC_fromFile(name);
-    } else if (ends_with(name, "ktest")) {
-      testData = kTest_fromFile(name);
-    } else {
-      fprintf(stderr, "KLEE-RUNTIME: unknown test file type\n");
-      exit(1);
-    }
-    if (!input_tc && !testData) {
+    testData = kTest_fromFile(name);
+    if (!testData) {
       fprintf(stderr, "KLEE-RUNTIME: unable to open .ktest file\n");
       exit(1);
     }
-    if (input_tc) {
-      addresses = calloc(input_tc->n_objects, sizeof(uintptr_t));
-    }
+    addresses = calloc(testData->numObjects, sizeof(uintptr_t));
   }
 
-  if (input_tc) {
-    for (;; ++testPosition) {
-      while (addresses[testPosition] && testPosition < input_tc->n_objects)
-        testPosition++;
-      if (testPosition >= input_tc->n_objects) {
-        report_internal_error("out of inputs. Will use zero if continuing.");
-        memset(array, 0, nbytes);
-        break;
-      } else {
-        ConcretizedObject *o = &input_tc->objects[testPosition];
-        if (strcmp("model_version", o->name) == 0 &&
-            strcmp("model_version", name) != 0) {
-          // Skip over this KTestObject because we've hit
-          // `model_version` which is from the POSIX runtime
-          // and the caller didn't ask for it.
-          continue;
-        }
-        recursively_allocate(o, testPosition, array, 0);
-        ++testPosition;
-        break;
-      }
+  for (;; ++testPosition) {
+    while (addresses[testPosition] && testPosition < testData->numObjects) {
+      testPosition++;
     }
-  } else if (testData) {
-    for (;; ++testPosition) {
-      if (testPosition >= testData->numObjects) {
-        report_internal_error("out of inputs. Will use zero if continuing.");
-        memset(array, 0, nbytes);
-        break;
-      } else {
-        KTestObject *o = &testData->objects[testPosition];
-        if (strcmp("model_version", o->name) == 0 &&
-            strcmp("model_version", name) != 0) {
-          // Skip over this KTestObject because we've hit
-          // `model_version` which is from the POSIX runtime
-          // and the caller didn't ask for it.
-          continue;
-        }
-        if (strcmp(name, o->name) != 0) {
-          report_internal_error(
-              "object name mismatch. Requesting \"%s\" but returning \"%s\"",
-              name, o->name);
-        }
-        memcpy(array, o->bytes, nbytes < o->numBytes ? nbytes : o->numBytes);
-        if (nbytes != o->numBytes) {
-          report_internal_error("object sizes differ. Expected %zu but got %u",
-                                nbytes, o->numBytes);
-          if (o->numBytes < nbytes)
-            memset((char *)array + o->numBytes, 0, nbytes - o->numBytes);
-        }
-        ++testPosition;
-        break;
+    if (testPosition >= testData->numObjects) {
+      report_internal_error("out of inputs. Will use zero if continuing.");
+      memset(array, 0, nbytes);
+      break;
+    } else {
+      KTestObject *o = &testData->objects[testPosition];
+      if (strcmp("model_version", o->name) == 0 &&
+          strcmp("model_version", name) != 0) {
+        // Skip over this KTestObject because we've hit
+        // `model_version` which is from the POSIX runtime
+        // and the caller didn't ask for it.
+        continue;
       }
+      recursively_allocate(o, testPosition, array, 0);
+      ++testPosition;
+      break;
     }
   }
 }

@@ -9,6 +9,7 @@
 #ifndef KLEE_INTERPRETER_H
 #define KLEE_INTERPRETER_H
 
+#include "klee/Expr/Expr.h"
 #include <map>
 #include <memory>
 #include <set>
@@ -16,7 +17,6 @@
 #include <vector>
 
 struct KTest;
-struct TestCase;
 
 namespace llvm {
 class BasicBlock;
@@ -31,6 +31,8 @@ namespace klee {
 class ExecutionState;
 class Interpreter;
 class TreeStreamWriter;
+
+typedef std::pair<ref<const MemoryObject>, const Array *> Symbolic;
 
 class InterpreterHandler {
 public:
@@ -173,10 +175,19 @@ public:
                                 LogType logFormat = STP) = 0;
 
   virtual bool getSymbolicSolution(const ExecutionState &state,
-                                   TestCase &res) = 0;
+                                   KTest &res) = 0;
 
-  virtual int resolveLazyInstantiation(ExecutionState& state) = 0;
-  virtual void setInstantiationGraph(ExecutionState& state, TestCase& tc) = 0;
+  virtual int getBase(ref<Expr> expr,
+                      std::pair<Symbolic, ref<Expr>> &resolved) = 0;
+
+  virtual int resolveLazyInitialization(
+      const ExecutionState &state,
+      std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> &resolved) = 0;
+
+  virtual void setInitializationGraph(
+      const ExecutionState &state,
+      const std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> &resolved,
+      KTest &tc) = 0;
 
   virtual void logState(ExecutionState &state, int id,
                         std::unique_ptr<llvm::raw_fd_ostream> &f) = 0;

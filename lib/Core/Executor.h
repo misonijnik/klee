@@ -135,6 +135,7 @@ private:
   TimerGroup timers;
   std::unique_ptr<PTree> processTree;
   std::map<ref<Expr>, std::pair<ref<Expr>, unsigned>> gepExprBases;
+  ExprHashMap<ref<Expr>> gepExprOffsets;
 
   /// Used to track states that have been added during the current
   /// instructions step. 
@@ -344,14 +345,14 @@ private:
                               ref<Expr> value /* undef if read */,
                               KInstruction *target /* undef if write */);
 
-  ObjectPair lazyInstantiate(ExecutionState &state, bool isLocal,
+  ObjectPair lazyinitialize(ExecutionState &state, bool isLocal,
                              const MemoryObject *mo);
 
-  ObjectPair lazyInstantiateAlloca(ExecutionState &state,
+  ObjectPair lazyinitializeAlloca(ExecutionState &state,
                                    const MemoryObject *mo, KInstruction *target,
                                    bool isLocal);
 
-  ObjectPair lazyInstantiateVariable(ExecutionState &state, ref<Expr> address,
+  ObjectPair lazyinitializeVariable(ExecutionState &state, ref<Expr> address,
                                      KInstruction *target, uint64_t size);
 
   void executeMakeSymbolic(ExecutionState &state, const MemoryObject *mo,
@@ -600,14 +601,22 @@ public:
                         Interpreter::LogType logFormat =
                             Interpreter::STP) override;
 
-  int resolveLazyInstantiation(ExecutionState &state) override;
+  int getBase(ref<Expr> expr,
+              std::pair<Symbolic, ref<Expr>> &resolved) override;
 
-  void setInstantiationGraph(ExecutionState &state, TestCase &tc) override;
+  int resolveLazyInitialization(
+      const ExecutionState &state,
+      std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> &resolved) override;
+
+  void setInitializationGraph(
+      const ExecutionState &state,
+      const std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> &resolved,
+      KTest &tc) override;
 
   void logState(ExecutionState &state, int id,
                 std::unique_ptr<llvm::raw_fd_ostream> &f) override;
 
-  bool getSymbolicSolution(const ExecutionState &state, TestCase &res) override;
+  bool getSymbolicSolution(const ExecutionState &state, KTest &res) override;
 
   void getCoveredLines(const ExecutionState &state,
                        std::map<const std::string *, std::set<unsigned>> &res)
