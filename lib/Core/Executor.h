@@ -345,15 +345,14 @@ private:
                               ref<Expr> value /* undef if read */,
                               KInstruction *target /* undef if write */);
 
-  ObjectPair lazyinitialize(ExecutionState &state, bool isLocal,
-                             const MemoryObject *mo);
+  ObjectPair lazyInitialize(ExecutionState &state, bool isLocal,
+                            const MemoryObject *mo);
 
-  ObjectPair lazyinitializeAlloca(ExecutionState &state,
-                                   const MemoryObject *mo, KInstruction *target,
-                                   bool isLocal);
+  ObjectPair lazyInitializeAlloca(ExecutionState &state, const MemoryObject *mo,
+                                  KInstruction *target, bool isLocal);
 
-  ObjectPair lazyinitializeVariable(ExecutionState &state, ref<Expr> address,
-                                     KInstruction *target, uint64_t size);
+  ObjectPair lazyInitializeVariable(ExecutionState &state, ref<Expr> address,
+                                    KInstruction *target, uint64_t size);
 
   void executeMakeSymbolic(ExecutionState &state, const MemoryObject *mo,
                            const std::string &name, bool isLocal);

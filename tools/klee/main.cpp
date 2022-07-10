@@ -529,8 +529,9 @@ void KleeHandler::processTestCase(const ExecutionState &state,
 
     std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> resolved;
 
-    int lazy_initilalization_resolved = m_interpreter->resolveLazyInitialization(state, resolved);
-    if(lazy_initilalization_resolved == 1) {
+    int lazy_initialization_resolved =
+        m_interpreter->resolveLazyInitialization(state, resolved);
+    if (lazy_initialization_resolved == 1) {
       m_interpreter->setInitializationGraph(state, resolved, ktest);
     }
 
@@ -539,7 +540,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
 
     unsigned test_id = ++m_numTotalTests;
 
-    if (success && lazy_initilalization_resolved != -1) {
+    if (success && lazy_initialization_resolved != -1) {
       writeTestCase(ktest, test_id);
       if (WriteStates) {
         auto f = openTestFile("state", test_id);
@@ -549,7 +550,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
 
     kTest_free(&ktest);
 
-    if (WriteStates && lazy_initilalization_resolved == -1) {
+    if (WriteStates && lazy_initialization_resolved == -1) {
       auto f_s = openTestFile("state_li_unresolved", test_id);
       m_interpreter->logState(state, state_id, f_s);
       auto f = openTestFile(errorSuffix, test_id);

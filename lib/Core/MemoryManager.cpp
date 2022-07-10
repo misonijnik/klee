@@ -147,8 +147,9 @@ MemoryObject *MemoryManager::allocate(uint64_t size, bool isLocal,
     return 0;
 
   ++stats::allocations;
-  MemoryObject *res = new MemoryObject(address, size, isLocal, isGlobal, false,
-                                       allocSite, this, lazyInitializationSource);
+  MemoryObject *res =
+      new MemoryObject(address, size, isLocal, isGlobal, false, allocSite, this,
+                       lazyInitializationSource);
   objects.insert(res);
   return res;
 }

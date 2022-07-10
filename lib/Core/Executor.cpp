@@ -4585,12 +4585,12 @@ void Executor::executeMemoryOperation(ExecutionState &state,
 
       if (!isReadFromSymbolicArray(base)) {
         terminateStateEarly(
-            *unbound, "initilalization source contains read from concrete array",
+            *unbound, "initialization source contains read from concrete array",
             StateTerminationType::Execution);
         return;
       }
 
-      ObjectPair p = lazyinitializeVariable(*unbound, base, target, size);
+      ObjectPair p = lazyInitializeVariable(*unbound, base, target, size);
       assert(p.first && p.second);
 
       const MemoryObject *mo = p.first;
@@ -4632,23 +4632,23 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   }
 }
 
-ObjectPair Executor::lazyinitialize(ExecutionState &state, bool isLocal,
-                                     const MemoryObject *mo) {
-  executeMakeSymbolic(state, mo, "lazy_initilalization", isLocal);
+ObjectPair Executor::lazyInitialize(ExecutionState &state, bool isLocal,
+                                    const MemoryObject *mo) {
+  executeMakeSymbolic(state, mo, "lazy_initialization", isLocal);
   ObjectPair op;
   state.addressSpace.resolveOne(mo->getBaseConstantExpr().get(), op);
   return op;
 }
 
-ObjectPair Executor::lazyinitializeAlloca(ExecutionState &state,
+ObjectPair Executor::lazyInitializeAlloca(ExecutionState &state,
                                            const MemoryObject *mo,
                                            KInstruction *target, bool isLocal) {
-  ObjectPair op = lazyinitialize(state, isLocal, mo);
+  ObjectPair op = lazyInitialize(state, isLocal, mo);
   bindLocal(target, state, op.first->getBaseExpr());
   return op;
 }
 
-ObjectPair Executor::lazyinitializeVariable(ExecutionState &state,
+ObjectPair Executor::lazyInitializeVariable(ExecutionState &state,
                                              ref<Expr> address,
                                              KInstruction *target,
                                              uint64_t size) {
@@ -4657,7 +4657,7 @@ ObjectPair Executor::lazyinitializeVariable(ExecutionState &state,
   MemoryObject *mo =
       memory->allocate(size, false, /*isGlobal=*/false, allocSite,
                        /*allocationAlignment=*/8, address);
-  return lazyinitialize(state, /*isLocal=*/false, mo);
+  return lazyInitialize(state, /*isLocal=*/false, mo);
 }
 
 const Array *Executor::makeArray(ExecutionState &state, const uint64_t size,
@@ -4851,7 +4851,7 @@ void Executor::prepareSymbolicValue(ExecutionState &state, KInstruction *target)
         count = Expr::createZExtToPointerWidth(count);
         size = MulExpr::create(size, count);
       }
-      lazyinitializeVariable(state, result, target, elementSize);
+      lazyInitializeVariable(state, result, target, elementSize);
   }
 }
 
@@ -5096,7 +5096,7 @@ void Executor::setInitializationGraph(
     bool success = solver->getValue(state.constraints, parent.second, offset,
                                     state.queryMetaData);
     if (!success)
-      klee_error("Offset resolution failure (setinitilalizationGraph)");
+      klee_error("Offset resolution failure (setInitializationGraph)");
     // Resolve indices of i and parent.first
     size_t index_parent;
     for (size_t j = 0; j < state.symbolics.size(); j++) {
