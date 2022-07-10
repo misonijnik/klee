@@ -2158,7 +2158,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       }
     }      
     break;
-  }
+  }      
   case Instruction::Br: {
     BranchInst *bi = cast<BranchInst>(i);
     if (bi->isUnconditional()) {
@@ -4912,36 +4912,12 @@ void Executor::runFunctionAsMain(Function *f,
     statsTracker->done();
 }
 
-void Executor::runFunctionGuided(Function *fn, int argc, char **argv,
-                                 char **envp) {
-  ExecutionState *state = formState(fn, argc, argv, envp);
-  state->popFrame();
-  bindModuleConstants();
-  KFunction *kf = kmodule->functionMap[fn];
-  ExecutionState *initialState = state->withKFunction(kf);
-  prepareSymbolicArgs(*initialState, kf);
-  runGuided(*initialState, kf);
-}
-
 void Executor::runMainAsGuided(Function *mainFn, int argc, char **argv,
                                char **envp) {
   ExecutionState *state = formState(mainFn, argc, argv, envp);
   bindModuleConstants();
   KFunction *kf = kmodule->functionMap[mainFn];
   runGuided(*state, kf);
-}
-
-void Executor::runMainWithTarget(Function *mainFn, BasicBlock *target, int argc,
-                                 char **argv, char **envp) {
-  ExecutionState *state = formState(mainFn, argc, argv, envp);
-  bindModuleConstants();
-  KFunction *kf = kmodule->functionMap[mainFn];
-  KBlock *kb = kmodule->functionMap[target->getParent()]->blockMap[target];
-  runWithTarget(*state, kf, kb);
-  // hack to clear memory objects
-  delete memory;
-  memory = new MemoryManager(NULL);
-  clearGlobal();
 }
 
 unsigned Executor::getPathStreamID(const ExecutionState &state) {

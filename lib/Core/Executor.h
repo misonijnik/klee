@@ -57,9 +57,6 @@ namespace llvm {
   class DataLayout;
   class Twine;
   class Value;
-
-  llvm::Function* getTargetFunction(llvm::Value *calledVal,
-                                    klee::ExecutionState &state);
 }
 
 namespace klee {  
@@ -574,14 +571,8 @@ public:
   void runFunctionAsMain(llvm::Function *f, int argc, char **argv,
                          char **envp) override;
 
-  void runFunctionGuided(llvm::Function *fn, int argc, char **argv, char **envp) override;
-
   void runMainAsGuided(llvm::Function *f, int argc, char **argv,
-                       char **envp) override;
-
-  void runMainWithTarget(llvm::Function *mainFn, llvm::BasicBlock *target,
-                         int argc, char **argv, char **envp) override;
-
+                              char **envp) override;
   /*** Runtime options ***/
 
   void setHaltExecution(bool value) override { haltExecution = value; }

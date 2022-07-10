@@ -71,9 +71,9 @@ namespace klee {
     KBlock &operator=(const KBlock &) = delete;
 
     unsigned getArgRegister(unsigned index) const { return index; }
-    void
-    handleKInstruction(std::map<llvm::Instruction *, unsigned> &registerMap,
-                       llvm::Instruction *inst, KModule *km, KInstruction *ki);
+    void handleKInstruction(std::map<llvm::Instruction*, unsigned> &registerMap,
+                            llvm::Instruction *inst, KModule *km,
+                            KInstruction *ki);
     virtual KBlockType getKBlockType() const { return KBlockType::Base; };
     virtual ~KBlock() = default;
   };

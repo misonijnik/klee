@@ -24,13 +24,12 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <cassert>
-#include <fstream>
 #include <iomanip>
 #include <map>
 #include <set>
 #include <sstream>
 #include <stdarg.h>
-#include <string>
+
 
 using namespace llvm;
 using namespace klee;

@@ -58,6 +58,7 @@
 #include <iterator>
 #include <sstream>
 
+
 using namespace llvm;
 using namespace klee;
 
@@ -353,7 +354,7 @@ public:
 
   void setInterpreter(Interpreter *i);
 
-  void processTestCase(const ExecutionState &state,
+  void processTestCase(const ExecutionState  &state,
                        const char *errorMessage,
                        const char *errorSuffix);
 

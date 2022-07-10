@@ -107,7 +107,7 @@ public:
       isGlobal(_isGlobal),
       isFixed(_isFixed),
       isUserSpecified(false),
-      parent(_parent),
+      parent(_parent), 
       allocSite(_allocSite) {
   }
 
