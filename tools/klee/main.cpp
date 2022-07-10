@@ -309,21 +309,6 @@ namespace {
            cl::desc("Link the llvm libc++ library into the bitcode (default=false)"),
            cl::init(false),
            cl::cat(LinkCat));
-
-  /*** These are options specific to the Test-Comp competition ***/
-  cl::OptionCategory TestCompCat("Options specific to Test-Comp",
-                                 "Options specific to Test-Comp.");
-
-  cl::opt<bool> WriteXMLTests("write-xml-tests",
-                              cl::desc("Write XML-formatted tests"),
-                              cl::init(false), cl::cat(TestCompCat));
-
-  cl::opt<std::string> TCOrig("tc-orig", cl::desc("Test-Comp original file"),
-                              cl::cat(TestCompCat));
-
-  cl::opt<std::string> TCHash("tc-hash",
-                              cl::desc("Test-Comp hash sum of original file"),
-                              cl::cat(TestCompCat));
 }
 
 namespace klee {
@@ -368,7 +353,7 @@ public:
 
   void setInterpreter(Interpreter *i);
 
-  void processTestCase(ExecutionState  &state,
+  void processTestCase(const ExecutionState &state,
                        const char *errorMessage,
                        const char *errorSuffix);
 
@@ -521,10 +506,8 @@ void KleeHandler::writeTestCase(const KTest &ktest, unsigned id) {
   }
 }
 
-// _-_ Temporarily dropped the const qualifier of ExecutionState &state
-/* Outputs all files (.ktest, .kquery, .cov etc.) describing a test case + XML
- */
-void KleeHandler::processTestCase(ExecutionState &state,
+/* Outputs all files (.ktest, .kquery, .cov etc.) describing a test case */
+void KleeHandler::processTestCase(const ExecutionState &state,
                                   const char *errorMessage,
                                   const char *errorSuffix) {
 
@@ -1483,44 +1466,6 @@ int main(int argc, char **argv, char **envp) {
 
 
   auto startTime = std::time(nullptr);
-
-  if (WriteXMLTests) {
-    // Write metadata.xml
-    auto meta_file = handler->openOutputFile("metadata.xml");
-    if (!meta_file)
-      klee_error("Could not write metadata.xml");
-
-    *meta_file
-        << "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n";
-    *meta_file
-        << "<!DOCTYPE test-metadata PUBLIC \"+//IDN sosy-lab.org//DTD "
-           "test-format test-metadata 1.0//EN\" "
-           "\"https://sosy-lab.org/test-format/test-metadata-1.0.dtd\">\n";
-    *meta_file << "<test-metadata>\n";
-    *meta_file << "\t<sourcecodelang>C</sourcecodelang>\n";
-    *meta_file << "\t<producer>" << PACKAGE_STRING << "</producer>\n";
-
-    // Assume with early exit a bug finding mode and otherwise coverage
-    if (OptExitOnError)
-      *meta_file << "\t<specification>COVER( init(main()), FQL(COVER "
-                    "EDGES(@CALL(__VERIFIER_error))) )</specification>\n";
-    else
-      *meta_file << "\t<specification>COVER( init(main()), FQL(COVER "
-                    "EDGES(@DECISIONEDGE)) )</specification>\n";
-
-    // Assume the input file resembles the original source file; just exchange
-    // extension
-    *meta_file << "\t<programfile>" << TCOrig << ".c</programfile>\n";
-    *meta_file << "\t<programhash>" << TCHash << "</programhash>\n";
-    *meta_file << "\t<entryfunction>" << EntryPoint << "</entryfunction>\n";
-    *meta_file << "\t<architecture>"
-               << loadedModules[0]->getDataLayout().getPointerSizeInBits()
-               << "bit</architecture>\n";
-    std::stringstream t;
-    t << std::put_time(std::localtime(&startTime), "%Y-%m-%dT%H:%M:%SZ");
-    *meta_file << "\t<creationtime>" << t.str() << "</creationtime>\n";
-    *meta_file << "</test-metadata>\n";
-  }
 
   { // output clock info and start time
     std::stringstream startInfo;

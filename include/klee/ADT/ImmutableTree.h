@@ -12,6 +12,7 @@
 
 #include <cassert>
 #include <vector>
+#include <cstddef>
 
 namespace klee {
   template<class K, class V, class KOV, class CMP>

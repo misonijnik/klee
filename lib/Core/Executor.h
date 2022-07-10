@@ -613,7 +613,7 @@ public:
       const std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> &resolved,
       KTest &tc) override;
 
-  void logState(ExecutionState &state, int id,
+  void logState(const ExecutionState &state, int id,
                 std::unique_ptr<llvm::raw_fd_ostream> &f) override;
 
   bool getSymbolicSolution(const ExecutionState &state, KTest &res) override;

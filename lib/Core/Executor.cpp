@@ -135,10 +135,11 @@ cl::opt<bool> UseGEPOptimization(
              "instead of only the referenced parts (default=true)"),
     cl::cat(ExecCat));
 
-cl::opt<bool>
-    LazyInitialization("lazy-initilalization", cl::init(true),
-                      cl::desc("Enable lazy initilalization (default=true)"),
-                      cl::cat(ExecCat));
+cl::opt<bool> LazyInitialization(
+    "use-lazy-init",
+     cl::init(true),
+     cl::desc("Enable lazy initialization (default=true)"),
+     cl::cat(ExecCat));
 
 } // namespace klee
 
@@ -4987,7 +4988,7 @@ void Executor::getConstraintLog(const ExecutionState &state, std::string &res,
   }
 }
 
-void Executor::logState(ExecutionState &state, int id,
+void Executor::logState(const ExecutionState &state, int id,
                         std::unique_ptr<llvm::raw_fd_ostream> &f) {
   *f << "State number " << state.id << ". Test number: " << id << "\n\n";
   *f << state.symbolics.size() << " symbolics total. "

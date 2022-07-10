@@ -47,7 +47,7 @@ public:
   virtual void incPathsCompleted() = 0;
   virtual void incPathsExplored(std::uint32_t num = 1) = 0;
 
-  virtual void processTestCase(ExecutionState &state,
+  virtual void processTestCase(const ExecutionState &state,
                                const char *err,
                                const char *suffix) = 0;
 };
@@ -189,7 +189,7 @@ public:
       const std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> &resolved,
       KTest &tc) = 0;
 
-  virtual void logState(ExecutionState &state, int id,
+  virtual void logState(const ExecutionState &state, int id,
                         std::unique_ptr<llvm::raw_fd_ostream> &f) = 0;
 
   virtual void getCoveredLines(const ExecutionState &state,

@@ -41,6 +41,7 @@ namespace klee {
     ~ImmutableMap() {}
 
     ImmutableMap &operator=(const ImmutableMap &b) { elts = b.elts; return *this; }
+
     bool empty() const { 
       return elts.empty(); 
     }
