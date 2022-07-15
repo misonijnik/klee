@@ -130,12 +130,6 @@ cl::opt<std::string> MaxTime(
     cl::init("0s"),
     cl::cat(TerminationCat));
 
-cl::opt<bool> UseGEPOptimization(
-    "use-gep-opt", cl::init(true),
-    cl::desc("Lazily initialize whole objects referenced by gep expressions "
-             "instead of only the referenced parts (default=true)"),
-    cl::cat(ExecCat));
-
 cl::opt<bool> LazyInitialization(
     "use-lazy-init",
      cl::init(true),
@@ -592,14 +586,10 @@ Executor::~Executor() {
   delete specialFunctionHandler;
   delete statsTracker;
   delete solver;
+  delete stateHistory;
 }
 
 /***/
-
-void Executor::addHistoryResult(ExecutionState &state) {
-  results[state.getInitPCBlock()].history[state.getPrevPCBlock()].insert(
-      state.level.begin(), state.level.end());
-}
 
 void Executor::initializeGlobalObject(ExecutionState &state, ObjectState *os,
                                       const Constant *c, 
@@ -2767,14 +2757,14 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     if (kgepi->offset)
       offset = AddExpr::create(offset, Expr::createPointer(kgepi->offset));
     ref<Expr> address = AddExpr::create(base, offset);
-    if (UseGEPOptimization && !isa<ConstantExpr>(address) && !isa<ConstantExpr>(base)) {
-      if (isGEPExpr(base)) {
-        gepExprBases[address] = gepExprBases[base];
-        gepExprOffsets[address] = gepExprOffsets[base];
+    if (!isa<ConstantExpr>(address) && !isa<ConstantExpr>(base)) {
+      if (state.isGEPExpr(base)) {
+        state.gepExprBases[address] = state.gepExprBases[base];
+        state.gepExprOffsets[address] = state.gepExprOffsets[base];
       }
       else {
-        gepExprBases[address] = {base, sourceSize};
-        gepExprOffsets[address] = ExtractExpr::create(offset, 0, Expr::Int32);
+        state.gepExprBases[address] = {base, sourceSize};
+        state.gepExprOffsets[address] = ExtractExpr::create(offset, 0, Expr::Int32);
       }
     }
     bindLocal(ki, state, address);
@@ -2824,13 +2814,13 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     ref<Expr> result = eval(ki, 0, state).value;
     BitCastInst *bc = cast<BitCastInst>(ki->inst);
 
-    if (UseGEPOptimization && isGEPExpr(result)) {
+    if (UseGEPOptimization && state.isGEPExpr(result)) {
       unsigned size =
           bc->getType()->isPointerTy()
               ? kmodule->targetData->getTypeStoreSize(
                     ki->inst->getType()->getPointerElementType())
               : kmodule->targetData->getTypeStoreSize(ki->inst->getType());
-      gepExprBases[result] = {gepExprBases[result].first, size};
+      state.gepExprBases[result] = {state.gepExprBases[result].first, size};
     }
 
     bindLocal(ki, state, result);
@@ -3639,7 +3629,7 @@ bool Executor::tryBoundedExecuteStep(ExecutionState &state, unsigned bound) {
   KInstruction *prevKI = state.prevPC;
 
   if (prevKI->inst->isTerminator()) {
-    addHistoryResult(state);
+    stateHistory->updateHistory(state);
     if (state.multilevel.count(state.getPCBlock()) > bound) {
       pauseState(state);
       return false;
@@ -3861,7 +3851,7 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
         terminationTypeFileExtension(StateTerminationType::Exit).c_str());
 
   interpreterHandler->incPathsCompleted();
-  addHistoryResult(state);
+  stateHistory->updateHistory(state);
   terminateState(state);
 }
 
@@ -3881,7 +3871,7 @@ void Executor::terminateStateOnTerminator(ExecutionState &state) {
   if (shouldWriteTest(state) || (AlwaysOutputSeeds && seedMap.count(&state))) {
     interpreterHandler->processTestCase(state, nullptr, nullptr);
   }
-  addHistoryResult(state);
+  stateHistory->updateHistory(state);
   terminateState(state);
 }
 
@@ -3979,7 +3969,7 @@ void Executor::terminateStateOnError(ExecutionState &state,
     interpreterHandler->processTestCase(state, msg.str().c_str(), file_suffix);
   }
 
-  addHistoryResult(state);
+  stateHistory->updateHistory(state);
   terminateState(state);
 
   if (shouldExitOn(terminationType))
@@ -4384,8 +4374,8 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   }
   unsigned bytes = Expr::getMinBytesForWidth(type);
 
-  ref<Expr> base = UseGEPOptimization && isGEPExpr(address) ? gepExprBases[address].first : address;
-  unsigned size = UseGEPOptimization && isGEPExpr(address) ? gepExprBases[address].second : bytes;
+  ref<Expr> base = state.isGEPExpr(address) ? state.gepExprBases[address].first : address;
+  unsigned size = state.isGEPExpr(address) ? state.gepExprBases[address].second : bytes;
 
   if (SimplifySymIndices) {
     if (!isa<ConstantExpr>(address))
@@ -4462,10 +4452,13 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   ResolutionList rl;  
   solver->setTimeout(coreSolverTimeout);
   bool incomplete;
-  if (UseGEPOptimization && isGEPExpr(address))
-      incomplete = state.addressSpace.resolve(state, solver, base, rl, 0, coreSolverTimeout);
-  else
-      incomplete = state.addressSpace.resolve(state, solver, address, rl, 0, coreSolverTimeout);
+  if (state.isGEPExpr(address)) {
+    incomplete = state.addressSpace.resolve(state, solver, base, rl, 0,
+                                            coreSolverTimeout);
+  } else {
+    incomplete = state.addressSpace.resolve(state, solver, address, rl, 0,
+                                            coreSolverTimeout);
+  }
 
   solver->setTimeout(time::Span());
   
@@ -4477,7 +4470,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     const ObjectState *os = i->second;
     ref<Expr> inBounds;
 
-    if (UseGEPOptimization && isGEPExpr(address))
+    if (state.isGEPExpr(address))
       inBounds = mo->getBoundsCheckPointer(base, 1);
     else
       inBounds = mo->getBoundsCheckPointer(address, 1);
@@ -4488,7 +4481,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     // bound can be 0 on failure or overlapped
     if (bound) {
       ref<Expr> inBounds = mo->getBoundsCheckPointer(address, bytes);
-      if (UseGEPOptimization && isGEPExpr(address)) {
+      if (state.isGEPExpr(address)) {
         inBounds =
             AndExpr::create(inBounds, mo->getBoundsCheckPointer(base, size));
       }
@@ -4534,7 +4527,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
       terminateStateOnSolverError(*unbound, "Query timed out (resolve).");
     } else if (LazyInitialization &&
                (isa<ReadExpr>(address) || isa<ConcatExpr>(address) ||
-                (UseGEPOptimization && isGEPExpr(address)))) {
+                state.isGEPExpr(address))) {
 
       if (!isReadFromSymbolicArray(base)) {
         terminateStateEarly(
@@ -4635,7 +4628,6 @@ void Executor::executeMakeSymbolic(ExecutionState &state,
     // Find a unique name for this array.  First try the original name,
     // or if that fails try adding a unique identifier.
     const Array *array = makeArray(state, mo->size, name);
-    const_cast<Array *>(array)->binding = mo;
     bindObjectInState(state, mo, isLocal, array);
     state.addSymbolic(mo, array);
     
@@ -4829,7 +4821,6 @@ ref<Expr> Executor::makeSymbolicValue(Value *value, ExecutionState &state, uint6
                      value, /*allocationAlignment=*/8);
   memory->deallocate(mo);
   const Array *array = makeArray(state, size, name);
-  const_cast<Array*>(array)->binding = mo;
   state.addSymbolic(mo, array);
   ObjectState *os = new ObjectState(mo, array);
   ref<Expr> result = os->read(0, width);
@@ -4945,53 +4936,6 @@ void Executor::logState(const ExecutionState &state, int id,
   }
 }
 
-int Executor::getBase(ref<Expr> expr,
-                      std::pair<Symbolic, ref<Expr>> &resolved) {
-  switch (expr->getKind()) {
-  case Expr::Read: {
-    ref<ReadExpr> base = dyn_cast<ReadExpr>(expr);
-    auto parent = base->updates.root->binding;
-    if (!parent) {
-      return -1;
-    }
-    resolved =
-        std::make_pair(std::make_pair(parent, base->updates.root), base->index);
-    break;
-  }
-  case Expr::Concat: {
-    ref<ReadExpr> base =
-        ArrayExprHelper::hasOrderedReads(*dyn_cast<ConcatExpr>(expr));
-    auto parent = base->updates.root->binding;
-    if (!parent) {
-      return -1;
-    }
-    resolved =
-        std::make_pair(std::make_pair(parent, base->updates.root), base->index);
-    break;
-  }
-  default: {
-    if (UseGEPOptimization && isGEPExpr(expr)) {
-      ref<Expr> gepBase = gepExprBases[expr].first;
-      ref<Expr> offset = gepExprOffsets[expr];
-      std::pair<Symbolic, ref<Expr>> gepResolved;
-      int status = getBase(gepBase, gepResolved);
-      if (status == 1) {
-        auto parent = gepResolved.first.first;
-        auto array = gepResolved.first.second;
-        auto gepIndex = gepResolved.second;
-        auto index = AddExpr::create(gepIndex, offset);
-        resolved = std::make_pair(std::make_pair(parent, array), index);
-      } else
-        return status;
-    } else {
-      return -1;
-    }
-    break;
-  }
-  }
-  return 1;
-}
-
 int Executor::resolveLazyInitialization(
     const ExecutionState &state,
     ExprHashMap<std::pair<Symbolic, ref<Expr>>> &resolved) {
@@ -5002,7 +4946,7 @@ int Executor::resolveLazyInitialization(
     }
     auto lisource = symbolic.first->lazyInitializationSource;
     std::pair<Symbolic, ref<Expr>> resolvedSymbolic;
-    int localStatus = getBase(lisource, resolvedSymbolic);
+    int localStatus = state.getBase(lisource, resolvedSymbolic);
     resolved[lisource] = resolvedSymbolic;
     if (status != -1)
       return status = localStatus;
@@ -5301,10 +5245,6 @@ void Executor::dumpStates() {
   }
 
   ::dumpStates = 0;
-}
-
-bool Executor::isGEPExpr(ref<Expr> expr) {
-  return gepExprBases.find(expr) != gepExprBases.end();
 }
 
 ///

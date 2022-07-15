@@ -9,6 +9,7 @@
 
 #include "klee/Module/CFGDistance.h"
 #include "llvm/IR/CFG.h"
+#include <deque>
 
 using namespace klee;
 

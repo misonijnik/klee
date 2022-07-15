@@ -121,9 +121,7 @@ namespace klee {
     void printName(llvm::raw_ostream &os) override;
   };
 
-
   class StateHistory {
-
     typedef std::map<llvm::BasicBlock *, std::unordered_set<llvm::BasicBlock *>>
         VisitedBlock;
     typedef std::map<llvm::BasicBlock *,
@@ -142,6 +140,11 @@ namespace klee {
     KBlock *calculateTargetByBlockHistory(ExecutionState &state);
 
     explicit StateHistory(const KModule &module) : module(module) {}
+
+    void updateHistory(ExecutionState &state) {
+      results[state.getInitPCBlock()].history[state.getPrevPCBlock()].insert(
+        state.level.begin(), state.level.end());
+    }
 
   private:
     const KModule &module;

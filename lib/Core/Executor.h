@@ -78,6 +78,7 @@ namespace klee {
   class SeedInfo;
   class SpecialFunctionHandler;
   struct StackFrame;
+  class StateHistory;
   class StatsTracker;
   class TimingSolver;
   class TreeStreamWriter;
@@ -122,8 +123,7 @@ private:
   SpecialFunctionHandler *specialFunctionHandler;
   TimerGroup timers;
   std::unique_ptr<PTree> processTree;
-  std::map<ref<Expr>, std::pair<ref<Expr>, unsigned>> gepExprBases;
-  ExprHashMap<ref<Expr>> gepExprOffsets;
+  StateHistory *stateHistory;
 
   /// Used to track states that have been added during the current
   /// instructions step. 
@@ -580,13 +580,6 @@ public:
                         Interpreter::LogType logFormat =
                             Interpreter::STP) override;
 
-  int resolveLazyInitialization(
-      const ExecutionState &state,
-      ExprHashMap<std::pair<Symbolic, ref<Expr>>> &resolved);
-
-  int getBase(ref<Expr> expr,
-              std::pair<Symbolic, ref<Expr>> &resolved) override;
-
   void setInitializationGraph(const ExecutionState &state, KTest &tc) override;
 
   void logState(const ExecutionState &state, int id,
@@ -610,7 +603,6 @@ public:
                          const std::string &name);
   void executeStep(ExecutionState &state);
   bool tryBoundedExecuteStep(ExecutionState &state, unsigned bound);
-  bool isGEPExpr(ref<Expr> expr);
 };
   
 } // End klee namespace

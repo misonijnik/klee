@@ -11,6 +11,7 @@
 
 #include "Memory.h"
 
+#include "klee/Expr/ArrayExprVisitor.h"
 #include "klee/Expr/Expr.h"
 #include "klee/Module/Cell.h"
 #include "klee/Module/InstructionInfoTable.h"
@@ -30,7 +31,6 @@
 #include <sstream>
 #include <stdarg.h>
 
-
 using namespace llvm;
 using namespace klee;
 
@@ -39,6 +39,12 @@ cl::opt<bool> DebugLogStateMerge(
     "debug-log-state-merge", cl::init(false),
     cl::desc("Debug information for underlying state merging (default=false)"),
     cl::cat(MergeCat));
+
+cl::opt<bool> UseGEPOptimization(
+    "use-gep-opt", cl::init(true),
+    cl::desc("Lazily initialize whole objects referenced by gep expressions "
+             "instead of only the referenced parts (default=true)"),
+    cl::cat(ExecCat));
 }
 
 /***/
@@ -111,7 +117,9 @@ ExecutionState::ExecutionState(const ExecutionState& state):
                              : nullptr),
     coveredNew(state.coveredNew),
     forkDisabled(state.forkDisabled),
-    target(state.target) {
+    target(state.target),
+    gepExprBases(state.gepExprBases),
+    gepExprOffsets(state.gepExprOffsets) {
   for (const auto &cur_mergehandler: openMergeStack)
     cur_mergehandler->addOpenState(this);
 }
@@ -156,6 +164,64 @@ void ExecutionState::popFrame() {
 
 void ExecutionState::addSymbolic(const MemoryObject *mo, const Array *array) {
   symbolics.emplace_back(ref<const MemoryObject>(mo), array);
+}
+
+ref<const MemoryObject>
+ExecutionState::findMemoryObject(const Array *array) {
+  for (unsigned i = 0; i != symbolics.size(); ++i) {
+    const auto &symbolic = symbolics[i];
+    if (array == symbolic.second) {
+      return symbolic.first;
+    }
+  }
+  return nullptr;
+}
+
+int ExecutionState::getBase(ref<Expr> expr,
+                            std::pair<Symbolic, ref<Expr>> &resolved) {
+  switch (expr->getKind()) {
+  case Expr::Read: {
+    ref<ReadExpr> base = dyn_cast<ReadExpr>(expr);
+    auto parent = findMemoryObject(base->updates.root);
+    if (!parent) {
+      return -1;
+    }
+    resolved =
+        std::make_pair(std::make_pair(parent, base->updates.root), base->index);
+    break;
+  }
+  case Expr::Concat: {
+    ref<ReadExpr> base =
+        ArrayExprHelper::hasOrderedReads(*dyn_cast<ConcatExpr>(expr));
+    auto parent = findMemoryObject(base->updates.root);
+    if (!parent) {
+      return -1;
+    }
+    resolved =
+        std::make_pair(std::make_pair(parent, base->updates.root), base->index);
+    break;
+  }
+  default: {
+    if (isGEPExpr(expr)) {
+      ref<Expr> gepBase = gepExprBases[expr].first;
+      ref<Expr> offset = gepExprOffsets[expr];
+      std::pair<Symbolic, ref<Expr>> gepResolved;
+      int status = getBase(gepBase, gepResolved);
+      if (status == 1) {
+        auto parent = gepResolved.first.first;
+        auto array = gepResolved.first.second;
+        auto gepIndex = gepResolved.second;
+        auto index = AddExpr::create(gepIndex, offset);
+        resolved = std::make_pair(std::make_pair(parent, array), index);
+      } else
+        return status;
+    } else {
+      return -1;
+    }
+    break;
+  }
+  }
+  return 1;
 }
 
 /**/
@@ -397,4 +463,8 @@ void ExecutionState::increaseLevel() {
     level.insert(srcbb);
   }
   transitionLevel.insert(std::make_pair(srcbb, dstbb));
+}
+
+bool ExecutionState::isGEPExpr(ref<Expr> expr) {
+  return UseGEPOptimization && gepExprBases.find(expr) != gepExprBases.end();
 }

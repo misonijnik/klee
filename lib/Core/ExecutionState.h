@@ -270,6 +270,9 @@ public:
   /// @brief The target basic block that the state must achieve
   KBlock *target = nullptr;
 
+  ExprHashMap<std::pair<ref<Expr>, unsigned>> gepExprBases;
+  ExprHashMap<ref<Expr>> gepExprOffsets;
+
 public:
 #ifdef KLEE_UNITTEST
   // provide this function only in the context of unittests
@@ -295,6 +298,10 @@ public:
 
   void addSymbolic(const MemoryObject *mo, const Array *array);
 
+  ref<const MemoryObject> findMemoryObject(const Array *array);
+
+  int getBase(ref<Expr> expr, std::pair<Symbolic, ref<Expr>> &resolved);
+
   void addConstraint(ref<Expr> e);
   void addCexPreference(const ref<Expr> &cond);
 
@@ -307,6 +314,7 @@ public:
   llvm::BasicBlock *getPrevPCBlock();
   llvm::BasicBlock *getPCBlock();
   void increaseLevel();
+  bool isGEPExpr(ref<Expr> expr);
 };
 
 struct ExecutionStateIDCompare {

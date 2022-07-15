@@ -33,8 +33,6 @@ class ExecutionState;
 class Interpreter;
 class TreeStreamWriter;
 
-typedef std::pair<ref<const MemoryObject>, const Array *> Symbolic;
-
 class InterpreterHandler {
 public:
   InterpreterHandler() {}
@@ -167,9 +165,6 @@ public:
 
   virtual bool getSymbolicSolution(const ExecutionState &state,
                                    KTest &res) = 0;
-
-  virtual int getBase(ref<Expr> expr,
-                      std::pair<Symbolic, ref<Expr>> &resolved) = 0;
 
   virtual void setInitializationGraph(const ExecutionState &state,
                                       KTest &tc) = 0;
