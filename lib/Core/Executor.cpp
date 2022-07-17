@@ -1633,7 +1633,7 @@ void Executor::unwindToNextLandingpad(ExecutionState &state) {
             kmodule->module->getFunction("_klee_eh_cxx_personality");
         KFunction *kf = kmodule->functionMap[personality_fn];
 
-        state.addLevel(state.getPrevPCBlock());
+        state.increaseLevel();
         state.pushFrame(state.prevPC, kf);
         state.pc = kf->instructions;
         bindArgument(kf, 0, state, sui->exceptionObject);
@@ -2044,7 +2044,8 @@ void Executor::transferToBasicBlock(BasicBlock *dst, BasicBlock *src,
   // XXX this lookup has to go ?
   KFunction *kf = state.stack.back().kf;
   if (state.prevPC->inst->isTerminator())
-    state.addLevel(state.getPrevPCBlock());
+    state.increaseLevel();
+  KFunction *kf = state.stack.back().kf;
   state.pc = kf->blockMap[dst]->instructions;
   if (state.pc->inst->getOpcode() == Instruction::PHI) {
     PHINode *first = static_cast<PHINode*>(state.pc->inst);
@@ -2069,7 +2070,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
 
     if (state.stack.size() <= 1) {
       assert(!caller && "caller set on initial stack frame");
-      state.addLevel(state.getPrevPCBlock());
+      state.increaseLevel();
       terminateStateOnExit(state);
     } else {
       state.popFrame();
@@ -2080,7 +2081,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       if (InvokeInst *ii = dyn_cast<InvokeInst>(caller)) {
         transferToBasicBlock(ii->getNormalDest(), caller->getParent(), state);
       } else {
-        state.addLevel(state.getPrevPCBlock());
+        state.increaseLevel();
         state.pc = kcaller;
         ++state.pc;
       }
@@ -3697,54 +3698,6 @@ void Executor::targetedRun(ExecutionState &initialState, KBlock *target) {
 
   doDumpStates();
   haltExecution = false;
-}
-
-KBlock *Executor::calculateTarget(ExecutionState &state) {
-  BasicBlock *initialBlock = state.getInitPCBlock();
-  VisitedBlock &history = results[initialBlock].history;
-  BasicBlock *bb = state.getPCBlock();
-  KFunction *kf = kmodule->functionMap[bb->getParent()];
-  KBlock *kb = kf->blockMap[bb];
-  KBlock *nearestBlock = nullptr;
-  unsigned int minDistance = -1;
-  unsigned int sfNum = 0;
-  bool newCov = false;
-  for (auto sfi = state.stack.rbegin(), sfe = state.stack.rend(); sfi != sfe;
-       sfi++, sfNum++) {
-    kf = sfi->kf;
-
-    for (auto &kbd : kf->getDistance(kb)) {
-      KBlock *target = kbd.first;
-      unsigned distance = kbd.second;
-      if ((sfNum > 0 || distance > 0) && distance < minDistance) {
-        if (history[target->basicBlock].size() != 0) {
-          std::vector<BasicBlock *> diff;
-          if (!newCov) {
-            std::set<BasicBlock *> left(state.level.begin(), state.level.end());
-            std::set<BasicBlock *> right(history[target->basicBlock].begin(),
-                                         history[target->basicBlock].end());
-            std::set_difference(left.begin(), left.end(), right.begin(),
-                                right.end(), std::inserter(diff, diff.begin()));
-          }
-          if (diff.empty()) {
-            continue;
-          }
-        } else
-          newCov = true;
-        nearestBlock = target;
-        minDistance = distance;
-      }
-    }
-
-    if (nearestBlock) {
-      return nearestBlock;
-    }
-
-    if (sfi->caller) {
-      kb = sfi->caller->parent;
-    }
-  }
-  return nearestBlock;
 }
 
 void Executor::guidedRun(ExecutionState &initialState) {

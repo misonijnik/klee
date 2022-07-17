@@ -100,16 +100,12 @@ class Executor : public Interpreter {
   friend klee::Searcher *klee::constructUserSearcher(Executor &executor);
 
 public:
-  typedef std::pair<ExecutionState *, ExecutionState *> StatePair;
-  typedef std::map<llvm::BasicBlock *,
-                   std::set<ExecutionState *, ExecutionStateIDCompare>>
-      ExecutedBlock;
-  typedef std::map<llvm::BasicBlock *, std::unordered_set<llvm::BasicBlock *>>
-      VisitedBlock;
-  struct ExecutionBlockResult {
-    VisitedBlock history;
+  typedef std::pair<ExecutionState*,ExecutionState*> StatePair;
+
+  enum MemoryOperation {
+    Read,
+    Write
   };
-  typedef std::map<llvm::BasicBlock *, ExecutionBlockResult> ExecutionResult;
 
   enum MemoryOperation { Read, Write };
 
@@ -226,8 +222,6 @@ private:
 
   /// Return the typeid corresponding to a certain `type_info`
   ref<ConstantExpr> getEhTypeidFor(ref<Expr> type_info);
-
-  ExecutionResult results;
 
   void addHistoryResult(ExecutionState &state);
 
@@ -624,7 +618,6 @@ public:
                          const std::string &name);
   void executeStep(ExecutionState &state);
   bool tryBoundedExecuteStep(ExecutionState &state, unsigned bound);
-  KBlock *calculateTarget(ExecutionState &state);
   bool isGEPExpr(ref<Expr> expr);
 };
   

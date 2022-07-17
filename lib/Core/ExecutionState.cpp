@@ -389,7 +389,12 @@ BasicBlock *ExecutionState::getPrevPCBlock() {
 
 BasicBlock *ExecutionState::getPCBlock() { return pc->inst->getParent(); }
 
-void ExecutionState::addLevel(BasicBlock *bb) {
-  multilevel.insert(bb);
-  level.insert(bb);
+void ExecutionState::increaseLevel() {
+  llvm::BasicBlock *srcbb = getPrevPCBlock();
+  llvm::BasicBlock *dstbb = getPCBlock();
+  if (prevPC->inst->isTerminator()) {
+    multilevel.insert(srcbb);
+    level.insert(srcbb);
+  }
+  transitionLevel.insert(std::make_pair(srcbb, dstbb));
 }

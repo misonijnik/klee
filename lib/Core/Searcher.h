@@ -13,6 +13,7 @@
 #include "ExecutionState.h"
 #include "PTree.h"
 #include "klee/ADT/RNG.h"
+#include "klee/Module/KModule.h"
 #include "klee/System/Time.h"
 
 #include "llvm/Support/CommandLine.h"
@@ -120,6 +121,33 @@ namespace klee {
     void printName(llvm::raw_ostream &os) override;
   };
 
+
+  class StateHistory {
+
+    typedef std::map<llvm::BasicBlock *, std::unordered_set<llvm::BasicBlock *>>
+        VisitedBlock;
+    typedef std::map<llvm::BasicBlock *,
+                     std::unordered_set<Transition, TransitionHash>>
+        VisitedTransition;
+
+    struct ExecutionBlockResult {
+      VisitedBlock history;
+      VisitedTransition transitionHistory;
+    };
+
+    typedef std::map<llvm::BasicBlock *, ExecutionBlockResult> ExecutionResult;
+
+  public:
+    KBlock *calculateTargetByTransitionHistory(ExecutionState &state);
+    KBlock *calculateTargetByBlockHistory(ExecutionState &state);
+
+    explicit StateHistory(const KModule &module) : module(module) {}
+
+  private:
+    const KModule &module;
+    ExecutionResult results;
+  };
+
   /// TargetedSearcher picks a state /*COMMENT*/.
   class TargetedSearcher final : public Searcher {
   public:
@@ -162,6 +190,7 @@ namespace klee {
     std::map<KBlock *, std::unique_ptr<TargetedSearcher>> targetedSearchers;
     unsigned index{1};
     void addTarget(KBlock *target);
+
 
   public:
     GuidedSearcher(Searcher *baseSearcher);

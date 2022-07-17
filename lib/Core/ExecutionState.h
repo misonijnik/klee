@@ -146,6 +146,15 @@ struct CleanupPhaseUnwindingInformation : public UnwindingInformation {
   }
 };
 
+typedef std::pair<llvm::BasicBlock *, llvm::BasicBlock *> Transition;
+
+struct TransitionHash {
+  std::size_t operator()(const Transition &p) const {
+    return reinterpret_cast<size_t>(p.first) * 31 +
+           reinterpret_cast<size_t>(p.second);
+  }
+};
+
 typedef std::pair<ref<const MemoryObject>, const Array *> Symbolic;
 
 /// @brief ExecutionState representing a path under exploration
@@ -188,6 +197,7 @@ public:
   /// @brief Exploration level, i.e., number of times KLEE cycled for this state
   std::unordered_multiset<llvm::BasicBlock *> multilevel;
   std::unordered_set<llvm::BasicBlock *> level;
+  std::unordered_set<Transition, TransitionHash> transitionLevel;
 
   /// @brief Address space used by this state (e.g. Global and Heap)
   AddressSpace addressSpace;
@@ -295,7 +305,7 @@ public:
   llvm::BasicBlock *getInitPCBlock();
   llvm::BasicBlock *getPrevPCBlock();
   llvm::BasicBlock *getPCBlock();
-  void addLevel(llvm::BasicBlock *bb);
+  void increaseLevel();
 };
 
 struct ExecutionStateIDCompare {
