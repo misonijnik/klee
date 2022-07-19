@@ -100,12 +100,7 @@ class Executor : public Interpreter {
   friend klee::Searcher *klee::constructUserSearcher(Executor &executor);
 
 public:
-  typedef std::pair<ExecutionState*,ExecutionState*> StatePair;
-
-  enum MemoryOperation {
-    Read,
-    Write
-  };
+  typedef std::pair<ExecutionState *, ExecutionState *> StatePair;
 
   enum MemoryOperation { Read, Write };
 
@@ -585,17 +580,14 @@ public:
                         Interpreter::LogType logFormat =
                             Interpreter::STP) override;
 
+  int resolveLazyInitialization(
+      const ExecutionState &state,
+      ExprHashMap<std::pair<Symbolic, ref<Expr>>> &resolved);
+
   int getBase(ref<Expr> expr,
               std::pair<Symbolic, ref<Expr>> &resolved) override;
 
-  int resolveLazyInitialization(
-      const ExecutionState &state,
-      std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> &resolved) override;
-
-  void setInitializationGraph(
-      const ExecutionState &state,
-      const std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> &resolved,
-      KTest &tc) override;
+  void setInitializationGraph(const ExecutionState &state, KTest &tc) override;
 
   void logState(const ExecutionState &state, int id,
                 std::unique_ptr<llvm::raw_fd_ostream> &f) override;

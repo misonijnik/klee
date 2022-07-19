@@ -512,7 +512,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
                                   const char *errorMessage,
                                   const char *errorSuffix) {
 
-  unsigned state_id = ++m_statesTerminated;
+  ++m_statesTerminated;
 
   if (!WriteNone) {
     const auto start_time = time::getWallTime();
@@ -528,20 +528,14 @@ void KleeHandler::processTestCase(const ExecutionState &state,
 
     bool success = m_interpreter->getSymbolicSolution(state, ktest);
 
-    std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> resolved;
-
-    int lazy_initialization_resolved =
-        m_interpreter->resolveLazyInitialization(state, resolved);
-    if (lazy_initialization_resolved == 1) {
-      m_interpreter->setInitializationGraph(state, resolved, ktest);
-    }
+    m_interpreter->setInitializationGraph(state, ktest);
 
     if (!success)
       klee_warning("unable to get symbolic solution, losing test case");
 
     unsigned test_id = ++m_numTotalTests;
 
-    if (success && lazy_initialization_resolved != -1) {
+    if (success) {
       writeTestCase(ktest, test_id);
       if (WriteStates) {
         auto f = openTestFile("state", test_id);
@@ -551,9 +545,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
 
     kTest_free(&ktest);
 
-    if (WriteStates && lazy_initialization_resolved == -1) {
-      auto f_s = openTestFile("state_li_unresolved", test_id);
-      m_interpreter->logState(state, state_id, f_s);
+    if (errorMessage) {
       auto f = openTestFile(errorSuffix, test_id);
         *f << errorMessage;
     }

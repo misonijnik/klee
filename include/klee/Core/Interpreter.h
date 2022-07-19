@@ -171,14 +171,8 @@ public:
   virtual int getBase(ref<Expr> expr,
                       std::pair<Symbolic, ref<Expr>> &resolved) = 0;
 
-  virtual int resolveLazyInitialization(
-      const ExecutionState &state,
-      std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> &resolved) = 0;
-
-  virtual void setInitializationGraph(
-      const ExecutionState &state,
-      const std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> &resolved,
-      KTest &tc) = 0;
+  virtual void setInitializationGraph(const ExecutionState &state,
+                                      KTest &tc) = 0;
 
   virtual void logState(const ExecutionState &state, int id,
                         std::unique_ptr<llvm::raw_fd_ostream> &f) = 0;

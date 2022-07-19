@@ -94,6 +94,7 @@ typedef unsigned TypeSize;
 #include <sstream>
 #include <string>
 #include <sys/mman.h>
+#include <utility>
 #include <vector>
 
 using namespace std::chrono;
@@ -2045,7 +2046,6 @@ void Executor::transferToBasicBlock(BasicBlock *dst, BasicBlock *src,
   KFunction *kf = state.stack.back().kf;
   if (state.prevPC->inst->isTerminator())
     state.increaseLevel();
-  KFunction *kf = state.stack.back().kf;
   state.pc = kf->blockMap[dst]->instructions;
   if (state.pc->inst->getOpcode() == Instruction::PHI) {
     PHINode *first = static_cast<PHINode*>(state.pc->inst);
@@ -4994,7 +4994,7 @@ int Executor::getBase(ref<Expr> expr,
 
 int Executor::resolveLazyInitialization(
     const ExecutionState &state,
-    std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> &resolved) {
+    ExprHashMap<std::pair<Symbolic, ref<Expr>>> &resolved) {
   int status = 0;
   for (auto &symbolic : state.symbolics) {
     if (!symbolic.first->isLazyInitialized()) {
@@ -5010,16 +5010,17 @@ int Executor::resolveLazyInitialization(
   return status;
 }
 
-void Executor::setInitializationGraph(
-    const ExecutionState &state,
-    const std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> &resolved,
-    KTest &ktest) {
+void Executor::setInitializationGraph(const ExecutionState &state,
+                                      KTest &ktest) {
   std::map<size_t, std::vector<Offset>> ofst;
+  ExprHashMap<std::pair<Symbolic, ref<Expr>>> pointers;
+  resolveLazyInitialization(state, pointers);
+
   for (size_t i = 0; i < state.symbolics.size(); i++) {
     if (!state.symbolics[i].first->isLazyInitialized())
       continue;
     auto parent =
-        resolved.at(state.symbolics[i].first->lazyInitializationSource);
+        pointers.at(state.symbolics[i].first->lazyInitializationSource);
     // Resolve offset (parent.second)
     ref<ConstantExpr> offset;
     bool success = solver->getValue(state.constraints, parent.second, offset,
@@ -5040,6 +5041,7 @@ void Executor::setInitializationGraph(
     o.index = i;
     ofst[index_parent].push_back(o);
   }
+
   for (auto i : ofst) {
     ktest.objects[i.first].numOffsets = i.second.size();
     ktest.objects[i.first].offsets = new Offset[i.second.size()];
