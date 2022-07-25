@@ -32,6 +32,7 @@ namespace llvm {
 }
 
 namespace klee {
+  class CFGDistance;
   template<class T, class Comparator> class DiscretePDF;
   class ExecutionState;
   class Executor;
@@ -139,7 +140,8 @@ namespace klee {
     KBlock *calculateTargetByTransitionHistory(ExecutionState &state);
     KBlock *calculateTargetByBlockHistory(ExecutionState &state);
 
-    explicit StateHistory(const KModule &module) : module(module) {}
+    StateHistory(const KModule &module, CFGDistance &cfgDistance)
+        : module(module), cfgDistance(cfgDistance) {}
 
     void updateHistory(ExecutionState &state) {
       results[state.getInitPCBlock()].history[state.getPrevPCBlock()].insert(
@@ -148,6 +150,7 @@ namespace klee {
 
   private:
     const KModule &module;
+    CFGDistance &cfgDistance;
     ExecutionResult results;
   };
 
@@ -164,7 +167,8 @@ namespace klee {
     std::unique_ptr<DiscretePDF<ExecutionState *, ExecutionStateIDCompare>>
         states;
     KBlock *target;
-    std::map<KFunction *, unsigned int> &distanceToTargetFunction;
+    CFGDistance &cfgDistance;
+    const std::map<KFunction *, unsigned int> &distanceToTargetFunction;
 
     bool distanceInCallGraph(KFunction *kf, KBlock *kb, unsigned int &distance);
     WeightResult tryGetLocalWeight(ExecutionState *es, double &weight,
@@ -176,7 +180,7 @@ namespace klee {
 
   public:
     ExecutionState *result = nullptr;
-    TargetedSearcher(KBlock *targetBB);
+    TargetedSearcher(KBlock *targetBB, CFGDistance &distance);
     ~TargetedSearcher() override = default;
     ExecutionState &selectState() override;
     void update(ExecutionState *current,
@@ -191,12 +195,14 @@ namespace klee {
   private:
     std::unique_ptr<Searcher> baseSearcher;
     std::map<KBlock *, std::unique_ptr<TargetedSearcher>> targetedSearchers;
+    CFGDistance &cfgDistance;
+    StateHistory &stateHistory;
+    unsigned bound;
     unsigned index{1};
     void addTarget(KBlock *target);
 
-
   public:
-    GuidedSearcher(Searcher *baseSearcher);
+    GuidedSearcher(Searcher *baseSearcher, CFGDistance &cfgDistance, StateHistory &stateHistory, unsigned bound);
     ~GuidedSearcher() override = default;
     ExecutionState &selectState() override;
     void update(ExecutionState *current,

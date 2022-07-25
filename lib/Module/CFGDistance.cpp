@@ -9,19 +9,20 @@
 
 #include "klee/Module/CFGDistance.h"
 #include "llvm/IR/CFG.h"
+
 #include <deque>
 
 using namespace klee;
 
 void CFGDistance::calculateDistance(KBlock *bb) {
   auto blockMap = bb->parent->blockMap;
-  std::map<KBlock*, unsigned int> &dist = blockDistance[bb];
+  std::map<KBlock *, unsigned int> &dist = blockDistance[bb];
   std::vector<std::pair<KBlock *, unsigned>> &sort = blockSortedDistance[bb];
-  std::deque<KBlock*> nodes;
+  std::deque<KBlock *> nodes;
   nodes.push_back(bb);
   dist[bb] = 0;
   sort.push_back({bb, 0});
-  while(!nodes.empty()) {
+  while (!nodes.empty()) {
     KBlock *currBB = nodes.front();
     for (auto const &succ : successors(currBB->basicBlock)) {
       if (dist.find(blockMap[succ]) == dist.end()) {
@@ -36,14 +37,14 @@ void CFGDistance::calculateDistance(KBlock *bb) {
 
 void CFGDistance::calculateBackwardDistance(KBlock *bb) {
   auto blockMap = bb->parent->blockMap;
-  std::map<KBlock*, unsigned int> &bdist = blockBackwardDistance[bb];
+  std::map<KBlock *, unsigned int> &bdist = blockBackwardDistance[bb];
   std::vector<std::pair<KBlock *, unsigned>> &bsort =
       blockSortedBackwardDistance[bb];
-  std::deque<KBlock*> nodes;
+  std::deque<KBlock *> nodes;
   nodes.push_back(bb);
   bdist[bb] = 0;
   bsort.push_back({bb, 0});
-  while(!nodes.empty()) {
+  while (!nodes.empty()) {
     KBlock *currBB = nodes.front();
     for (auto const &pred : predecessors(currBB->basicBlock)) {
       if (bdist.find(blockMap[pred]) == bdist.end()) {
@@ -58,14 +59,14 @@ void CFGDistance::calculateBackwardDistance(KBlock *bb) {
 
 void CFGDistance::calculateDistance(KFunction *kf) {
   auto functionMap = kf->parent->functionMap;
-  std::map<KFunction*, unsigned int> &dist = functionDistance[kf];
+  std::map<KFunction *, unsigned int> &dist = functionDistance[kf];
   std::vector<std::pair<KFunction *, unsigned>> &sort =
       functionSortedDistance[kf];
-  std::deque<KFunction*> nodes;
+  std::deque<KFunction *> nodes;
   nodes.push_back(kf);
   dist[kf] = 0;
   sort.push_back({kf, 0});
-  while(!nodes.empty()) {
+  while (!nodes.empty()) {
     KFunction *currKF = nodes.front();
     for (auto &callBlock : currKF->kCallBlocks) {
       if (!callBlock->calledFunction ||
@@ -86,14 +87,14 @@ void CFGDistance::calculateDistance(KFunction *kf) {
 void CFGDistance::calculateBackwardDistance(KFunction *kf) {
   auto functionMap = kf->parent->functionMap;
   auto callMap = kf->parent->callMap;
-  std::map<KFunction*, unsigned int> &bdist = functionBackwardDistance[kf];
+  std::map<KFunction *, unsigned int> &bdist = functionBackwardDistance[kf];
   std::vector<std::pair<KFunction *, unsigned>> &bsort =
       functionSortedBackwardDistance[kf];
-  std::deque<KFunction*> nodes;
+  std::deque<KFunction *> nodes;
   nodes.push_back(kf);
   bdist[kf] = 0;
   bsort.push_back({kf, 0});
-  while(!nodes.empty()) {
+  while (!nodes.empty()) {
     KFunction *currKF = nodes.front();
     for (auto &cf : callMap[currKF->function]) {
       if (cf->isDeclaration()) {

@@ -298,9 +298,9 @@ public:
 
   void addSymbolic(const MemoryObject *mo, const Array *array);
 
-  ref<const MemoryObject> findMemoryObject(const Array *array);
+  ref<const MemoryObject> findMemoryObject(const Array *array) const;
 
-  int getBase(ref<Expr> expr, std::pair<Symbolic, ref<Expr>> &resolved);
+  int getBase(ref<Expr> expr, std::pair<Symbolic, ref<Expr>> &resolved) const;
 
   void addConstraint(ref<Expr> e);
   void addCexPreference(const ref<Expr> &cond);
@@ -314,7 +314,7 @@ public:
   llvm::BasicBlock *getPrevPCBlock();
   llvm::BasicBlock *getPCBlock();
   void increaseLevel();
-  bool isGEPExpr(ref<Expr> expr);
+  bool isGEPExpr(ref<Expr> expr) const;
 };
 
 struct ExecutionStateIDCompare {

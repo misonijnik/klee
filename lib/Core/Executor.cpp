@@ -37,6 +37,7 @@
 #include "klee/Expr/ExprSMTLIBPrinter.h"
 #include "klee/Expr/ExprUtil.h"
 #include "klee/Module/Cell.h"
+#include "klee/Module/CFGDistance.h"
 #include "klee/Module/InstructionInfoTable.h"
 #include "klee/Module/KInstruction.h"
 #include "klee/Module/KModule.h"
@@ -459,7 +460,7 @@ Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
     : Interpreter(opts), interpreterHandler(ih), searcher(0),
       externalDispatcher(new ExternalDispatcher(ctx)), statsTracker(0),
       pathWriter(0), symPathWriter(0), specialFunctionHandler(0), timers{time::Span(TimerInterval)},
-      replayKTest(0), replayPath(0), usingSeeds(0),
+      cfgDistance(new CFGDistance()), replayKTest(0), replayPath(0), usingSeeds(0),
       atMemoryLimit(false), inhibitForking(false), haltExecution(false),
       ivcEnabled(false), debugLogBuffer(debugBufferString) {
 
@@ -576,6 +577,8 @@ Executor::setModule(std::vector<std::unique_ptr<llvm::Module>> &modules,
   DataLayout *TD = kmodule->targetData.get();
   Context::initialize(TD->isLittleEndian(),
                       (Expr::Width)TD->getPointerSizeInBits());
+
+  stateHistory = new StateHistory(*kmodule.get(), *cfgDistance.get());
 
   return kmodule->module.get();
 }
@@ -2814,7 +2817,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     ref<Expr> result = eval(ki, 0, state).value;
     BitCastInst *bc = cast<BitCastInst>(ki->inst);
 
-    if (UseGEPOptimization && state.isGEPExpr(result)) {
+    if (state.isGEPExpr(result)) {
       unsigned size =
           bc->getType()->isPointerTy()
               ? kmodule->targetData->getTypeStoreSize(
@@ -3630,10 +3633,6 @@ bool Executor::tryBoundedExecuteStep(ExecutionState &state, unsigned bound) {
 
   if (prevKI->inst->isTerminator()) {
     stateHistory->updateHistory(state);
-    if (state.multilevel.count(state.getPCBlock()) > bound) {
-      pauseState(state);
-      return false;
-    }
   }
 
   executeStep(state);
@@ -3647,7 +3646,8 @@ void Executor::targetedRun(ExecutionState &initialState, KBlock *target) {
 
   states.insert(&initialState);
 
-  TargetedSearcher *targetedSearcher = new TargetedSearcher(target);
+  std::unique_ptr<CFGDistance> cfgDistance(new CFGDistance());
+  TargetedSearcher *targetedSearcher = new TargetedSearcher(target, *cfgDistance.get());
   searcher = targetedSearcher;
 
   std::vector<ExecutionState *> newStates(states.begin(), states.end());
@@ -3701,7 +3701,9 @@ void Executor::guidedRun(ExecutionState &initialState) {
     seed(initialState);
   }
 
-  searcher = new GuidedSearcher(constructUserSearcher(*this));
+  searcher =
+      new GuidedSearcher(constructUserSearcher(*this), *cfgDistance.get(),
+                         *stateHistory, MaxCycles - 1);
 
   std::vector<ExecutionState *> newStates(states.begin(), states.end());
   searcher->update(0, newStates, std::vector<ExecutionState *>());
@@ -3712,11 +3714,6 @@ void Executor::guidedRun(ExecutionState &initialState) {
       if (state.target)
         executeStep(state);
       else if (!tryBoundedExecuteStep(state, MaxCycles - 1)) {
-        KBlock *target = calculateTarget(state);
-        if (target) {
-          state.target = target;
-          unpauseState(state);
-        }
       }
     }
 

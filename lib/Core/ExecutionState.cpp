@@ -167,7 +167,7 @@ void ExecutionState::addSymbolic(const MemoryObject *mo, const Array *array) {
 }
 
 ref<const MemoryObject>
-ExecutionState::findMemoryObject(const Array *array) {
+ExecutionState::findMemoryObject(const Array *array) const {
   for (unsigned i = 0; i != symbolics.size(); ++i) {
     const auto &symbolic = symbolics[i];
     if (array == symbolic.second) {
@@ -178,7 +178,7 @@ ExecutionState::findMemoryObject(const Array *array) {
 }
 
 int ExecutionState::getBase(ref<Expr> expr,
-                            std::pair<Symbolic, ref<Expr>> &resolved) {
+                            std::pair<Symbolic, ref<Expr>> &resolved) const {
   switch (expr->getKind()) {
   case Expr::Read: {
     ref<ReadExpr> base = dyn_cast<ReadExpr>(expr);
@@ -203,8 +203,8 @@ int ExecutionState::getBase(ref<Expr> expr,
   }
   default: {
     if (isGEPExpr(expr)) {
-      ref<Expr> gepBase = gepExprBases[expr].first;
-      ref<Expr> offset = gepExprOffsets[expr];
+      ref<Expr> gepBase = gepExprBases.at(expr).first;
+      ref<Expr> offset = gepExprOffsets.at(expr);
       std::pair<Symbolic, ref<Expr>> gepResolved;
       int status = getBase(gepBase, gepResolved);
       if (status == 1) {
@@ -465,6 +465,6 @@ void ExecutionState::increaseLevel() {
   transitionLevel.insert(std::make_pair(srcbb, dstbb));
 }
 
-bool ExecutionState::isGEPExpr(ref<Expr> expr) {
+bool ExecutionState::isGEPExpr(ref<Expr> expr) const {
   return UseGEPOptimization && gepExprBases.find(expr) != gepExprBases.end();
 }

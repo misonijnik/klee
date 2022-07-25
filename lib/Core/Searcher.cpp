@@ -19,6 +19,7 @@
 #include "klee/ADT/DiscretePDF.h"
 #include "klee/ADT/RNG.h"
 #include "klee/Statistics/Statistics.h"
+#include "klee/Module/CFGDistance.h"
 #include "klee/Module/InstructionInfoTable.h"
 #include "klee/Module/KInstruction.h"
 #include "klee/Module/KModule.h"
@@ -144,19 +145,20 @@ void RandomSearcher::printName(llvm::raw_ostream &os) {
   os << "RandomSearcher\n";
 }
 
-TargetedSearcher::TargetedSearcher(KBlock *targetBB)
+TargetedSearcher::TargetedSearcher(KBlock *targetBB, CFGDistance &_distance)
     : states(std::make_unique<
              DiscretePDF<ExecutionState *, ExecutionStateIDCompare>>()),
       target(targetBB),
+      cfgDistance(_distance),
       distanceToTargetFunction(
-          target->parent->parent->getBackwardDistance(target->parent)) {}
+          cfgDistance.getBackwardDistance(target->parent)) {}
 
 ExecutionState &TargetedSearcher::selectState() { return *states->choose(0); }
 
 bool TargetedSearcher::distanceInCallGraph(KFunction *kf, KBlock *kb,
                                            unsigned int &distance) {
   distance = UINT_MAX;
-  std::map<KBlock *, unsigned> &dist = kf->getDistance(kb);
+  const std::map<KBlock *, unsigned> &dist = cfgDistance.getDistance(kb);
 
   if (kf == target->parent && dist.find(target) != dist.end()) {
     distance = 0;
@@ -169,8 +171,8 @@ bool TargetedSearcher::distanceInCallGraph(KFunction *kf, KBlock *kb,
           kf->parent->functionMap[kCallBlock->calledFunction];
       if (distanceToTargetFunction.find(calledKFunction) !=
               distanceToTargetFunction.end() &&
-          distance > distanceToTargetFunction[calledKFunction] + 1) {
-        distance = distanceToTargetFunction[calledKFunction] + 1;
+          distance > distanceToTargetFunction.at(calledKFunction) + 1) {
+        distance = distanceToTargetFunction.at(calledKFunction) + 1;
       }
     }
   }
@@ -183,11 +185,11 @@ TargetedSearcher::tryGetLocalWeight(ExecutionState *es, double &weight,
   unsigned int intWeight = es->steppedMemoryInstructions;
   KFunction *currentKF = es->stack.back().kf;
   KBlock *currentKB = currentKF->blockMap[es->getPCBlock()];
-  std::map<KBlock *, unsigned> &dist = currentKF->getDistance(currentKB);
+  const std::map<KBlock *, unsigned> &dist = cfgDistance.getDistance(currentKB);
   unsigned int localWeight = UINT_MAX;
   for (auto &end : localTargets) {
     if (dist.count(end) > 0) {
-      unsigned int w = dist[end];
+      unsigned int w = dist.at(end);
       localWeight = std::min(w, localWeight);
     }
   }
@@ -337,8 +339,11 @@ void TargetedSearcher::printName(llvm::raw_ostream &os) {
   os << "TargetedSearcher";
 }
 
-GuidedSearcher::GuidedSearcher(Searcher *_baseSearcher)
-    : baseSearcher(_baseSearcher) {}
+GuidedSearcher::GuidedSearcher(Searcher *_baseSearcher,
+                               CFGDistance &cfgDistance,
+                               StateHistory &stateHistory, unsigned bound)
+    : baseSearcher(_baseSearcher), cfgDistance(cfgDistance),
+      stateHistory(stateHistory), bound(bound) {}
 
 ExecutionState &GuidedSearcher::selectState() {
   unsigned size = targetedSearchers.size();
@@ -360,11 +365,16 @@ void GuidedSearcher::update(
     const std::vector<ExecutionState *> &removedStates) {
   std::map<KBlock *, std::vector<ExecutionState *>> addedTStates;
   std::map<KBlock *, std::vector<ExecutionState *>> removedTStates;
+  std::vector<ExecutionState *> targetlessState;
+  std::vector<ExecutionState *> addedTargetlessState(addedStates.begin(),
+                                                     addedStates.end());
   std::set<KBlock *> targets;
   for (const auto state : addedStates) {
     if (state->target) {
       targets.insert(state->target);
       addedTStates[state->target].push_back(state);
+    } else {
+      targetlessState.push_back(state);
     }
   }
   for (const auto state : removedStates) {
@@ -374,8 +384,25 @@ void GuidedSearcher::update(
     }
   }
   KBlock *currTarget = current ? current->target : nullptr;
-  if (currTarget)
+  if (currTarget) {
     targets.insert(currTarget);
+  } else if (current) {
+    targetlessState.push_back(current);
+  }
+  for (const auto state : targetlessState) {
+    if (state->multilevel.count(state->getPCBlock()) > bound) {
+      state->target = stateHistory.calculateTargetByBlockHistory(*state);
+      if (state->target) {
+        targets.insert(state->target);
+        addedTStates[state->target].push_back(state);
+      } else {
+        if (std::find(addedStates.begin(), addedStates.end(), state) != addedStates.end()) {
+          auto is = std::find(addedTargetlessState.begin(), addedTargetlessState.end(), state);
+          addedTargetlessState.erase(is);
+        }
+      }
+    }
+  }
 
   for (auto target : targets) {
     ExecutionState *currTState = currTarget == target ? current : nullptr;
@@ -387,7 +414,7 @@ void GuidedSearcher::update(
       targetedSearchers.erase(target);
   }
 
-  baseSearcher->update(current, addedStates, removedStates);
+  baseSearcher->update(current, addedTargetlessState, removedStates);
 }
 
 bool GuidedSearcher::empty() { return baseSearcher->empty(); }
@@ -397,7 +424,7 @@ void GuidedSearcher::printName(llvm::raw_ostream &os) {
 }
 
 void GuidedSearcher::addTarget(KBlock *target) {
-  targetedSearchers[target] = std::make_unique<TargetedSearcher>(target);
+  targetedSearchers[target] = std::make_unique<TargetedSearcher>(target, cfgDistance);
 }
 
 ///
@@ -824,7 +851,7 @@ KBlock *StateHistory::calculateTargetByBlockHistory(ExecutionState &state) {
        sfi != sfe; sfi++, sfNum++) {
     kf = sfi->kf;
 
-    for (auto &kbd : kf->getSortedDistance(kb)) {
+    for (const auto &kbd : cfgDistance.getSortedDistance(kb)) {
       KBlock *target = kbd.first;
       unsigned distance = kbd.second;
       if ((sfNum > 0 || distance > 0)) {
@@ -879,7 +906,7 @@ KBlock *StateHistory::calculateTargetByTransitionHistory(ExecutionState &state) 
        sfi != sfe; sfi++, sfNum++) {
     kf = sfi->kf;
 
-    for (auto &kbd : kf->getSortedDistance(kb)) {
+    for (const auto &kbd : cfgDistance.getSortedDistance(kb)) {
       KBlock *target = kbd.first;
       unsigned distance = kbd.second;
       if ((sfNum > 0 || distance > 0)) {
