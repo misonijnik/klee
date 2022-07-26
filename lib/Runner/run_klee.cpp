@@ -142,6 +142,22 @@ namespace {
                        cl::init("main"),
                        cl::cat(StartCat));
 
+    cl::opt<bool> InteractiveMode("interactive",
+                                  cl::desc("Launch klee in interactive mode."),
+                                  cl::init(false), cl::cat(StartCat));
+
+    cl::opt<std::string>
+        EntryPointsFile("entrypoints-file",
+                        cl::desc("Path to file with entrypoints name."),
+                        cl::init("entrypoints.txt"), cl::cat(StartCat));
+
+    const int MAX_PROCESS_NUMBER = 50;
+    cl::opt<int> ProcessNumber(
+        "process-number",
+        cl::desc("Number of parallel process in klee, must lie in [1, " +
+                 std::to_string(MAX_PROCESS_NUMBER) + "] (default = 1)."),
+        cl::init(1), cl::cat(StartCat));
+
     cl::opt<std::string>
             RunInDir("run-in-dir",
                      cl::desc("Change to the given directory before starting execution (default=location of tested file)."),
@@ -408,6 +424,10 @@ public:
                                    std::vector<std::string> &results);
 
     static std::string getRunTimeLibraryPath(const char *argv0);
+
+    void setOutputDirectory(const std::string &directory);
+
+    SmallString<128> getOutputDirectory() const;
 };
 
 KleeHandler::KleeHandler(int argc, char **argv)
@@ -528,6 +548,10 @@ std::string KleeHandler::getTestFilename(const std::string &suffix, unsigned id)
     std::stringstream filename;
     filename << "test" << std::setfill('0') << std::setw(6) << id << '.' << suffix;
     return filename.str();
+}
+
+SmallString<128> KleeHandler::getOutputDirectory() const {
+  return m_outputDirectory;
 }
 
 std::unique_ptr<llvm::raw_fd_ostream>
@@ -875,6 +899,43 @@ std::string KleeHandler::getRunTimeLibraryPath(const char *argv0) {
   KLEE_DEBUG_WITH_TYPE("klee_runtime", llvm::dbgs() <<
                        libDir.c_str() << "\n");
   return libDir.c_str();
+}
+
+void KleeHandler::setOutputDirectory(const std::string &directoryName) {
+  // create output directory
+  if (directoryName == "") {
+    klee_error("Empty name of new directory");
+  }
+  SmallString<128> directory(directoryName);
+
+  if (auto ec = sys::fs::make_absolute(directory)) {
+    klee_error("unable to determine absolute path: %s", ec.message().c_str());
+  }
+
+  // OutputDir
+  if (mkdir(directory.c_str(), 0775) < 0) {
+    klee_error("cannot create \"%s\": %s", directory.c_str(), strerror(errno));
+  }
+
+  m_outputDirectory = directory;
+
+  klee_message("output directory is \"%s\"", m_outputDirectory.c_str());
+
+  // open warnings.txt
+  std::string file_path = getOutputFilename("warnings.txt");
+  if ((klee_warning_file = fopen(file_path.c_str(), "w")) == NULL) {
+    klee_error("cannot open file \"%s\": %s", file_path.c_str(),
+               strerror(errno));
+  }
+
+  // open messages.txt
+  file_path = getOutputFilename("messages.txt");
+  if ((klee_message_file = fopen(file_path.c_str(), "w")) == NULL) {
+    klee_error("cannot open file \"%s\": %s", file_path.c_str(),
+               strerror(errno));
+  }
+  // open info
+  m_infoFile = openOutputFile("info");
 }
 
 //===----------------------------------------------------------------------===//
@@ -1412,6 +1473,200 @@ linkWithUclibc(StringRef libDir, std::string opt_suffix,
 }
 #endif
 
+static int run_klee_on_function(
+    int pArgc, char **pArgv, char **pEnvp,
+    std::unique_ptr<KleeHandler> &handler,
+    std::unique_ptr<Interpreter> &interpreter, llvm::Module *finalModule,
+    std::vector<bool> &replayPath,
+    std::vector<std::unique_ptr<llvm::Module>> &loadedModules) {
+  Function *mainFn = finalModule->getFunction(EntryPoint);
+  if (!mainFn) {
+    klee_error("Entry function '%s' not found in module.", EntryPoint.c_str());
+  }
+  externalsAndGlobalsCheck(finalModule);
+
+  if (ReplayPathFile != "") {
+    interpreter->setReplayPath(&replayPath);
+  }
+
+  auto startTime = std::time(nullptr);
+
+  if (WriteXMLTests) {
+    // Write metadata.xml
+    auto meta_file = handler->openOutputFile("metadata.xml");
+    if (!meta_file)
+      klee_error("Could not write metadata.xml");
+
+    *meta_file
+        << "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n";
+    *meta_file
+        << "<!DOCTYPE test-metadata PUBLIC \"+//IDN sosy-lab.org//DTD "
+           "test-format test-metadata 1.0//EN\" "
+           "\"https://sosy-lab.org/test-format/test-metadata-1.0.dtd\">\n";
+    *meta_file << "<test-metadata>\n";
+    *meta_file << "\t<sourcecodelang>C</sourcecodelang>\n";
+    *meta_file << "\t<producer>" << PACKAGE_STRING << "</producer>\n";
+
+    // Assume with early exit a bug finding mode and otherwise coverage
+    if (OptExitOnError)
+      *meta_file << "\t<specification>COVER( init(main()), FQL(COVER "
+                    "EDGES(@CALL(__VERIFIER_error))) )</specification>\n";
+    else
+      *meta_file << "\t<specification>COVER( init(main()), FQL(COVER "
+                    "EDGES(@DECISIONEDGE)) )</specification>\n";
+
+    // Assume the input file resembles the original source file; just exchange
+    // extension
+    *meta_file << "\t<programfile>" << TCOrig << ".c</programfile>\n";
+    *meta_file << "\t<programhash>" << TCHash << "</programhash>\n";
+    *meta_file << "\t<entryfunction>" << EntryPoint << "</entryfunction>\n";
+    *meta_file << "\t<architecture>"
+               << loadedModules[0]->getDataLayout().getPointerSizeInBits()
+               << "bit</architecture>\n";
+    std::stringstream t;
+    t << std::put_time(std::localtime(&startTime), "%Y-%m-%dT%H:%M:%SZ");
+    *meta_file << "\t<creationtime>" << t.str() << "</creationtime>\n";
+    *meta_file << "</test-metadata>\n";
+  }
+
+  { // output clock info and start time
+    std::stringstream startInfo;
+    startInfo << time::getClockInfo() << "Started: "
+              << std::put_time(std::localtime(&startTime), "%Y-%m-%d %H:%M:%S")
+              << '\n';
+    handler->getInfoStream() << startInfo.str();
+    handler->getInfoStream().flush();
+  }
+
+  if (!ReplayKTestDir.empty() || !ReplayKTestFile.empty()) {
+    assert(SeedOutFile.empty());
+    assert(SeedOutDir.empty());
+
+    std::vector<std::string> kTestFiles = ReplayKTestFile;
+    for (std::vector<std::string>::iterator it = ReplayKTestDir.begin(),
+                                            ie = ReplayKTestDir.end();
+         it != ie; ++it)
+      KleeHandler::getKTestFilesInDir(*it, kTestFiles);
+    std::vector<KTest *> kTests;
+    for (std::vector<std::string>::iterator it = kTestFiles.begin(),
+                                            ie = kTestFiles.end();
+         it != ie; ++it) {
+      KTest *out = kTest_fromFile(it->c_str());
+      if (out) {
+        kTests.push_back(out);
+      } else {
+        klee_warning("unable to open: %s\n", (*it).c_str());
+      }
+    }
+
+    if (RunInDir != "") {
+      int res = chdir(RunInDir.c_str());
+      if (res < 0) {
+        klee_error("Unable to change directory to: %s - %s", RunInDir.c_str(),
+                   sys::StrError(errno).c_str());
+      }
+    }
+
+    unsigned i = 0;
+    for (std::vector<KTest *>::iterator it = kTests.begin(), ie = kTests.end();
+         it != ie; ++it) {
+      KTest *out = *it;
+      interpreter->setReplayKTest(out);
+      llvm::errs() << "KLEE: replaying: " << *it << " (" << kTest_numBytes(out)
+                   << " bytes)"
+                   << " (" << ++i << "/" << kTestFiles.size() << ")\n";
+      // XXX should put envp in .ktest ?
+      switch (ExecutionMode) {
+      case ExecutionKind::Default:
+        interpreter->runFunctionAsMain(mainFn, out->numArgs, out->args, pEnvp);
+        break;
+      case ExecutionKind::Guided:
+        interpreter->runMainAsGuided(mainFn, out->numArgs, out->args, pEnvp);
+        break;
+      }
+      if (interrupted)
+        break;
+    }
+    interpreter->setReplayKTest(0);
+    while (!kTests.empty()) {
+      kTest_free(kTests.back());
+      kTests.pop_back();
+    }
+  } else {
+    std::vector<KTest *> seeds;
+    for (std::vector<std::string>::iterator it = SeedOutFile.begin(),
+                                            ie = SeedOutFile.end();
+         it != ie; ++it) {
+      KTest *out = kTest_fromFile(it->c_str());
+      if (!out) {
+        klee_error("unable to open: %s\n", (*it).c_str());
+      }
+      seeds.push_back(out);
+    }
+    for (std::vector<std::string>::iterator it = SeedOutDir.begin(),
+                                            ie = SeedOutDir.end();
+         it != ie; ++it) {
+      std::vector<std::string> kTestFiles;
+      KleeHandler::getKTestFilesInDir(*it, kTestFiles);
+      for (std::vector<std::string>::iterator it2 = kTestFiles.begin(),
+                                              ie = kTestFiles.end();
+           it2 != ie; ++it2) {
+        KTest *out = kTest_fromFile(it2->c_str());
+        if (!out) {
+          klee_error("unable to open: %s\n", (*it2).c_str());
+        }
+        seeds.push_back(out);
+      }
+      if (kTestFiles.empty()) {
+        klee_error("seeds directory is empty: %s\n", (*it).c_str());
+      }
+    }
+
+    if (!seeds.empty()) {
+      klee_message("KLEE: using %lu seeds\n", seeds.size());
+      interpreter->useSeeds(&seeds);
+    }
+    if (RunInDir != "") {
+      int res = chdir(RunInDir.c_str());
+      if (res < 0) {
+        klee_error("Unable to change directory to: %s - %s", RunInDir.c_str(),
+                   sys::StrError(errno).c_str());
+      }
+    }
+
+    switch (ExecutionMode) {
+    case ExecutionKind::Default:
+      interpreter->runFunctionAsMain(mainFn, pArgc, pArgv, pEnvp);
+      break;
+    case ExecutionKind::Guided:
+      interpreter->runMainAsGuided(mainFn, pArgc, pArgv, pEnvp);
+      break;
+    }
+
+    while (!seeds.empty()) {
+      kTest_free(seeds.back());
+      seeds.pop_back();
+    }
+  }
+
+  auto endTime = std::time(nullptr);
+  { // output end and elapsed time
+    std::uint32_t h;
+    std::uint8_t m, s;
+    std::tie(h, m, s) = time::seconds(endTime - startTime).toHMS();
+    std::stringstream endInfo;
+    endInfo << "Finished: "
+            << std::put_time(std::localtime(&endTime), "%Y-%m-%d %H:%M:%S")
+            << '\n'
+            << "Elapsed: " << std::setfill('0') << std::setw(2) << h << ':'
+            << std::setfill('0') << std::setw(2) << +m << ':'
+            << std::setfill('0') << std::setw(2) << +s << '\n';
+    handler->getInfoStream() << endInfo.str();
+    handler->getInfoStream().flush();
+  }
+  return 0;
+}
+
 int run_klee(int argc, char **argv, char **envp) {
     if (theInterpreter) {
       theInterpreter = nullptr;
@@ -1707,193 +1962,61 @@ int run_klee(int argc, char **argv, char **envp) {
     // locale and other data and then calls main.
 
     auto finalModule = interpreter->setModule(loadedModules, Opts);
-    Function *mainFn = finalModule->getFunction(EntryPoint);
-    if (!mainFn) {
-        klee_error("Entry function '%s' not found in module.", EntryPoint.c_str());
-    }
 
-    externalsAndGlobalsCheck(finalModule);
-
-    if (ReplayPathFile != "") {
-        interpreter->setReplayPath(&replayPath);
-    }
-
-
-    auto startTime = std::time(nullptr);
-
-    if (WriteXMLTests) {
-      // Write metadata.xml
-      auto meta_file = handler->openOutputFile("metadata.xml");
-      if (!meta_file)
-        klee_error("Could not write metadata.xml");
-
-      *meta_file
-          << "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n";
-      *meta_file
-          << "<!DOCTYPE test-metadata PUBLIC \"+//IDN sosy-lab.org//DTD "
-             "test-format test-metadata 1.0//EN\" "
-             "\"https://sosy-lab.org/test-format/test-metadata-1.0.dtd\">\n";
-      *meta_file << "<test-metadata>\n";
-      *meta_file << "\t<sourcecodelang>C</sourcecodelang>\n";
-      *meta_file << "\t<producer>" << PACKAGE_STRING << "</producer>\n";
-
-      // Assume with early exit a bug finding mode and otherwise coverage
-      if (OptExitOnError)
-        *meta_file << "\t<specification>COVER( init(main()), FQL(COVER "
-                      "EDGES(@CALL(__VERIFIER_error))) )</specification>\n";
-      else
-        *meta_file << "\t<specification>COVER( init(main()), FQL(COVER "
-                      "EDGES(@DECISIONEDGE)) )</specification>\n";
-
-      // Assume the input file resembles the original source file; just exchange
-      // extension
-      *meta_file << "\t<programfile>" << TCOrig << ".c</programfile>\n";
-      *meta_file << "\t<programhash>" << TCHash << "</programhash>\n";
-      *meta_file << "\t<entryfunction>" << EntryPoint << "</entryfunction>\n";
-      *meta_file << "\t<architecture>"
-                 << loadedModules[0]->getDataLayout().getPointerSizeInBits()
-                 << "bit</architecture>\n";
-      std::stringstream t;
-      t << std::put_time(std::localtime(&startTime), "%Y-%m-%dT%H:%M:%SZ");
-      *meta_file << "\t<creationtime>" << t.str() << "</creationtime>\n";
-      *meta_file << "</test-metadata>\n";
-    }
-
-    { // output clock info and start time
-        std::stringstream startInfo;
-        startInfo << time::getClockInfo()
-                  << "Started: "
-                  << std::put_time(std::localtime(&startTime), "%Y-%m-%d %H:%M:%S") << '\n';
-        handler->getInfoStream() << startInfo.str();
-        handler->getInfoStream().flush();
-    }
-
-    if (!ReplayKTestDir.empty() || !ReplayKTestFile.empty()) {
-        assert(SeedOutFile.empty());
-        assert(SeedOutDir.empty());
-
-        std::vector<std::string> kTestFiles = ReplayKTestFile;
-        for (std::vector<std::string>::iterator
-                     it = ReplayKTestDir.begin(), ie = ReplayKTestDir.end();
-             it != ie; ++it)
-            KleeHandler::getKTestFilesInDir(*it, kTestFiles);
-        std::vector<KTest*> kTests;
-        for (std::vector<std::string>::iterator
-                     it = kTestFiles.begin(), ie = kTestFiles.end();
-             it != ie; ++it) {
-            KTest *out = kTest_fromFile(it->c_str());
-            if (out) {
-                kTests.push_back(out);
-            } else {
-                klee_warning("unable to open: %s\n", (*it).c_str());
-            }
-        }
-
-        if (RunInDir != "") {
-            int res = chdir(RunInDir.c_str());
-            if (res < 0) {
-                klee_error("Unable to change directory to: %s - %s", RunInDir.c_str(),
-                           sys::StrError(errno).c_str());
-            }
-        }
-
-        unsigned i=0;
-        for (std::vector<KTest*>::iterator
-                     it = kTests.begin(), ie = kTests.end();
-             it != ie; ++it) {
-            KTest *out = *it;
-            interpreter->setReplayKTest(out);
-            llvm::errs() << "KLEE: replaying: " << *it << " (" << kTest_numBytes(out)
-                         << " bytes)"
-                         << " (" << ++i << "/" << kTestFiles.size() << ")\n";
-            // XXX should put envp in .ktest ?
-      switch (ExecutionMode) {
-            case ExecutionKind::Default:
-                  interpreter->runFunctionAsMain(mainFn, out->numArgs, out->args, pEnvp);
-              break;
-            case ExecutionKind::Guided:
-                  interpreter->runMainAsGuided(mainFn, out->numArgs, out->args, pEnvp);
-              break;
+    if (InteractiveMode) {
+      klee_message("KLEE finish preprocessing.");
+      std::ifstream entrypoints(EntryPointsFile);
+      if (!entrypoints.good()) {
+        klee_error("Opening %s failed.", EntryPointsFile.c_str());
       }
-            if (interrupted) break;
+
+      if (ProcessNumber < 1 || ProcessNumber > MAX_PROCESS_NUMBER) {
+        klee_error("Incorrect number of process, your value is %d, but it must "
+                   "lie in [1, %d].",
+                   ProcessNumber.getValue(), MAX_PROCESS_NUMBER);
+      }
+      klee_message("Start %d processes.", ProcessNumber.getValue());
+
+      SmallString<128> outputDirectory = handler->getOutputDirectory();
+      const size_t PROCESS = ProcessNumber;
+      std::vector<pid_t> child_process;
+      while (true) {
+        std::string entrypoint;
+        if (!(entrypoints >> entrypoint)) {
+          break;
         }
-        interpreter->setReplayKTest(0);
-        while (!kTests.empty()) {
-            kTest_free(kTests.back());
-            kTests.pop_back();
+
+        if (child_process.size() == PROCESS) {
+          wait(NULL);
         }
+
+        std::vector<pid_t> alive_child;
+        for (const pid_t child_id : child_process) {
+          if (kill(child_id, 0) == 0) {
+            alive_child.push_back(child_id);
+          }
+        }
+        child_process = alive_child;
+
+        pid_t pid = fork();
+        if (pid < 0) {
+          klee_error("%s", "Cannot create child process.");
+        } else if (pid == 0) {
+          EntryPoint = entrypoint;
+          SmallString<128> newOutputDirectory = outputDirectory;
+          sys::path::append(newOutputDirectory, entrypoint);
+          handler->setOutputDirectory(newOutputDirectory.c_str());
+          run_klee_on_function(pArgc, pArgv, pEnvp, handler, interpreter,
+                               finalModule, replayPath, loadedModules);
+          exit(0);
+        } else {
+          child_process.push_back(pid);
+        }
+      }
+      while (wait(NULL) > 0);
     } else {
-        std::vector<KTest *> seeds;
-        for (std::vector<std::string>::iterator
-                     it = SeedOutFile.begin(), ie = SeedOutFile.end();
-             it != ie; ++it) {
-            KTest *out = kTest_fromFile(it->c_str());
-            if (!out) {
-                klee_error("unable to open: %s\n", (*it).c_str());
-            }
-            seeds.push_back(out);
-        }
-        for (std::vector<std::string>::iterator
-                     it = SeedOutDir.begin(), ie = SeedOutDir.end();
-             it != ie; ++it) {
-            std::vector<std::string> kTestFiles;
-            KleeHandler::getKTestFilesInDir(*it, kTestFiles);
-            for (std::vector<std::string>::iterator
-                         it2 = kTestFiles.begin(), ie = kTestFiles.end();
-                 it2 != ie; ++it2) {
-                KTest *out = kTest_fromFile(it2->c_str());
-                if (!out) {
-                    klee_error("unable to open: %s\n", (*it2).c_str());
-                }
-                seeds.push_back(out);
-            }
-            if (kTestFiles.empty()) {
-                klee_error("seeds directory is empty: %s\n", (*it).c_str());
-            }
-        }
-
-        if (!seeds.empty()) {
-            klee_message("KLEE: using %lu seeds\n", seeds.size());
-            interpreter->useSeeds(&seeds);
-        }
-        if (RunInDir != "") {
-            int res = chdir(RunInDir.c_str());
-            if (res < 0) {
-                klee_error("Unable to change directory to: %s - %s", RunInDir.c_str(),
-                           sys::StrError(errno).c_str());
-            }
-        }
-        switch (ExecutionMode) {
-        case ExecutionKind::Default:
-            interpreter->runFunctionAsMain(mainFn, pArgc, pArgv, pEnvp);
-            break;
-        case ExecutionKind::Guided:
-            interpreter->runMainAsGuided(mainFn, pArgc, pArgv, pEnvp);
-            break;
-        }
-        while (!seeds.empty()) {
-          kTest_free(seeds.back());
-          seeds.pop_back();
-        }
-  }
-
-    auto endTime = std::time(nullptr);
-    { // output end and elapsed time
-        std::uint32_t h;
-        std::uint8_t m, s;
-        std::tie(h,m,s) = time::seconds(endTime - startTime).toHMS();
-        std::stringstream endInfo;
-        endInfo << "Finished: "
-                << std::put_time(std::localtime(&endTime), "%Y-%m-%d %H:%M:%S") << '\n'
-                << "Elapsed: "
-                << std::setfill('0') << std::setw(2) << h
-                << ':'
-                << std::setfill('0') << std::setw(2) << +m
-                << ':'
-                << std::setfill('0') << std::setw(2) << +s
-                << '\n';
-        handler->getInfoStream() << endInfo.str();
-        handler->getInfoStream().flush();
+      run_klee_on_function(pArgc, pArgv, pEnvp, handler, interpreter,
+                           finalModule, replayPath, loadedModules);
     }
 
     // Free all the args.
@@ -1954,6 +2077,5 @@ int run_klee(int argc, char **argv, char **envp) {
         llvm::errs().resetColor();
 
     handler->getInfoStream() << stats.str();
-
     return 0;
 }
