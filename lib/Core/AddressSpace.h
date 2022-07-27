@@ -103,9 +103,13 @@ namespace klee {
 
     /// Resolve as above, but only to MakeSymbolic and LazyInstantiated
     /// variables
+    bool fastResolveOne(ExecutionState &state, TimingSolver *solver,
+                    ref<Expr> address, ObjectPair &result, bool &success,
+                    unsigned timestamp = -1) const;
     bool fastResolve(ExecutionState &state, TimingSolver *solver, ref<Expr> p,
                      ResolutionList &rl, unsigned maxResolutions = 0,
-                     time::Span timeout = time::Span()) const;
+                     time::Span timeout = time::Span(),
+                     unsigned timestamp = -1) const;
 
     /***/
 

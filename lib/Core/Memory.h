@@ -41,11 +41,13 @@ class MemoryObject {
 
 private:
   static int counter;
+  static int time;
   /// @brief Required by klee::ref-managed objects
   mutable class ReferenceCounter _refCount;
 
 public:
   unsigned id;
+  unsigned timestamp;
   uint64_t address;
   ref<Expr> lazyInitializationSource;
 
@@ -75,6 +77,7 @@ public:
   explicit
   MemoryObject(uint64_t _address) 
     : id(counter++),
+      timestamp(time++),
       address(_address),
       lazyInitializationSource(nullptr),
       size(0),
@@ -87,8 +90,10 @@ public:
                bool _isLocal, bool _isGlobal, bool _isFixed,
                const llvm::Value *_allocSite,
                MemoryManager *_parent,
-               ref<Expr> _lazyInitializationSource = nullptr)
+               ref<Expr> _lazyInitializationSource = nullptr,
+               unsigned _timestamp = 0 /* unused if _lazyInstantiatedSource is null*/)
     : id(counter++),
+      timestamp(_timestamp),
       address(_address),
       lazyInitializationSource(_lazyInitializationSource),
       size(_size),
@@ -99,6 +104,11 @@ public:
       isUserSpecified(false),
       parent(_parent), 
       allocSite(_allocSite) {
+    if (lazyInitializationSource) {
+      timestamp = _timestamp;
+    } else {
+      timestamp = time++;
+    }
   }
 
   ~MemoryObject();

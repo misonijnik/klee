@@ -33,6 +33,7 @@ namespace klee {
 class Array;
 class CallPathNode;
 struct Cell;
+template<class T> class ExprHashMap;
 struct KFunction;
 struct KBlock;
 struct KInstruction;
@@ -306,7 +307,7 @@ public:
   ref<const MemoryObject> findMemoryObject(const Array *array) const;
 
   bool getBase(ref<Expr> expr,
-               std::pair<Symbolic, ref<Expr>> *resolution) const;
+               std::pair<ref<const MemoryObject>, ref<Expr>> &resolution) const;
 
   void removePointers(const MemoryObject *mo);
 

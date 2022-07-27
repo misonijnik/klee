@@ -187,6 +187,121 @@ bool AddressSpace::resolveOne(ExecutionState &state,
   }
 }
 
+bool AddressSpace::fastResolveOne(ExecutionState &state, TimingSolver *solver,
+                                  ref<Expr> address, ObjectPair &result,
+                                  bool &success, unsigned timestamp) const {
+  if (ConstantExpr *CE = dyn_cast<ConstantExpr>(address)) {
+    success = resolveOne(CE, result);
+    return true;
+  } else {
+    TimerStatIncrementer timer(stats::resolveTime);
+
+    MemoryObject *symHack = nullptr;
+    for (auto &moa : state.symbolics) {
+      if (moa.first->isLazyInitialized() &&
+          moa.first->getLazyInitializationSource() == address) {
+        symHack = const_cast<MemoryObject *>(moa.first.get());
+        break;
+      }
+    }
+
+    if (symHack) {
+      auto osi = objects.find(symHack);
+      if (osi != objects.end()) {
+        result.first = osi->first;
+        result.second = osi->second.get();
+        success = true;
+        return true;
+      }
+    }
+
+    // try cheap search, will succeed for any inbounds pointer
+
+    ref<ConstantExpr> cex;
+    if (!solver->getValue(state.constraints, address, cex, state.queryMetaData))
+      return false;
+    uint64_t example = cex->getZExtValue();
+    MemoryObject hack(example);
+    const auto res = objects.lookup_previous(&hack);
+
+    if (res) {
+      const MemoryObject *mo = res->first;
+      if (example - mo->address < mo->size) {
+        result.first = res->first;
+        result.second = res->second.get();
+        success = true;
+        return true;
+      }
+    }
+
+    // didn't work, now we have to search
+       
+    MemoryMap::iterator oi = objects.upper_bound(&hack);
+    MemoryMap::iterator begin = objects.begin();
+    MemoryMap::iterator end = objects.end();
+      
+    MemoryMap::iterator start = oi;
+    while (oi!=begin) {
+      --oi;
+      const auto &mo = oi->first;
+      if (mo == nullptr || mo->timestamp > timestamp || !state.inSymbolics(mo))
+        continue;
+
+      bool mayBeTrue;
+      if (!solver->mayBeTrue(state.constraints,
+                             mo->getBoundsCheckPointer(address), mayBeTrue,
+                             state.queryMetaData))
+        return false;
+      if (mayBeTrue) {
+        result.first = oi->first;
+        result.second = oi->second.get();
+        success = true;
+        return true;
+      } else {
+        bool mustBeTrue;
+        if (!solver->mustBeTrue(state.constraints,
+                                UgeExpr::create(address, mo->getBaseExpr()),
+                                mustBeTrue, state.queryMetaData))
+          return false;
+        if (mustBeTrue)
+          break;
+      }
+    }
+
+    // search forwards
+    for (oi=start; oi!=end; ++oi) {
+      const auto &mo = oi->first;
+      if (mo == nullptr || mo->timestamp > timestamp || !state.inSymbolics(mo))
+        continue;
+
+      bool mustBeTrue;
+      if (!solver->mustBeTrue(state.constraints,
+                              UltExpr::create(address, mo->getBaseExpr()),
+                              mustBeTrue, state.queryMetaData))
+        return false;
+      if (mustBeTrue) {
+        break;
+      } else {
+        bool mayBeTrue;
+
+        if (!solver->mayBeTrue(state.constraints,
+                               mo->getBoundsCheckPointer(address), mayBeTrue,
+                               state.queryMetaData))
+          return false;
+        if (mayBeTrue) {
+          result.first = oi->first;
+          result.second = oi->second.get();
+          success = true;
+          return true;
+        }
+      }
+    }
+
+    success = false;
+    return true;
+  }
+}
+
 int AddressSpace::checkPointerInObject(ExecutionState &state,
                                        TimingSolver *solver, ref<Expr> p,
                                        const ObjectPair &op, ResolutionList &rl,
@@ -330,7 +445,8 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
 bool AddressSpace::fastResolve(ExecutionState &state, TimingSolver *solver,
                                ref<Expr> p, ResolutionList &rl,
                                unsigned maxResolutions,
-                               time::Span timeout) const {
+                               time::Span timeout,
+                               unsigned timestamp) const {
   if (ConstantExpr *CE = dyn_cast<ConstantExpr>(p)) {
     ObjectPair res;
     if (resolveOne(CE, res))
@@ -341,8 +457,8 @@ bool AddressSpace::fastResolve(ExecutionState &state, TimingSolver *solver,
 
     MemoryObject *symHack = nullptr;
     for (auto &moa : state.symbolics) {
-      if (moa.first->isLazyInstantiated() &&
-          moa.first->getLazyInstantiatedSource() == p) {
+      if (moa.first->isLazyInitialized() &&
+          moa.first->getLazyInitializationSource() == p) {
         symHack = const_cast<MemoryObject *>(moa.first.get());
         break;
       }
@@ -389,7 +505,7 @@ bool AddressSpace::fastResolve(ExecutionState &state, TimingSolver *solver,
     while (oi != begin) {
       --oi;
       const MemoryObject *mo = oi->first;
-      if (mo == nullptr || !state.inSymbolics(mo))
+      if (mo == nullptr || mo->timestamp > timestamp || !state.inSymbolics(mo))
         continue;
 
       if (timeout && timeout < timer.delta())
@@ -414,7 +530,7 @@ bool AddressSpace::fastResolve(ExecutionState &state, TimingSolver *solver,
     // search forwards
     for (oi = start; oi != end; ++oi) {
       const MemoryObject *mo = oi->first;
-      if (mo == nullptr || !state.inSymbolics(mo))
+      if (mo == nullptr || mo->timestamp > timestamp || !state.inSymbolics(mo))
         continue;
 
       if (timeout && timeout < timer.delta())

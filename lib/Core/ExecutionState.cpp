@@ -13,6 +13,7 @@
 
 #include "klee/Expr/ArrayExprVisitor.h"
 #include "klee/Expr/Expr.h"
+#include "klee/Expr/ExprHashMap.h"
 #include "klee/Module/Cell.h"
 #include "klee/Module/InstructionInfoTable.h"
 #include "klee/Module/KInstruction.h"
@@ -190,7 +191,7 @@ ExecutionState::findMemoryObject(const Array *array) const {
 }
 
 bool ExecutionState::getBase(ref<Expr> expr,
-                            std::pair<Symbolic, ref<Expr>> *resolution) const {
+                             std::pair<ref<const MemoryObject>, ref<Expr>> &resolution) const {
   switch (expr->getKind()) {
   case Expr::Read: {
     ref<ReadExpr> base = dyn_cast<ReadExpr>(expr);
@@ -198,8 +199,7 @@ bool ExecutionState::getBase(ref<Expr> expr,
     if (!parent) {
       return false;
     }
-    *resolution =
-        std::make_pair(std::make_pair(parent, base->updates.root), base->index);
+    resolution = std::make_pair(parent, base->index);
     return true;
   }
   case Expr::Concat: {
@@ -209,22 +209,19 @@ bool ExecutionState::getBase(ref<Expr> expr,
     if (!parent) {
       return false;
     }
-    *resolution =
-        std::make_pair(std::make_pair(parent, base->updates.root), base->index);
+    resolution = std::make_pair(parent, base->index);
     return true;
   }
   default: {
     if (isGEPExpr(expr)) {
       ref<Expr> gepBase = gepExprBases.at(expr).first;
       ref<Expr> offset = gepExprOffsets.at(expr);
-      std::pair<Symbolic, ref<Expr>> gepResolved;
-      bool status = getBase(gepBase, &gepResolved);
-      if (status) {
-        auto parent = gepResolved.first.first;
-        auto array = gepResolved.first.second;
+      std::pair<ref<const MemoryObject>, ref<Expr>> gepResolved;
+      if (getBase(gepBase, gepResolved)) {
+        auto parent = gepResolved.first;
         auto gepIndex = gepResolved.second;
         auto index = AddExpr::create(gepIndex, offset);
-        *resolution = std::make_pair(std::make_pair(parent, array), index);
+        resolution = std::make_pair(parent, index);
         return true;
       } else {
         return false;

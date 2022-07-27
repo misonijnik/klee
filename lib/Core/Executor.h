@@ -64,6 +64,7 @@ namespace klee {
   class ExecutionState;
   class ExternalDispatcher;
   class Expr;
+  template<class T> class ExprHashMap;
   class InstructionInfoTable;
   struct KFunction;
   struct KInstruction;

@@ -156,10 +156,15 @@ cl::opt<bool> EmitAllErrors(
              "(default=false, i.e. one per (error,instruction) pair)"),
     cl::cat(TestGenCat));
 
-cl::opt<bool> SkipNotLazyAndSymbolicPointers(
-    "skip-not-lazy-and-symbolic-pointers", cl::init(true),
-    cl::desc("Set pointers only on lazy and make_symbolic variables "
-             "(default=false)"),
+cl::opt<bool> SkipNotSymbolicObjects(
+    "skip-not-symbolic-objects", cl::init(true),
+    cl::desc("Set pointers only on symbolic objects (default=true)"),
+    cl::cat(TestGenCat));
+
+cl::opt<bool> UseTimestamps(
+    "use-timestamps", cl::init(true),
+    cl::desc("Set symbolic pointers only to objects created before those "
+             "pointers were created (default=false)"),
     cl::cat(TestGenCat));
 
 /* Constraint solving options */
@@ -4397,9 +4402,23 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   } else {
     solver->setTimeout(coreSolverTimeout);
 
-    if (!state.addressSpace.resolveOne(state, solver, address, op, success)) {
-      address = toConstant(state, address, "resolveOne failure");
-      success = state.addressSpace.resolveOne(cast<ConstantExpr>(address), op);
+    if (SkipNotSymbolicObjects) {
+      unsigned timestamp = UINT_MAX;
+      if (UseTimestamps && !isa<ConstantExpr>(address)) {
+        std::pair<ref<const MemoryObject>, ref<Expr>> moBasePair;
+        if (state.getBase(base, moBasePair)) {
+          timestamp = moBasePair.first->timestamp;
+        }
+      }
+      if (!state.addressSpace.fastResolveOne(state, solver, address, op, success, timestamp)) {
+        address = toConstant(state, address, "resolveOne failure");
+        success = state.addressSpace.resolveOne(cast<ConstantExpr>(address), op);
+      }
+    } else {
+      if (!state.addressSpace.resolveOne(state, solver, address, op, success)) {
+        address = toConstant(state, address, "resolveOne failure");
+        success = state.addressSpace.resolveOne(cast<ConstantExpr>(address), op);
+      }
     }
     solver->setTimeout(time::Span());
   }
@@ -4462,22 +4481,19 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   solver->setTimeout(coreSolverTimeout);
   bool incomplete;
 
-  if (SkipNotLazyAndSymbolicPointers) {
-    if (state.isGEPExpr(address)) {
-      incomplete = state.addressSpace.fastResolve(state, solver, base, rl, 0,
-                                                  coreSolverTimeout);
-    } else {
-      incomplete = state.addressSpace.fastResolve(state, solver, address, rl, 0,
-                                                  coreSolverTimeout);
+  if (SkipNotSymbolicObjects) {
+    unsigned timestamp = UINT_MAX;
+    if (UseTimestamps && !isa<ConstantExpr>(address)) {
+      std::pair<ref<const MemoryObject>, ref<Expr>> moBasePair;
+      if (state.getBase(base, moBasePair)) {
+        timestamp = moBasePair.first->timestamp;
+      }
     }
+    incomplete = state.addressSpace.fastResolve(state, solver, base, rl, 0,
+                                                coreSolverTimeout, timestamp);
   } else {
-    if (state.isGEPExpr(address)) {
-      incomplete = state.addressSpace.resolve(state, solver, base, rl, 0,
-                                              coreSolverTimeout);
-    } else {
-      incomplete = state.addressSpace.resolve(state, solver, address, rl, 0,
-                                              coreSolverTimeout);
-    }
+    incomplete = state.addressSpace.resolve(state, solver, base, rl, 0,
+                                            coreSolverTimeout);
   }
 
   solver->setTimeout(time::Span());
@@ -4622,9 +4638,14 @@ ObjectPair Executor::lazyInitializeVariable(ExecutionState &state,
                                              uint64_t size) {
   assert(!isa<ConstantExpr>(address));
   const llvm::Value *allocSite = target ? target->inst : nullptr;
+  std::pair<ref<const MemoryObject>, ref<Expr>> moBasePair;
+  unsigned timestamp = 0;
+  if (state.getBase(address, moBasePair)) {
+    timestamp = moBasePair.first->timestamp;
+  }
   MemoryObject *mo =
       memory->allocate(size, false, /*isGlobal=*/false, allocSite,
-                       /*allocationAlignment=*/8, address);
+                       /*allocationAlignment=*/8, address, timestamp);
   return lazyInitialize(state, /*isLocal=*/false, mo);
 }
 
@@ -4965,40 +4986,40 @@ void Executor::setInitializationGraph(const ExecutionState &state,
 
   for (const auto &pointer : state.pointers) {
 
-    std::pair<Symbolic, ref<Expr>> pointer_resolution;
-    auto resolved = state.getBase(pointer.first, &pointer_resolution);
+    std::pair<ref<const MemoryObject>, ref<Expr>> pointerResolution;
+    auto resolved = state.getBase(pointer.first, pointerResolution);
 
     if (resolved) {
       ref<ConstantExpr> offset;
       bool success =
-          solver->getValue(state.constraints, pointer_resolution.second, offset,
+          solver->getValue(state.constraints, pointerResolution.second, offset,
                            state.queryMetaData);
       if (!success) {
         klee_error("Offset resolution failure in setInitializationGraph");
       }
       // The objects have to be symbolic
-      bool pointer_found = false, pointee_found = false;
-      size_t pointer_index = 0, pointee_index = 0;
+      bool pointerFound = false, pointeeFound = false;
+      size_t pointerIndex = 0, pointeeIndex = 0;
       for (size_t i = 0; i < state.symbolics.size(); i++) {
-        if (state.symbolics[i].first == pointer_resolution.first.first) {
-          pointer_index = i;
-          pointer_found = true;
+        if (state.symbolics[i].first == pointerResolution.first) {
+          pointerIndex = i;
+          pointerFound = true;
         }
         if (state.symbolics[i].first == pointer.second) {
-          pointee_index = i;
-          pointee_found = true;
+          pointeeIndex = i;
+          pointeeFound = true;
         }
       }
-      if (pointer_found && pointee_found) {
+      if (pointerFound && pointeeFound) {
         Offset o;
         o.offset = offset->getZExtValue();
-        o.index = pointee_index;
-        if (s[pointer_index].count(o.offset) && s[pointee_index][o.offset] != o.index) {
+        o.index = pointeeIndex;
+        if (s[pointerIndex].count(o.offset) && s[pointeeIndex][o.offset] != o.index) {
           assert(0 && "wft");
         }
-        if (!s[pointee_index].count(o.offset)) {
-          ofst[pointer_index].push_back(o);
-          s[pointer_index][o.offset] = o.index;
+        if (!s[pointeeIndex].count(o.offset)) {
+          ofst[pointerIndex].push_back(o);
+          s[pointerIndex][o.offset] = o.index;
         }
       }
     }
