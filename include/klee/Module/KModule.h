@@ -14,9 +14,7 @@
 #include "klee/Core/Interpreter.h"
 
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/IR/CFG.h"
 
-#include <deque>
 #include <map>
 #include <memory>
 #include <set>
@@ -70,7 +68,6 @@ namespace klee {
     KBlock(const KBlock &) = delete;
     KBlock &operator=(const KBlock &) = delete;
 
-    unsigned getArgRegister(unsigned index) const { return index; }
     void handleKInstruction(std::map<llvm::Instruction*, unsigned> &registerMap,
                             llvm::Instruction *inst, KModule *km,
                             KInstruction *ki);

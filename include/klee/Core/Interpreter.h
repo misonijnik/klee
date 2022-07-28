@@ -9,8 +9,6 @@
 #ifndef KLEE_INTERPRETER_H
 #define KLEE_INTERPRETER_H
 
-#include "klee/Expr/Expr.h"
-
 #include <map>
 #include <memory>
 #include <set>
@@ -20,7 +18,6 @@
 struct KTest;
 
 namespace llvm {
-class BasicBlock;
 class Function;
 class LLVMContext;
 class Module;

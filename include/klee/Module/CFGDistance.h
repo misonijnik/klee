@@ -26,7 +26,6 @@ class CFGDistance {
       std::map<KFunction *, std::vector<std::pair<KFunction *, unsigned>>>;
 
 private:
-
   blockDistanceMap blockDistance;
   blockDistanceMap blockBackwardDistance;
   blockDistanceList blockSortedDistance;
@@ -38,7 +37,6 @@ private:
   functionDistanceList functionSortedBackwardDistance;
 
 private:
-
   void calculateDistance(KBlock *bb);
   void calculateBackwardDistance(KBlock *bb);
 
@@ -46,19 +44,21 @@ private:
   void calculateBackwardDistance(KFunction *kf);
 
 public:
-
   const std::map<KBlock *, unsigned int> &getDistance(KBlock *kb);
   const std::map<KBlock *, unsigned int> &getBackwardDistance(KBlock *kb);
-  const std::vector<std::pair<KBlock *, unsigned int>> &getSortedDistance(KBlock *kb);
-  const std::vector<std::pair<KBlock *, unsigned int>>& getSortedBackwardDistance(KBlock *kb);
+  const std::vector<std::pair<KBlock *, unsigned int>> &
+  getSortedDistance(KBlock *kb);
+  const std::vector<std::pair<KBlock *, unsigned int>> &
+  getSortedBackwardDistance(KBlock *kb);
 
   const std::map<KFunction *, unsigned int> &getDistance(KFunction *kf);
   const std::map<KFunction *, unsigned int> &getBackwardDistance(KFunction *kf);
-  const std::vector<std::pair<KFunction *, unsigned int>> &getSortedDistance(KFunction *kf);
-  const std::vector<std::pair<KFunction *, unsigned int>> &getSortedBackwardDistance(KFunction *kf);
+  const std::vector<std::pair<KFunction *, unsigned int>> &
+  getSortedDistance(KFunction *kf);
+  const std::vector<std::pair<KFunction *, unsigned int>> &
+  getSortedBackwardDistance(KFunction *kf);
 };
 
-} // End klee namespace
-
+} // namespace klee
 
 #endif /* KLEE_CFGDISTANCE_H */

@@ -41,7 +41,7 @@
   TTYPE(Replay, 27U, "")                                                       \
   TTYPE(Merge, 28U, "")                                                        \
   TTYPE(SilentExit, 29U, "")                                                   \
-  TTYPE(Paused, 30U, "")                                                   \
+  TTYPE(Paused, 30U, "")                                                       \
   MARK(END, 30U)
 
 ///@brief Reason an ExecutionState got terminated.
