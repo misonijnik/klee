@@ -177,16 +177,16 @@ ExecutionState::findMemoryObject(const Array *array) const {
   return nullptr;
 }
 
-int ExecutionState::getBase(ref<Expr> expr,
-                            std::pair<Symbolic, ref<Expr>> &resolved) const {
+bool ExecutionState::getBase(ref<Expr> expr,
+                            std::pair<Symbolic, ref<Expr>> *resolution) const {
   switch (expr->getKind()) {
   case Expr::Read: {
     ref<ReadExpr> base = dyn_cast<ReadExpr>(expr);
     auto parent = findMemoryObject(base->updates.root);
     if (!parent) {
-      return -1;
+      return false;
     }
-    resolved =
+    *resolution =
         std::make_pair(std::make_pair(parent, base->updates.root), base->index);
     break;
   }
@@ -195,9 +195,9 @@ int ExecutionState::getBase(ref<Expr> expr,
         ArrayExprHelper::hasOrderedReads(*dyn_cast<ConcatExpr>(expr));
     auto parent = findMemoryObject(base->updates.root);
     if (!parent) {
-      return -1;
+      return false;
     }
-    resolved =
+    *resolution =
         std::make_pair(std::make_pair(parent, base->updates.root), base->index);
     break;
   }
@@ -206,22 +206,22 @@ int ExecutionState::getBase(ref<Expr> expr,
       ref<Expr> gepBase = gepExprBases.at(expr).first;
       ref<Expr> offset = gepExprOffsets.at(expr);
       std::pair<Symbolic, ref<Expr>> gepResolved;
-      int status = getBase(gepBase, gepResolved);
-      if (status == 1) {
+      int status = getBase(gepBase, &gepResolved);
+      if (status == true) {
         auto parent = gepResolved.first.first;
         auto array = gepResolved.first.second;
         auto gepIndex = gepResolved.second;
         auto index = AddExpr::create(gepIndex, offset);
-        resolved = std::make_pair(std::make_pair(parent, array), index);
+        *resolution = std::make_pair(std::make_pair(parent, array), index);
       } else
         return status;
     } else {
-      return -1;
+      return true;
     }
     break;
   }
   }
-  return 1;
+  return false;
 }
 
 /**/

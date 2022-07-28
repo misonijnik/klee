@@ -231,6 +231,9 @@ public:
   // FIXME: Move to a shared list structure (not critical).
   std::vector<Symbolic> symbolics;
 
+  /// @brief map from memory accesses to accessed objects.
+  ExprHashMap<const MemoryObject *> pointers;
+
   /// @brief A set of boolean expressions
   /// the user has requested be true of a counterexample.
   ImmutableSet<ref<Expr>> cexPreferences;
@@ -300,7 +303,7 @@ public:
 
   ref<const MemoryObject> findMemoryObject(const Array *array) const;
 
-  int getBase(ref<Expr> expr, std::pair<Symbolic, ref<Expr>> &resolved) const;
+  bool getBase(ref<Expr> expr, std::pair<Symbolic, ref<Expr>> *resolution) const;
 
   void addConstraint(ref<Expr> e);
   void addCexPreference(const ref<Expr> &cond);

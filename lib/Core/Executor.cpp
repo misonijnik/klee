@@ -4386,12 +4386,20 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   // fast path: single in-bounds resolution
   ObjectPair op;
   bool success;
-  solver->setTimeout(coreSolverTimeout);
-  if (!state.addressSpace.resolveOne(state, solver, address, op, success)) {
-    address = toConstant(state, address, "resolveOne failure");
-    success = state.addressSpace.resolveOne(cast<ConstantExpr>(address), op);
+
+  if (state.pointers.count(address)) {
+    success = true;
+    const MemoryObject* mo = state.pointers[address];
+    op = std::make_pair(mo, state.addressSpace.findObject(mo));
+  } else {
+    solver->setTimeout(coreSolverTimeout);
+
+    if (!state.addressSpace.resolveOne(state, solver, address, op, success)) {
+      address = toConstant(state, address, "resolveOne failure");
+      success = state.addressSpace.resolveOne(cast<ConstantExpr>(address), op);
+    }
+    solver->setTimeout(time::Span());
   }
-  solver->setTimeout(time::Span());
 
   if (success) {
     const MemoryObject *mo = op.first;
@@ -4418,6 +4426,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     if (inBounds) {
       ref<Expr> result;
       const ObjectState *os = op.second;
+      state.pointers[address] = mo;
       switch (operation) {
       case Write:
         if (os->readOnly) {
@@ -4487,6 +4496,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
       ExecutionState *bound_inner = branches_inner.first;
       ExecutionState *unbound_inner = branches_inner.second;
       if (bound_inner) {
+        bound_inner->pointers[address] = mo;
         switch (operation) {
         case Write: {
           if (os->readOnly) {
@@ -4552,6 +4562,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
                               getAddressInfo(*unbound, address));
       } else {
         addConstraint(*unbound, inBounds);
+        unbound->pointers[address] = mo;
         switch (operation) {
         case Write: {
           ObjectState *wos =
@@ -4933,54 +4944,43 @@ void Executor::logState(const ExecutionState &state, int id,
   }
 }
 
-int Executor::resolveLazyInitialization(
-    const ExecutionState &state,
-    ExprHashMap<std::pair<Symbolic, ref<Expr>>> &resolved) {
-  int status = 0;
-  for (auto &symbolic : state.symbolics) {
-    if (!symbolic.first->isLazyInitialized()) {
-      continue;
-    }
-    auto lisource = symbolic.first->lazyInitializationSource;
-    std::pair<Symbolic, ref<Expr>> resolvedSymbolic;
-    int localStatus = state.getBase(lisource, resolvedSymbolic);
-    resolved[lisource] = resolvedSymbolic;
-    if (status != -1)
-      return status = localStatus;
-  }
-  return status;
-}
-
 void Executor::setInitializationGraph(const ExecutionState &state,
                                       KTest &ktest) {
   std::map<size_t, std::vector<Offset>> ofst;
-  ExprHashMap<std::pair<Symbolic, ref<Expr>>> pointers;
-  resolveLazyInitialization(state, pointers);
 
-  for (size_t i = 0; i < state.symbolics.size(); i++) {
-    if (!state.symbolics[i].first->isLazyInitialized())
-      continue;
-    auto parent =
-        pointers.at(state.symbolics[i].first->lazyInitializationSource);
-    // Resolve offset (parent.second)
-    ref<ConstantExpr> offset;
-    bool success = solver->getValue(state.constraints, parent.second, offset,
-                                    state.queryMetaData);
-    if (!success)
-      klee_error("Offset resolution failure (setInitializationGraph)");
-    // Resolve indices of i and parent.first
-    size_t index_parent;
-    for (size_t j = 0; j < state.symbolics.size(); j++) {
-      if (state.symbolics[j].first == parent.first.first) {
-        index_parent = j;
-        break;
+  for (const auto &pointer : state.pointers) {
+
+    std::pair<Symbolic, ref<Expr>> pointer_resolution;
+    auto resolved = state.getBase(pointer.first, &pointer_resolution);
+
+    if (resolved) {
+      ref<ConstantExpr> offset;
+      bool success =
+          solver->getValue(state.constraints, pointer_resolution.second, offset,
+                           state.queryMetaData);
+      if (!success) {
+        klee_error("Offset resolution failure in setInitializationGraph");
+      }
+      // The objects have to be symbolic
+      bool pointer_found = false, pointee_found = false;
+      size_t pointer_index = 0, pointee_index = 0;
+      for (size_t i = 0; i < state.symbolics.size(); i++) {
+        if (state.symbolics[i].first == pointer_resolution.first.first) {
+          pointer_index = i;
+          pointer_found = true;
+        }
+        if (state.symbolics[i].first == pointer.second) {
+          pointee_index = i;
+          pointee_found = true;
+        }
+      }
+      if (pointer_found && pointee_found) {
+        Offset o;
+        o.offset = offset->getZExtValue();
+        o.index = pointee_index;
+        ofst[pointer_index].push_back(o);
       }
     }
-    // Put data in TestCase tc, indices coincide
-    Offset o;
-    o.offset = offset->getZExtValue();
-    o.index = i;
-    ofst[index_parent].push_back(o);
   }
 
   for (auto i : ofst) {

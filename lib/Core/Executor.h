@@ -582,10 +582,6 @@ public:
                         Interpreter::LogType logFormat =
                             Interpreter::STP) override;
 
-  int resolveLazyInitialization(
-      const ExecutionState &state,
-      ExprHashMap<std::pair<Symbolic, ref<Expr>>> &resolved);
-
   void setInitializationGraph(const ExecutionState &state, KTest &tc) override;
 
   void logState(const ExecutionState &state, int id,
