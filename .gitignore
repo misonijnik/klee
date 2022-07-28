@@ -33,5 +33,3 @@ autoconf/autom4te.cache/
 autom4te.cache/
 
 .vscode
-.cache/
-compile_commands.json

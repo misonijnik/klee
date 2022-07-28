@@ -32,7 +32,7 @@ extern "C" {
   typedef struct KTest KTest;
   struct KTest {
     /* file format version */
-    unsigned version;
+    unsigned version; 
     
     unsigned numArgs;
     char **args;
@@ -57,7 +57,6 @@ extern "C" {
   /* returns 1 on success, 0 on (unspecified) error */
   int kTest_toFile(const KTest *, const char *path);
   
-
   /* returns total number of object bytes */
   unsigned kTest_numBytes(KTest *);
 
