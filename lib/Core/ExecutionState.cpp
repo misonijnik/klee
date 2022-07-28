@@ -188,7 +188,7 @@ bool ExecutionState::getBase(ref<Expr> expr,
     }
     *resolution =
         std::make_pair(std::make_pair(parent, base->updates.root), base->index);
-    break;
+    return true;
   }
   case Expr::Concat: {
     ref<ReadExpr> base =
@@ -199,29 +199,29 @@ bool ExecutionState::getBase(ref<Expr> expr,
     }
     *resolution =
         std::make_pair(std::make_pair(parent, base->updates.root), base->index);
-    break;
+    return true;
   }
   default: {
     if (isGEPExpr(expr)) {
       ref<Expr> gepBase = gepExprBases.at(expr).first;
       ref<Expr> offset = gepExprOffsets.at(expr);
       std::pair<Symbolic, ref<Expr>> gepResolved;
-      int status = getBase(gepBase, &gepResolved);
-      if (status == true) {
+      bool status = getBase(gepBase, &gepResolved);
+      if (status) {
         auto parent = gepResolved.first.first;
         auto array = gepResolved.first.second;
         auto gepIndex = gepResolved.second;
         auto index = AddExpr::create(gepIndex, offset);
         *resolution = std::make_pair(std::make_pair(parent, array), index);
-      } else
-        return status;
+        return true;
+      } else {
+        return false;
+      }
     } else {
-      return true;
+      return false;
     }
-    break;
   }
   }
-  return false;
 }
 
 /**/

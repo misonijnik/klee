@@ -516,19 +516,19 @@ void KleeHandler::processTestCase(const ExecutionState &state,
 
   if (!WriteNone) {
     const auto start_time = time::getWallTime();
-    KTest ktest;
-    ktest.numArgs = m_argc;
-    ktest.args = new char*[m_argc];
+    KTest* ktest = new KTest;
+    ktest->numArgs = m_argc;
+    ktest->args = new char*[m_argc];
     for(int i = 0; i<m_argc; i++) {
-      ktest.args[i] = new char[std::strlen(m_argv[i])+1];
-      std::strcpy(ktest.args[i], m_argv[i]);
+      ktest->args[i] = new char[std::strlen(m_argv[i])+1];
+      std::strcpy(ktest->args[i], m_argv[i]);
     }
-    ktest.symArgvs = 0;
-    ktest.symArgvLen = 0;
+    ktest->symArgvs = 0;
+    ktest->symArgvLen = 0;
 
-    bool success = m_interpreter->getSymbolicSolution(state, ktest);
+    bool success = m_interpreter->getSymbolicSolution(state, *ktest);
 
-    m_interpreter->setInitializationGraph(state, ktest);
+    m_interpreter->setInitializationGraph(state, *ktest);
 
     if (!success)
       klee_warning("unable to get symbolic solution, losing test case");
@@ -536,14 +536,14 @@ void KleeHandler::processTestCase(const ExecutionState &state,
     unsigned test_id = ++m_numTotalTests;
 
     if (success) {
-      writeTestCase(ktest, test_id);
+      writeTestCase(*ktest, test_id);
       if (WriteStates) {
         auto f = openTestFile("state", test_id);
         m_interpreter->logState(state, test_id, f);
       }
     }
 
-    kTest_free(&ktest);
+    kTest_free(ktest);
 
     if (errorMessage) {
       auto f = openTestFile(errorSuffix, test_id);

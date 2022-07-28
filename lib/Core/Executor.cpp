@@ -1627,9 +1627,9 @@ void Executor::unwindToNextLandingpad(ExecutionState &state) {
             kmodule->module->getFunction("_klee_eh_cxx_personality");
         KFunction *kf = kmodule->functionMap[personality_fn];
 
-        state.increaseLevel();
         state.pushFrame(state.prevPC, kf);
         state.pc = kf->instructions;
+        state.increaseLevel();
         bindArgument(kf, 0, state, sui->exceptionObject);
         bindArgument(kf, 1, state, clauses_mo->getSizeExpr());
         bindArgument(kf, 2, state, clauses_mo->getBaseExpr());
@@ -2063,7 +2063,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
 
     if (state.stack.size() <= 1) {
       assert(!caller && "caller set on initial stack frame");
-      state.increaseLevel();
+      // state.increaseLevel();
       terminateStateOnExit(state);
     } else {
       state.popFrame();
@@ -2074,9 +2074,9 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       if (InvokeInst *ii = dyn_cast<InvokeInst>(caller)) {
         transferToBasicBlock(ii->getNormalDest(), caller->getParent(), state);
       } else {
-        state.increaseLevel();
         state.pc = kcaller;
         ++state.pc;
+        state.increaseLevel();
       }
 
 #ifdef SUPPORT_KLEE_EH_CXX
