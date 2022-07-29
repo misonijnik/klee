@@ -2037,9 +2037,8 @@ void Executor::transferToBasicBlock(BasicBlock *dst, BasicBlock *src,
   
   // XXX this lookup has to go ?
   KFunction *kf = state.stack.back().kf;
-  if (state.prevPC->inst->isTerminator())
-    state.increaseLevel();
   state.pc = kf->blockMap[dst]->instructions;
+  state.increaseLevel();
   if (state.pc->inst->getOpcode() == Instruction::PHI) {
     PHINode *first = static_cast<PHINode*>(state.pc->inst);
     state.incomingBBIndex = first->getBasicBlockIndex(src);
@@ -2063,7 +2062,8 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
 
     if (state.stack.size() <= 1) {
       assert(!caller && "caller set on initial stack frame");
-      // state.increaseLevel();
+      state.pc = state.prevPC;
+      state.increaseLevel();
       terminateStateOnExit(state);
     } else {
       state.popFrame();
@@ -2075,8 +2075,8 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
         transferToBasicBlock(ii->getNormalDest(), caller->getParent(), state);
       } else {
         state.pc = kcaller;
-        ++state.pc;
         state.increaseLevel();
+        ++state.pc;
       }
 
 #ifdef SUPPORT_KLEE_EH_CXX
