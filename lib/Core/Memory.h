@@ -83,16 +83,6 @@ public:
       allocSite(0) {
   }
 
-  MemoryObject(ref<Expr> _lazyInitializationSource)
-    : id(counter++),
-      address((uint64_t)0xffffffffffffffff),
-      lazyInitializationSource(_lazyInitializationSource),
-      size(0),
-      isFixed(true),
-      parent(NULL),
-      allocSite(0) {
-  }
-
   MemoryObject(uint64_t _address, unsigned _size,
                bool _isLocal, bool _isGlobal, bool _isFixed,
                const llvm::Value *_allocSite,
