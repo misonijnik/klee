@@ -30,10 +30,8 @@
 #include "klee/System/Time.h"
 
 #include "llvm/ADT/Twine.h"
-#include "llvm/IR/Argument.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include <deque>
 #include <map>
 #include <memory>
 #include <set>
@@ -102,7 +100,7 @@ class Executor : public Interpreter {
   friend klee::Searcher *klee::constructUserSearcher(Executor &executor);
 
 public:
-  typedef std::pair<ExecutionState *, ExecutionState *> StatePair;
+  typedef std::pair<ExecutionState*,ExecutionState*> StatePair;
 
   enum MemoryOperation { Read, Write };
 
@@ -118,7 +116,7 @@ private:
   TimingSolver *solver;
   MemoryManager *memory;
   std::set<ExecutionState*, ExecutionStateIDCompare> states;
-  std::set<ExecutionState*, ExecutionStateIDCompare> pausedStates;
+  std::set<ExecutionState *, ExecutionStateIDCompare> pausedStates;
   StatsTracker *statsTracker;
   TreeStreamWriter *pathWriter, *symPathWriter;
   SpecialFunctionHandler *specialFunctionHandler;

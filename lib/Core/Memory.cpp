@@ -45,7 +45,6 @@ namespace {
 int MemoryObject::counter = 0;
 
 MemoryObject::~MemoryObject() {
-  // llvm::errs() << "Deleting: " << id << "\n";
   if (parent)
     parent->markFreed(this);
 }

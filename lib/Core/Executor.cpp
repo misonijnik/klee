@@ -30,7 +30,6 @@
 #include "klee/Config/Version.h"
 #include "klee/Core/Interpreter.h"
 #include "klee/Expr/ArrayExprOptimizer.h"
-#include "klee/Expr/ArrayExprVisitor.h"
 #include "klee/Expr/Assignment.h"
 #include "klee/Expr/Expr.h"
 #include "klee/Expr/ExprPPrinter.h"
@@ -84,21 +83,17 @@ typedef unsigned TypeSize;
 #include <algorithm>
 #include <cassert>
 #include <cerrno>
-#include <chrono>
 #include <cstring>
 #include <cxxabi.h>
 #include <fstream>
 #include <iomanip>
 #include <iosfwd>
-#include <iostream>
 #include <limits>
 #include <sstream>
 #include <string>
 #include <sys/mman.h>
-#include <utility>
 #include <vector>
 
-using namespace std::chrono;
 using namespace llvm;
 using namespace klee;
 
@@ -1435,8 +1430,9 @@ void Executor::stepInstruction(ExecutionState &state) {
 
   ++stats::instructions;
   ++state.steppedInstructions;
-  if (isa<LoadInst>(state.pc->inst) || isa<StoreInst>(state.pc->inst))
+  if (isa<LoadInst>(state.pc->inst) || isa<StoreInst>(state.pc->inst)) {
     ++state.steppedMemoryInstructions;
+  }
   state.prevPC = state.pc;
   ++state.pc;
 
@@ -2059,7 +2055,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     if (!isVoidReturn) {
       result = eval(ki, 0, state).value;
     }
-
+    
     if (state.stack.size() <= 1) {
       assert(!caller && "caller set on initial stack frame");
       state.pc = state.prevPC;
@@ -2152,7 +2148,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       }
     }      
     break;
-  }      
+  }
   case Instruction::Br: {
     BranchInst *bi = cast<BranchInst>(i);
     if (bi->isUnconditional()) {
@@ -3495,7 +3491,7 @@ void Executor::seed(ExecutionState &initialState) {
       return;
     }
 
-    std::map<ExecutionState *, std::vector<SeedInfo>>::iterator it =
+    std::map<ExecutionState*, std::vector<SeedInfo> >::iterator it =
         seedMap.upper_bound(lastState);
     if (it == seedMap.end())
       it = seedMap.begin();

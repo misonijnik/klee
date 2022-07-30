@@ -148,8 +148,7 @@ void RandomSearcher::printName(llvm::raw_ostream &os) {
 TargetedSearcher::TargetedSearcher(KBlock *targetBB, CFGDistance &_distance)
     : states(std::make_unique<
              DiscretePDF<ExecutionState *, ExecutionStateIDCompare>>()),
-      target(targetBB),
-      cfgDistance(_distance),
+      target(targetBB), cfgDistance(_distance),
       distanceToTargetFunction(
           cfgDistance.getBackwardDistance(target->parent)) {}
 
@@ -396,8 +395,10 @@ void GuidedSearcher::update(
         targets.insert(state->target);
         addedTStates[state->target].push_back(state);
       } else {
-        if (std::find(addedStates.begin(), addedStates.end(), state) != addedStates.end()) {
-          auto is = std::find(addedTargetlessState.begin(), addedTargetlessState.end(), state);
+        if (std::find(addedStates.begin(), addedStates.end(), state) !=
+            addedStates.end()) {
+          auto is = std::find(addedTargetlessState.begin(),
+                              addedTargetlessState.end(), state);
           addedTargetlessState.erase(is);
         }
       }
@@ -424,7 +425,8 @@ void GuidedSearcher::printName(llvm::raw_ostream &os) {
 }
 
 void GuidedSearcher::addTarget(KBlock *target) {
-  targetedSearchers[target] = std::make_unique<TargetedSearcher>(target, cfgDistance);
+  targetedSearchers[target] =
+      std::make_unique<TargetedSearcher>(target, cfgDistance);
 }
 
 ///
@@ -847,8 +849,8 @@ KBlock *StateHistory::calculateTargetByBlockHistory(ExecutionState &state) {
   unsigned int sfNum = 0;
   bool newCov = false;
 
-  for (auto sfi = state.stack.rbegin(), sfe = state.stack.rend();
-       sfi != sfe; sfi++, sfNum++) {
+  for (auto sfi = state.stack.rbegin(), sfe = state.stack.rend(); sfi != sfe;
+       sfi++, sfNum++) {
     kf = sfi->kf;
 
     for (const auto &kbd : cfgDistance.getSortedDistance(kb)) {
@@ -860,13 +862,11 @@ KBlock *StateHistory::calculateTargetByBlockHistory(ExecutionState &state) {
         if (history[target->basicBlock].size() != 0) {
           std::vector<BasicBlock *> diff;
           if (!newCov) {
-            std::set<BasicBlock*> left(state.level.begin(), state.level.end());
-            std::set<BasicBlock*> right(
-              history[target->basicBlock].begin(),
-              history[target->basicBlock].end());
-            std::set_difference(left.begin(), left.end(),
-                                right.begin(), right.end(),
-                                std::inserter(diff, diff.begin()));
+            std::set<BasicBlock *> left(state.level.begin(), state.level.end());
+            std::set<BasicBlock *> right(history[target->basicBlock].begin(),
+                                         history[target->basicBlock].end());
+            std::set_difference(left.begin(), left.end(), right.begin(),
+                                right.end(), std::inserter(diff, diff.begin()));
           }
           if (diff.empty()) {
             continue;
@@ -890,7 +890,8 @@ KBlock *StateHistory::calculateTargetByBlockHistory(ExecutionState &state) {
   return nearestBlock;
 }
 
-KBlock *StateHistory::calculateTargetByTransitionHistory(ExecutionState &state) {
+KBlock *
+StateHistory::calculateTargetByTransitionHistory(ExecutionState &state) {
   BasicBlock *initialBlock = state.getInitPCBlock();
   VisitedBlock &history = results[initialBlock].history;
   VisitedTransition &transitionHistory =
@@ -902,8 +903,8 @@ KBlock *StateHistory::calculateTargetByTransitionHistory(ExecutionState &state) 
   unsigned int minDistance = -1;
   unsigned int sfNum = 0;
   bool newCov = false;
-  for (auto sfi = state.stack.rbegin(), sfe = state.stack.rend();
-       sfi != sfe; sfi++, sfNum++) {
+  for (auto sfi = state.stack.rbegin(), sfe = state.stack.rend(); sfi != sfe;
+       sfi++, sfNum++) {
     kf = sfi->kf;
 
     for (const auto &kbd : cfgDistance.getSortedDistance(kb)) {
@@ -918,8 +919,8 @@ KBlock *StateHistory::calculateTargetByTransitionHistory(ExecutionState &state) 
             std::set<Transition> left(state.transitionLevel.begin(),
                                       state.transitionLevel.end());
             std::set<Transition> right(
-              transitionHistory[target->basicBlock].begin(),
-              transitionHistory[target->basicBlock].end());
+                transitionHistory[target->basicBlock].begin(),
+                transitionHistory[target->basicBlock].end());
             std::set_difference(left.begin(), left.end(), right.begin(),
                                 right.end(), std::inserter(diff, diff.begin()));
           }

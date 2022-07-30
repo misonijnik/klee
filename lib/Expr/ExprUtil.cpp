@@ -8,7 +8,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "klee/Expr/ExprUtil.h"
-#include "klee/Expr/ArrayExprVisitor.h"
 #include "klee/Expr/Expr.h"
 #include "klee/Expr/ExprHashMap.h"
 #include "klee/Expr/ExprVisitor.h"

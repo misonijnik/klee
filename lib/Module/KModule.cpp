@@ -436,8 +436,8 @@ KBlock *KModule::getKBlock(llvm::BasicBlock *bb) {
   return functionMap[bb->getParent()]->blockMap[bb];
 }
 
-Function* llvm::getTargetFunction(Value *calledVal) {
-  SmallPtrSet<const GlobalValue*, 3> Visited;
+Function *llvm::getTargetFunction(Value *calledVal) {
+  SmallPtrSet<const GlobalValue *, 3> Visited;
 
   Constant *c = dyn_cast<Constant>(calledVal);
   if (!c)
