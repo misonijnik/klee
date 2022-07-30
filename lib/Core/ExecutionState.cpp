@@ -106,6 +106,7 @@ ExecutionState::ExecutionState(const ExecutionState& state):
     symPathOS(state.symPathOS),
     coveredLines(state.coveredLines),
     symbolics(state.symbolics),
+    pointers(state.pointers),
     cexPreferences(state.cexPreferences),
     arrayNames(state.arrayNames),
     openMergeStack(state.openMergeStack),
@@ -157,8 +158,10 @@ void ExecutionState::pushFrame(KInstIterator caller, KFunction *kf) {
 
 void ExecutionState::popFrame() {
   const StackFrame &sf = stack.back();
-  for (const auto * memoryObject : sf.allocas)
+  for (const auto * memoryObject : sf.allocas) {
     addressSpace.unbindObject(memoryObject);
+    removePointers(memoryObject);
+  }
   stack.pop_back();
 }
 
@@ -221,6 +224,16 @@ bool ExecutionState::getBase(ref<Expr> expr,
       return false;
     }
   }
+  }
+}
+
+void ExecutionState::removePointers(const MemoryObject *mo) {
+  for (auto i = pointers.begin(), last = pointers.end(); i != last;) {
+    if (i->second == mo) {
+      i = pointers.erase(i);
+    } else {
+      ++i;
+    }
   }
 }
 

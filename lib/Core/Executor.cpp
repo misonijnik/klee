@@ -4200,6 +4200,7 @@ void Executor::executeAlloc(ExecutionState &state,
         for (unsigned i=0; i<count; i++)
           os->write(i, reallocFrom->read8(i));
         state.addressSpace.unbindObject(reallocFrom->getObject());
+        state.removePointers(reallocFrom->getObject());
       }
     }
   } else {
@@ -4315,6 +4316,7 @@ void Executor::executeFree(ExecutionState &state,
                               getAddressInfo(*it->second, address));
       } else {
         it->second->addressSpace.unbindObject(mo);
+        it->second->removePointers(mo);
         if (target)
           bindLocal(target, *it->second, Expr::createPointer(0));
       }
@@ -4387,11 +4389,11 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   ObjectPair op;
   bool success;
 
-  // if (state.pointers.count(address)) {
-  //   success = true;
-  //   const MemoryObject* mo = state.pointers[address];
-  //   op = std::make_pair(mo, state.addressSpace.findObject(mo));
-  // } else {
+  if (state.pointers.count(address)) {
+    success = true;
+    const MemoryObject* mo = state.pointers[address];
+    op = std::make_pair(mo, state.addressSpace.findObject(mo));
+  } else {
     solver->setTimeout(coreSolverTimeout);
 
     if (!state.addressSpace.resolveOne(state, solver, address, op, success)) {
@@ -4399,7 +4401,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
       success = state.addressSpace.resolveOne(cast<ConstantExpr>(address), op);
     }
     solver->setTimeout(time::Span());
-  // }
+  }
 
   if (success) {
     const MemoryObject *mo = op.first;
