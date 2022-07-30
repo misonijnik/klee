@@ -46,7 +46,7 @@ namespace klee {
 
   public:
     KInstruction() = default;
-    explicit KInstruction(const KInstruction& ki);
+    explicit KInstruction(const KInstruction &ki);
     virtual ~KInstruction();
     std::string getSourceLocation() const;
 
@@ -65,7 +65,7 @@ namespace klee {
 
   public:
     KGEPInstruction() = default;
-    explicit KGEPInstruction(const KGEPInstruction& ki);
+    explicit KGEPInstruction(const KGEPInstruction &ki);
   };
 }
 

@@ -26,7 +26,7 @@
 
 #include <map>
 #include <memory>
-#include <unordered_set>
+#include <set>
 #include <vector>
 
 namespace klee {
