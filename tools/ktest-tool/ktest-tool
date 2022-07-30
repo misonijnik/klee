@@ -63,9 +63,9 @@ class KTest:
             offsets = []
             if version >= 4:
                 numOffsets, = struct.unpack('>i', f.read(4))
-                for i in range(numOffsets):
-                    offset = struct.unpack('>i', f.read(4))
-                    index = struct.unpack('>i', f.read(4))
+                for _ in range(numOffsets):
+                    offset, = struct.unpack('>i', f.read(4))
+                    index, = struct.unpack('>i', f.read(4))
                     offsets.append((offset, index))
             objects.append((name, bytes, offsets))
 
