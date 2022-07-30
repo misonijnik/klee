@@ -108,13 +108,11 @@ void klee_make_symbolic(void *array, size_t nbytes, const char *name) {
     char *name = getenv("KTEST_FILE");
 
     if (!name) {
-      fprintf(stdout,
-              "KLEE-RUNTIME: KTEST_FILE not set, please enter .ktest path: ");
+      fprintf(stdout, "KLEE-RUNTIME: KTEST_FILE not set, please enter .ktest path: ");
       fflush(stdout);
       name = tmp;
       if (!fgets(tmp, sizeof tmp, stdin) || !strlen(tmp)) {
-        fprintf(stderr,
-                "KLEE-RUNTIME: cannot replay, no KTEST_FILE or user input\n");
+        fprintf(stderr, "KLEE-RUNTIME: cannot replay, no KTEST_FILE or user input\n");
         exit(1);
       }
       tmp[strlen(tmp) - 1] = '\0'; /* kill newline */
@@ -143,6 +141,15 @@ void klee_make_symbolic(void *array, size_t nbytes, const char *name) {
         // `model_version` which is from the POSIX runtime
         // and the caller didn't ask for it.
         continue;
+      }
+      if (strcmp(name, o->name) != 0) {
+        report_internal_error(
+            "object name mismatch. Requesting \"%s\" but returning \"%s\"",
+            name, o->name);
+      }
+      if (nbytes != o->numBytes) {
+        report_internal_error("object sizes differ. Expected %zu but got %u",
+                              nbytes, o->numBytes);
       }
       recursively_allocate(o, testPosition, array, 0);
       ++testPosition;
