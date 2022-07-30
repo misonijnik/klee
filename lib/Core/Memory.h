@@ -16,6 +16,7 @@
 #include "klee/Expr/Expr.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <string>
 #include <vector>
@@ -81,6 +82,7 @@ public:
       isFixed(true),
       parent(NULL),
       allocSite(0) {
+    // llvm::errs() << "Creating: " << id << "\n";
   }
 
   MemoryObject(uint64_t _address, unsigned _size,
@@ -99,6 +101,7 @@ public:
       isUserSpecified(false),
       parent(_parent), 
       allocSite(_allocSite) {
+    // llvm::errs() << "Creating: " << id << "\n";
   }
 
   ~MemoryObject();

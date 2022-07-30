@@ -169,7 +169,7 @@ namespace {
 
   cl::opt<ExecutionKind> ExecutionMode(
       "execution-mode",
-      cl::values(clEnumValN(ExecutionKind::NonGuided, "nonguided",
+      cl::values(clEnumValN(ExecutionKind::NonGuided, "basic",
                             "Use basic klee symbolic execution"),
                  clEnumValN(ExecutionKind::Guided, "guided",
                             "Takes place in two steps. First, all acyclic "

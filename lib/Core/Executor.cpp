@@ -4387,11 +4387,11 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   ObjectPair op;
   bool success;
 
-  if (state.pointers.count(address)) {
-    success = true;
-    const MemoryObject* mo = state.pointers[address];
-    op = std::make_pair(mo, state.addressSpace.findObject(mo));
-  } else {
+  // if (state.pointers.count(address)) {
+  //   success = true;
+  //   const MemoryObject* mo = state.pointers[address];
+  //   op = std::make_pair(mo, state.addressSpace.findObject(mo));
+  // } else {
     solver->setTimeout(coreSolverTimeout);
 
     if (!state.addressSpace.resolveOne(state, solver, address, op, success)) {
@@ -4399,7 +4399,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
       success = state.addressSpace.resolveOne(cast<ConstantExpr>(address), op);
     }
     solver->setTimeout(time::Span());
-  }
+  // }
 
   if (success) {
     const MemoryObject *mo = op.first;
