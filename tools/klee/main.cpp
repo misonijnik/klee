@@ -495,11 +495,11 @@ KleeHandler::openTestFile(const std::string &suffix, unsigned id) {
   return openOutputFile(getTestFilename(suffix, id));
 }
 
+
 /* Outputs all files (.ktest, .kquery, .cov etc.) describing a test case */
 void KleeHandler::processTestCase(const ExecutionState &state,
                                   const char *errorMessage,
                                   const char *errorSuffix) {
-
   if (!WriteNone) {
     const auto start_time = time::getWallTime();
     KTest ktest;
@@ -539,6 +539,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
 
     if (errorMessage) {
       auto f = openTestFile(errorSuffix, id);
+      if (f)
         *f << errorMessage;
     }
 
@@ -556,7 +557,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
 
     if (errorMessage || WriteKQueries) {
       std::string constraints;
-      m_interpreter->getConstraintLog(state, constraints, Interpreter::KQUERY);
+      m_interpreter->getConstraintLog(state, constraints,Interpreter::KQUERY);
       auto f = openTestFile("kquery", id);
       if (f)
         *f << constraints;
@@ -574,10 +575,10 @@ void KleeHandler::processTestCase(const ExecutionState &state,
 
     if (WriteSMT2s) {
       std::string constraints;
-      m_interpreter->getConstraintLog(state, constraints, Interpreter::SMTLIB2);
-      auto f = openTestFile("smt2", id);
-      if (f)
-        *f << constraints;
+        m_interpreter->getConstraintLog(state, constraints, Interpreter::SMTLIB2);
+        auto f = openTestFile("smt2", id);
+        if (f)
+          *f << constraints;
     }
 
     if (m_symPathWriter) {
@@ -593,7 +594,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
     }
 
     if (WriteCov) {
-      std::map<const std::string *, std::set<unsigned>> cov;
+      std::map<const std::string*, std::set<unsigned> > cov;
       m_interpreter->getCoveredLines(state, cov);
       auto f = openTestFile("cov", id);
       if (f) {
@@ -1450,7 +1451,6 @@ int main(int argc, char **argv, char **envp) {
 
 
   auto startTime = std::time(nullptr);
-
   { // output clock info and start time
     std::stringstream startInfo;
     startInfo << time::getClockInfo()
