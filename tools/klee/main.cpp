@@ -502,14 +502,14 @@ void KleeHandler::processTestCase(const ExecutionState &state,
                                   const char *errorSuffix) {
   if (!WriteNone) {
     const auto start_time = time::getWallTime();
-    KTest ktest;
-    ktest.numArgs = m_argc;
-    ktest.args = m_argv;
-    ktest.symArgvs = 0;
-    ktest.symArgvLen = 0;
+    KTest b;
+    b.numArgs = m_argc;
+    b.args = m_argv;
+    b.symArgvs = 0;
+    b.symArgvLen = 0;
 
-    bool success = m_interpreter->getSymbolicSolution(state, ktest);
-    m_interpreter->setInitializationGraph(state, ktest);
+    bool success = m_interpreter->getSymbolicSolution(state, b);
+    m_interpreter->setInitializationGraph(state, b);
 
     if (!success)
       klee_warning("unable to get symbolic solution, losing test case");
@@ -518,8 +518,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
 
     if (success) {
       if (!kTest_toFile(
-              &ktest,
-              getOutputFilename(getTestFilename("ktest", id)).c_str())) {
+              &b, getOutputFilename(getTestFilename("ktest", id)).c_str())) {
         klee_warning("unable to write output test case, losing it");
       } else {
         ++m_numGeneratedTests;
@@ -530,11 +529,11 @@ void KleeHandler::processTestCase(const ExecutionState &state,
       }
     }
 
-    for (unsigned i = 0; i < ktest.numObjects; i++) {
-      delete[] ktest.objects[i].bytes;
-      delete[] ktest.objects[i].offsets;
+    for (unsigned i = 0; i < b.numObjects; i++) {
+      delete[] b.objects[i].bytes;
+      delete[] b.objects[i].offsets;
     }
-    delete[] ktest.objects;
+    delete[] b.objects;
 
 
     if (errorMessage) {
