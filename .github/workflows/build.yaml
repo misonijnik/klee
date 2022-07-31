@@ -2,9 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches: master
+    branches: asm-test-temp
   push:
-    branches: master
+    branches: asm-test-temp
 
 # Defaults for building KLEE
 env:
