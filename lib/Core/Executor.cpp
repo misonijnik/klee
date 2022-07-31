@@ -4945,6 +4945,7 @@ void Executor::logState(const ExecutionState &state, int id,
 void Executor::setInitializationGraph(const ExecutionState &state,
                                       KTest &ktest) {
   std::map<size_t, std::vector<Offset>> ofst;
+  std::map<size_t, std::map<unsigned, unsigned>> s;
 
   for (const auto &pointer : state.pointers) {
 
@@ -4976,7 +4977,13 @@ void Executor::setInitializationGraph(const ExecutionState &state,
         Offset o;
         o.offset = offset->getZExtValue();
         o.index = pointee_index;
-        ofst[pointer_index].push_back(o);
+        if (s[pointer_index].count(o.offset) && s[pointee_index][o.offset] != o.index) {
+          assert(0 && "wft");
+        }
+        if (!s[pointee_index].count(o.offset)) {
+          ofst[pointer_index].push_back(o);
+          s[pointer_index][o.offset] = o.index;
+        }
       }
     }
   }

@@ -331,13 +331,10 @@ private:
   unsigned m_numGeneratedTests; // Number of tests successfully generated
   unsigned m_pathsCompleted; // number of completed paths
   unsigned m_pathsExplored; // number of partially explored and completed paths
-  unsigned m_statesTerminated;
 
   // used for writing .ktest files
   int m_argc;
   char **m_argv;
-
-  void writeTestCase(const KTest &tc, unsigned id);
 
 public:
   KleeHandler(int argc, char **argv);
@@ -498,21 +495,10 @@ KleeHandler::openTestFile(const std::string &suffix, unsigned id) {
   return openOutputFile(getTestFilename(suffix, id));
 }
 
-void KleeHandler::writeTestCase(const KTest &ktest, unsigned id) {
-  if (!kTest_toFile(&ktest,
-                    getOutputFilename(getTestFilename("ktest", id)).c_str())) {
-    klee_warning("unable to write output test case, losing it");
-  } else {
-    // ++m_numGeneratedTests;
-  }
-}
-
 /* Outputs all files (.ktest, .kquery, .cov etc.) describing a test case */
 void KleeHandler::processTestCase(const ExecutionState &state,
                                   const char *errorMessage,
                                   const char *errorSuffix) {
-
-  ++m_statesTerminated;
 
   if (!WriteNone) {
     const auto start_time = time::getWallTime();
@@ -523,19 +509,24 @@ void KleeHandler::processTestCase(const ExecutionState &state,
     ktest.symArgvLen = 0;
 
     bool success = m_interpreter->getSymbolicSolution(state, ktest);
-
     m_interpreter->setInitializationGraph(state, ktest);
 
     if (!success)
       klee_warning("unable to get symbolic solution, losing test case");
 
-    unsigned test_id = ++m_numTotalTests;
+    unsigned id = ++m_numTotalTests;
 
     if (success) {
-      writeTestCase(ktest, test_id);
+      if (!kTest_toFile(
+              &ktest,
+              getOutputFilename(getTestFilename("ktest", id)).c_str())) {
+        klee_warning("unable to write output test case, losing it");
+      } else {
+        ++m_numGeneratedTests;
+      }
       if (WriteStates) {
-        auto f = openTestFile("state", test_id);
-        m_interpreter->logState(state, test_id, f);
+        auto f = openTestFile("state", id);
+        m_interpreter->logState(state, id, f);
       }
     }
 
@@ -547,7 +538,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
 
 
     if (errorMessage) {
-      auto f = openTestFile(errorSuffix, test_id);
+      auto f = openTestFile(errorSuffix, id);
         *f << errorMessage;
     }
 
@@ -555,7 +546,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
       std::vector<unsigned char> concreteBranches;
       m_pathWriter->readStream(m_interpreter->getPathStreamID(state),
                                concreteBranches);
-      auto f = openTestFile("path", test_id);
+      auto f = openTestFile("path", id);
       if (f) {
         for (const auto &branch : concreteBranches) {
           *f << branch << '\n';
@@ -566,7 +557,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
     if (errorMessage || WriteKQueries) {
       std::string constraints;
       m_interpreter->getConstraintLog(state, constraints, Interpreter::KQUERY);
-      auto f = openTestFile("kquery", test_id);
+      auto f = openTestFile("kquery", id);
       if (f)
         *f << constraints;
     }
@@ -576,7 +567,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
       // SMT-LIBv2 not CVC which is a bit confusing
       std::string constraints;
       m_interpreter->getConstraintLog(state, constraints, Interpreter::STP);
-      auto f = openTestFile("cvc", test_id);
+      auto f = openTestFile("cvc", id);
       if (f)
         *f << constraints;
     }
@@ -584,7 +575,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
     if (WriteSMT2s) {
       std::string constraints;
       m_interpreter->getConstraintLog(state, constraints, Interpreter::SMTLIB2);
-      auto f = openTestFile("smt2", test_id);
+      auto f = openTestFile("smt2", id);
       if (f)
         *f << constraints;
     }
@@ -593,7 +584,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
       std::vector<unsigned char> symbolicBranches;
       m_symPathWriter->readStream(m_interpreter->getSymbolicPathStreamID(state),
                                   symbolicBranches);
-      auto f = openTestFile("sym.path", test_id);
+      auto f = openTestFile("sym.path", id);
       if (f) {
         for (const auto &branch : symbolicBranches) {
           *f << branch << '\n';
@@ -604,7 +595,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
     if (WriteCov) {
       std::map<const std::string *, std::set<unsigned>> cov;
       m_interpreter->getCoveredLines(state, cov);
-      auto f = openTestFile("cov", test_id);
+      auto f = openTestFile("cov", id);
       if (f) {
         for (const auto &entry : cov) {
           for (const auto &line : entry.second) {
@@ -621,7 +612,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
 
     if (WriteTestInfo) {
       time::Span elapsed_time(time::getWallTime() - start_time);
-      auto f = openTestFile("info", test_id);
+      auto f = openTestFile("info", id);
       if (f)
         *f << "Time to generate test case: " << elapsed_time << '\n';
     }
