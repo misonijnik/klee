@@ -153,9 +153,9 @@ ExecutionState *ExecutionState::copy() {
   return newState;
 }
 
-bool ExecutionState::inSymbolics(const MemoryObject* mo) {
+bool ExecutionState::inSymbolics(const MemoryObject *mo) const {
   for (auto i : symbolics) {
-    if(mo == i.first.get()) {
+    if (mo == i.first.get()) {
       return true;
     }
   }
