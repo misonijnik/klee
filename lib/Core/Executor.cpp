@@ -2097,6 +2097,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
 
         // unbind the MO we used to pass the serialized landingpad
         state.addressSpace.unbindObject(sui->serializedLandingpad);
+        state.removePointers(sui->serializedLandingpad);
         sui->serializedLandingpad = nullptr;
 
         if (result->isZero()) {
