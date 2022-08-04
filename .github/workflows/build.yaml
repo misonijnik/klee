@@ -2,9 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches: master
+    branches: refactored-li-guided-klee-2.3-ci
   push:
-    branches: master
+    branches: refactored-li-guided-klee-2.3-ci
 
 # Defaults for building KLEE
 env:
