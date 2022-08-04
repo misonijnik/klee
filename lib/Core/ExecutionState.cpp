@@ -152,6 +152,15 @@ ExecutionState *ExecutionState::copy() {
   return newState;
 }
 
+bool ExecutionState::inSymbolics(const MemoryObject* mo) {
+  for (auto i : symbolics) {
+    if(mo == i.first.get()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void ExecutionState::pushFrame(KInstIterator caller, KFunction *kf) {
   stack.emplace_back(StackFrame(caller, kf));
 }

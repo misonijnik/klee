@@ -296,6 +296,8 @@ public:
   ExecutionState *withKFunction(KFunction *kf);
   ExecutionState *copy();
 
+  bool inSymbolics(const MemoryObject* mo);
+
   void pushFrame(KInstIterator caller, KFunction *kf);
   void popFrame();
 

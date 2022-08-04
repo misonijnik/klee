@@ -156,6 +156,11 @@ cl::opt<bool> EmitAllErrors(
              "(default=false, i.e. one per (error,instruction) pair)"),
     cl::cat(TestGenCat));
 
+cl::opt<bool> SkipNotLazyAndSymbolicPointers(
+    "skip-not-lazy-and-symbolic-pointers", cl::init(true),
+    cl::desc("Set pointers only on lazy and make_symbolic variables "
+             "(default=false)"),
+    cl::cat(TestGenCat));
 
 /* Constraint solving options */
 
@@ -4456,12 +4461,23 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   ResolutionList rl;  
   solver->setTimeout(coreSolverTimeout);
   bool incomplete;
-  if (state.isGEPExpr(address)) {
-    incomplete = state.addressSpace.resolve(state, solver, base, rl, 0,
-                                            coreSolverTimeout);
+
+  if (SkipNotLazyAndSymbolicPointers) {
+    if (state.isGEPExpr(address)) {
+      incomplete = state.addressSpace.fastResolve(state, solver, base, rl, 0,
+                                                  coreSolverTimeout);
+    } else {
+      incomplete = state.addressSpace.fastResolve(state, solver, address, rl, 0,
+                                                  coreSolverTimeout);
+    }
   } else {
-    incomplete = state.addressSpace.resolve(state, solver, address, rl, 0,
-                                            coreSolverTimeout);
+    if (state.isGEPExpr(address)) {
+      incomplete = state.addressSpace.resolve(state, solver, base, rl, 0,
+                                              coreSolverTimeout);
+    } else {
+      incomplete = state.addressSpace.resolve(state, solver, address, rl, 0,
+                                              coreSolverTimeout);
+    }
   }
 
   solver->setTimeout(time::Span());
