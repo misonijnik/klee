@@ -35,6 +35,31 @@ namespace klee {
   typedef ImmutableMap<const MemoryObject *, ref<ObjectState>, MemoryObjectLT>
       MemoryMap;
 
+  struct AllObjects {
+    bool contain(const MemoryObject *mo) const;
+  };
+
+  struct SymbolicObjects {
+    const ExecutionState &state;
+    SymbolicObjects(const ExecutionState &_state) : state(_state) {}
+    bool contain(const MemoryObject *mo) const;
+  };
+
+  struct OlderObjects {
+    unsigned timestamp;
+    OlderObjects(unsigned _timestamp) : timestamp(_timestamp) {}
+    bool contain(const MemoryObject *mo) const;
+  };
+
+  struct SuitableObjects {
+    SymbolicObjects symbolic;
+    OlderObjects older;
+    SuitableObjects(SymbolicObjects _symbolic,
+                       OlderObjects _older)
+        : symbolic(_symbolic), older(_older) {}
+    bool contain(const MemoryObject *mo) const;
+  };
+
   class AddressSpace {
   private:
     /// Epoch counter used to control ownership of objects.
@@ -82,6 +107,14 @@ namespace klee {
     /// \param[out] result An ObjectPair this address can resolve to 
     ///               (when returning true).
     /// \return true iff an object was found at \a address.
+    template<typename SuitableObject>
+    bool resolveOne(ExecutionState &state, 
+                    TimingSolver *solver,
+                    ref<Expr> address,
+                    ObjectPair &result,
+                    SuitableObject predicate,
+                    bool &success) const;
+
     bool resolveOne(ExecutionState &state, 
                     TimingSolver *solver,
                     ref<Expr> address,
@@ -94,6 +127,15 @@ namespace klee {
     ///
     /// \return true iff the resolution is incomplete (`maxResolutions`
     /// is non-zero and it was reached, or a query timed out).
+    template<typename SuitableObject>
+    bool resolve(ExecutionState &state,
+                 TimingSolver *solver,
+                 ref<Expr> p,
+                 ResolutionList &rl,
+                 SuitableObject predicate,
+                 unsigned maxResolutions=0,
+                 time::Span timeout=time::Span()) const;
+
     bool resolve(ExecutionState &state,
                  TimingSolver *solver,
                  ref<Expr> p,
