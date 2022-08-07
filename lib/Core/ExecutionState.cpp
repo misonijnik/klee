@@ -217,7 +217,7 @@ bool ExecutionState::getBase(ref<Expr> expr,
       ref<Expr> gepBase = gepExprBases.at(expr).first;
       ref<Expr> offset = gepExprOffsets.at(expr);
       std::pair<ref<const MemoryObject>, ref<Expr>> gepResolved;
-      if (getBase(gepBase, gepResolved)) {
+      if (expr != gepBase && getBase(gepBase, gepResolved)) {
         auto parent = gepResolved.first;
         auto gepIndex = gepResolved.second;
         auto index = AddExpr::create(gepIndex, offset);
