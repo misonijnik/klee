@@ -209,6 +209,13 @@ bool AddressSpace::fastResolveOne(ExecutionState &state, TimingSolver *solver,
       success);
 }
 
+bool AddressSpace::resolveOneOlder(ExecutionState &state, TimingSolver *solver,
+                                   ref<Expr> address, ObjectPair &result,
+                                   bool &success, unsigned timestamp) const {
+  return resolveOne<OlderObjects>(state, solver, address, result,
+                                  OlderObjects(timestamp), success);
+}
+
 int AddressSpace::checkPointerInObject(ExecutionState &state,
                                        TimingSolver *solver, ref<Expr> p,
                                        const ObjectPair &op, ResolutionList &rl,
@@ -359,7 +366,7 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
                            ref<Expr> p, ResolutionList &rl,
                            unsigned maxResolutions, time::Span timeout) const {
   return resolve<AllObjects>(state, solver, p, rl, AllObjects(), maxResolutions,
-                            timeout);
+                             timeout);
 }
 
 bool AddressSpace::fastResolve(ExecutionState &state, TimingSolver *solver,
@@ -370,6 +377,14 @@ bool AddressSpace::fastResolve(ExecutionState &state, TimingSolver *solver,
       state, solver, p, rl,
       SuitableObjects(SymbolicObjects(state), OlderObjects(timestamp)),
       maxResolutions, timeout);
+}
+
+bool AddressSpace::resolveOlder(ExecutionState &state, TimingSolver *solver,
+                                ref<Expr> p, ResolutionList &rl,
+                                unsigned maxResolutions, time::Span timeout,
+                                unsigned timestamp) const {
+  return resolve<OlderObjects>(state, solver, p, rl, OlderObjects(timestamp),
+                               maxResolutions, timeout);
 }
 
 // These two are pretty big hack so we can sort of pass memory back

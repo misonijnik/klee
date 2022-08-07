@@ -54,8 +54,7 @@ namespace klee {
   struct SuitableObjects {
     SymbolicObjects symbolic;
     OlderObjects older;
-    SuitableObjects(SymbolicObjects _symbolic,
-                       OlderObjects _older)
+    SuitableObjects(SymbolicObjects _symbolic, OlderObjects _older)
         : symbolic(_symbolic), older(_older) {}
     bool contain(const MemoryObject *mo) const;
   };
@@ -151,7 +150,15 @@ namespace klee {
     bool fastResolve(ExecutionState &state, TimingSolver *solver, ref<Expr> p,
                      ResolutionList &rl, unsigned maxResolutions = 0,
                      time::Span timeout = time::Span(),
-                     unsigned timestamp = -1) const;
+                     unsigned timestamp = UINT_MAX) const;
+
+    bool resolveOneOlder(ExecutionState &state, TimingSolver *solver,
+                    ref<Expr> address, ObjectPair &result, bool &success,
+                    unsigned timestamp = -1) const;
+    bool resolveOlder(ExecutionState &state, TimingSolver *solver, ref<Expr> p,
+                     ResolutionList &rl, unsigned maxResolutions = 0,
+                     time::Span timeout = time::Span(),
+                     unsigned timestamp = UINT_MAX) const;
 
     /***/
 

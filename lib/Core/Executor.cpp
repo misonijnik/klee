@@ -4404,15 +4404,15 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   } else {
     solver->setTimeout(coreSolverTimeout);
 
-    if (SkipNotSymbolicObjects) {
+    if (UseTimestamps) {
       unsigned timestamp = UINT_MAX;
-      if (UseTimestamps && !isa<ConstantExpr>(address)) {
+      if (!isa<ConstantExpr>(address)) {
         std::pair<ref<const MemoryObject>, ref<Expr>> moBasePair;
         if (state.getBase(base, moBasePair)) {
           timestamp = moBasePair.first->timestamp;
         }
       }
-      if (!state.addressSpace.fastResolveOne(state, solver, address, op, success, timestamp)) {
+      if (!state.addressSpace.resolveOneOlder(state, solver, address, op, success, timestamp)) {
         address = toConstant(state, address, "resolveOne failure");
         success = state.addressSpace.resolveOne(cast<ConstantExpr>(address), op);
       }
@@ -4483,15 +4483,15 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   solver->setTimeout(coreSolverTimeout);
   bool incomplete;
 
-  if (SkipNotSymbolicObjects) {
+  if (UseTimestamps) {
     unsigned timestamp = UINT_MAX;
-    if (UseTimestamps && !isa<ConstantExpr>(address)) {
+    if (!isa<ConstantExpr>(address)) {
       std::pair<ref<const MemoryObject>, ref<Expr>> moBasePair;
       if (state.getBase(base, moBasePair)) {
         timestamp = moBasePair.first->timestamp;
       }
     }
-    incomplete = state.addressSpace.fastResolve(state, solver, base, rl, 0,
+    incomplete = state.addressSpace.resolveOlder(state, solver, base, rl, 0,
                                                 coreSolverTimeout, timestamp);
   } else {
     incomplete = state.addressSpace.resolve(state, solver, base, rl, 0,
