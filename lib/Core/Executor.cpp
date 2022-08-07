@@ -2096,8 +2096,8 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
                       "search phase unwinding");
 
         // unbind the MO we used to pass the serialized landingpad
-        state.addressSpace.unbindObject(sui->serializedLandingpad);
         state.removePointers(sui->serializedLandingpad);
+        state.addressSpace.unbindObject(sui->serializedLandingpad);
         sui->serializedLandingpad = nullptr;
 
         if (result->isZero()) {
@@ -4206,8 +4206,8 @@ void Executor::executeAlloc(ExecutionState &state,
         unsigned count = std::min(reallocFrom->size, os->size);
         for (unsigned i=0; i<count; i++)
           os->write(i, reallocFrom->read8(i));
-        state.addressSpace.unbindObject(reallocFrom->getObject());
         state.removePointers(reallocFrom->getObject());
+        state.addressSpace.unbindObject(reallocFrom->getObject());
       }
     }
   } else {
@@ -4322,8 +4322,8 @@ void Executor::executeFree(ExecutionState &state,
                               StateTerminationType::Free,
                               getAddressInfo(*it->second, address));
       } else {
-        it->second->addressSpace.unbindObject(mo);
         it->second->removePointers(mo);
+        it->second->addressSpace.unbindObject(mo);
         if (target)
           bindLocal(target, *it->second, Expr::createPointer(0));
       }

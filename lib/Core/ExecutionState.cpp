@@ -169,8 +169,8 @@ void ExecutionState::pushFrame(KInstIterator caller, KFunction *kf) {
 void ExecutionState::popFrame() {
   const StackFrame &sf = stack.back();
   for (const auto * memoryObject : sf.allocas) {
-    addressSpace.unbindObject(memoryObject);
     removePointers(memoryObject);
+    addressSpace.unbindObject(memoryObject);
   }
   stack.pop_back();
 }
