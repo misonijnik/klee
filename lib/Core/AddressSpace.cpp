@@ -74,12 +74,10 @@ bool AddressSpace::resolveOne(const ref<ConstantExpr> &addr,
   return false;
 }
 
-template<typename SkipPredicate>
-bool AddressSpace::resolveOne(ExecutionState &state,
-                              TimingSolver *solver,
-                              ref<Expr> address,
-                              ObjectPair &result,
-                              SkipPredicate predicate,
+template <typename SuitableObjectsPredicate>
+bool AddressSpace::resolveOne(ExecutionState &state, TimingSolver *solver,
+                              ref<Expr> address, ObjectPair &result,
+                              SuitableObjectsPredicate predicate,
                               bool &success) const {
   if (ConstantExpr *CE = dyn_cast<ConstantExpr>(address)) {
     success = resolveOne(CE, result);
@@ -194,10 +192,10 @@ bool AddressSpace::resolveOne(ExecutionState &state,
 }
 
 bool AddressSpace::resolveOne(ExecutionState &state, TimingSolver *solver,
-                              ref<Expr> address, ObjectPair &result, bool &success) const {
-  return resolveOne<AllObjects>(
-      state, solver, address, result,
-      AllObjects(), success);
+                              ref<Expr> address, ObjectPair &result,
+                              bool &success) const {
+  return resolveOne<AllObjects>(state, solver, address, result, AllObjects(),
+                                success);
 }
 
 bool AddressSpace::fastResolveOne(ExecutionState &state, TimingSolver *solver,
@@ -252,10 +250,10 @@ int AddressSpace::checkPointerInObject(ExecutionState &state,
   return 2;
 }
 
-template<typename SkipPredicate>
+template <typename SuitableObjectsPredicate>
 bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
                            ref<Expr> p, ResolutionList &rl,
-                           SkipPredicate predicate,
+                           SuitableObjectsPredicate predicate,
                            unsigned maxResolutions, time::Span timeout) const {
   if (ConstantExpr *CE = dyn_cast<ConstantExpr>(p)) {
     ObjectPair res;

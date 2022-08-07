@@ -106,19 +106,13 @@ namespace klee {
     /// \param[out] result An ObjectPair this address can resolve to 
     ///               (when returning true).
     /// \return true iff an object was found at \a address.
-    template<typename SuitableObject>
-    bool resolveOne(ExecutionState &state, 
-                    TimingSolver *solver,
-                    ref<Expr> address,
-                    ObjectPair &result,
-                    SuitableObject predicate,
-                    bool &success) const;
+    template <typename SuitableObjectsPredicate>
+    bool resolveOne(ExecutionState &state, TimingSolver *solver,
+                    ref<Expr> address, ObjectPair &result,
+                    SuitableObjectsPredicate predicate, bool &success) const;
 
-    bool resolveOne(ExecutionState &state, 
-                    TimingSolver *solver,
-                    ref<Expr> address,
-                    ObjectPair &result,
-                    bool &success) const;
+    bool resolveOne(ExecutionState &state, TimingSolver *solver,
+                    ref<Expr> address, ObjectPair &result, bool &success) const;
 
     /// Resolve pointer `p` to a list of `ObjectPairs` it can point
     /// to. If `maxResolutions` is non-zero then no more than that many
@@ -126,39 +120,33 @@ namespace klee {
     ///
     /// \return true iff the resolution is incomplete (`maxResolutions`
     /// is non-zero and it was reached, or a query timed out).
-    template<typename SuitableObject>
-    bool resolve(ExecutionState &state,
-                 TimingSolver *solver,
-                 ref<Expr> p,
-                 ResolutionList &rl,
-                 SuitableObject predicate,
-                 unsigned maxResolutions=0,
-                 time::Span timeout=time::Span()) const;
+    template <typename SuitableObjectsPredicate>
+    bool resolve(ExecutionState &state, TimingSolver *solver, ref<Expr> p,
+                 ResolutionList &rl, SuitableObjectsPredicate predicate,
+                 unsigned maxResolutions = 0,
+                 time::Span timeout = time::Span()) const;
 
-    bool resolve(ExecutionState &state,
-                 TimingSolver *solver,
-                 ref<Expr> p,
-                 ResolutionList &rl, 
-                 unsigned maxResolutions=0,
-                 time::Span timeout=time::Span()) const;
+    bool resolve(ExecutionState &state, TimingSolver *solver, ref<Expr> p,
+                 ResolutionList &rl, unsigned maxResolutions = 0,
+                 time::Span timeout = time::Span()) const;
 
     /// Resolve as above, but only to MakeSymbolic and LazyInstantiated
     /// variables
     bool fastResolveOne(ExecutionState &state, TimingSolver *solver,
-                    ref<Expr> address, ObjectPair &result, bool &success,
-                    unsigned timestamp = -1) const;
+                        ref<Expr> address, ObjectPair &result, bool &success,
+                        unsigned timestamp = -1) const;
     bool fastResolve(ExecutionState &state, TimingSolver *solver, ref<Expr> p,
                      ResolutionList &rl, unsigned maxResolutions = 0,
                      time::Span timeout = time::Span(),
                      unsigned timestamp = UINT_MAX) const;
 
     bool resolveOneOlder(ExecutionState &state, TimingSolver *solver,
-                    ref<Expr> address, ObjectPair &result, bool &success,
-                    unsigned timestamp = -1) const;
+                         ref<Expr> address, ObjectPair &result, bool &success,
+                         unsigned timestamp = -1) const;
     bool resolveOlder(ExecutionState &state, TimingSolver *solver, ref<Expr> p,
-                     ResolutionList &rl, unsigned maxResolutions = 0,
-                     time::Span timeout = time::Span(),
-                     unsigned timestamp = UINT_MAX) const;
+                      ResolutionList &rl, unsigned maxResolutions = 0,
+                      time::Span timeout = time::Span(),
+                      unsigned timestamp = UINT_MAX) const;
 
     /***/
 
