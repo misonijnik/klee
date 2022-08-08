@@ -32,6 +32,8 @@ static void push_obj(KTest *b, const char *name, unsigned total_bytes,
   o->name = strdup(name);
   o->numBytes = total_bytes;
   o->bytes = (unsigned char *)malloc(o->numBytes);
+  o->numOffsets = 0;
+  o->offsets = nullptr;
 
   memcpy(o->bytes, bytes, total_bytes);
 }
@@ -43,6 +45,8 @@ static void push_range(KTest *b, const char *name, unsigned value) {
   o->name = strdup(name);
   o->numBytes = 4;
   o->bytes = (unsigned char *)malloc(o->numBytes);
+  o->numOffsets = 0;
+  o->offsets = nullptr;
 
   *(unsigned *)o->bytes = value;
 }

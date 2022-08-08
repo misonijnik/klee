@@ -126,7 +126,7 @@ void klee_make_symbolic(void *array, size_t nbytes, const char *name) {
   }
 
   for (;; ++testPosition) {
-    while (addresses[testPosition] && testPosition < testData->numObjects) {
+    while (testPosition < testData->numObjects && addresses[testPosition]) {
       testPosition++;
     }
     if (testPosition >= testData->numObjects) {
