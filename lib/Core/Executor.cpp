@@ -4388,6 +4388,8 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   if (SimplifySymIndices) {
     if (!isa<ConstantExpr>(address))
       address = ConstraintManager::simplifyExpr(state.constraints, address);
+    if (!isa<ConstantExpr>(base))
+      base = ConstraintManager::simplifyExpr(state.constraints, base);
     if (operation == Write && !isa<ConstantExpr>(value))
       value = ConstraintManager::simplifyExpr(state.constraints, value);
   }
