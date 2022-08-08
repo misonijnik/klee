@@ -2769,13 +2769,14 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       offset = AddExpr::create(offset, Expr::createPointer(kgepi->offset));
     ref<Expr> address = AddExpr::create(base, offset);
     if (!isa<ConstantExpr>(address) && !isa<ConstantExpr>(base)) {
+      ref<Expr> extractedOffset = ExtractExpr::create(offset, 0, Expr::Int32);
       if (state.isGEPExpr(base)) {
         state.gepExprBases[address] = state.gepExprBases[base];
-        state.gepExprOffsets[address] = state.gepExprOffsets[base];
-      }
-      else {
+        state.gepExprOffsets[address] =
+            AddExpr::create(state.gepExprOffsets[base], extractedOffset);
+      } else {
         state.gepExprBases[address] = {base, sourceSize};
-        state.gepExprOffsets[address] = ExtractExpr::create(offset, 0, Expr::Int32);
+        state.gepExprOffsets[address] = extractedOffset;
       }
     }
     bindLocal(ki, state, address);
@@ -4506,13 +4507,8 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   for (ResolutionList::iterator i = rl.begin(), ie = rl.end(); i != ie; ++i) {
     const MemoryObject *mo = i->first;
     const ObjectState *os = i->second;
-    ref<Expr> inBounds;
 
-    if (state.isGEPExpr(address))
-      inBounds = mo->getBoundsCheckPointer(base, 1);
-    else
-      inBounds = mo->getBoundsCheckPointer(address, 1);
-
+    ref<Expr> inBounds = mo->getBoundsCheckPointer(base, 1);
     StatePair branches = fork(*unbound, inBounds, true, BranchType::MemOp);
     ExecutionState *bound = branches.first;
 
