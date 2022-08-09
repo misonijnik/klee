@@ -848,7 +848,7 @@ KBlock *StateHistory::calculateTargetByBlockHistory(ExecutionState &state) {
   KBlock *kb = kf->blockMap[bb];
 
   KBlock *nearestBlock = nullptr;
-  unsigned int minDistance = -1;
+  unsigned int minDistance = UINT_MAX;
   unsigned int sfNum = 0;
   bool newCov = false;
 
@@ -903,7 +903,7 @@ StateHistory::calculateTargetByTransitionHistory(ExecutionState &state) {
   KFunction *kf = module.functionMap.at(bb->getParent());
   KBlock *kb = kf->blockMap[bb];
   KBlock *nearestBlock = nullptr;
-  unsigned int minDistance = -1;
+  unsigned int minDistance = UINT_MAX;
   unsigned int sfNum = 0;
   bool newCov = false;
   for (auto sfi = state.stack.rbegin(), sfe = state.stack.rend(); sfi != sfe;
