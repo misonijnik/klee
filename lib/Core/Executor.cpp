@@ -4510,46 +4510,33 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     const MemoryObject *mo = i->first;
     const ObjectState *os = i->second;
 
-    ref<Expr> inBounds = mo->getBoundsCheckPointer(base, 1);
+    ref<Expr> inBounds;
+    inBounds = mo->getBoundsCheckPointer(base, 1);
+    inBounds = AndExpr::create(inBounds, mo->getBoundsCheckPointer(address, bytes));
+
     StatePair branches = fork(*unbound, inBounds, true, BranchType::MemOp);
     ExecutionState *bound = branches.first;
 
     // bound can be 0 on failure or overlapped
     if (bound) {
-      ref<Expr> inBounds = mo->getBoundsCheckPointer(address, bytes);
-      if (state.isGEPExpr(address)) {
-        inBounds =
-            AndExpr::create(inBounds, mo->getBoundsCheckPointer(base, size));
+      bound->addPointer(address, mo, mo->getOffsetExpr(address));
+      switch (operation) {
+      case Write: {
+        if (os->readOnly) {
+          terminateStateOnError(*bound,
+                                "memory error: object read only",
+                                StateTerminationType::ReadOnly);
+        } else {
+          ObjectState *wos = bound->addressSpace.getWriteable(mo, os);
+          wos->write(mo->getOffsetExpr(address), value);
+        }
+        break;
       }
-      StatePair branches_inner =
-          fork(*bound, inBounds, true, BranchType::MemOp);
-      ExecutionState *bound_inner = branches_inner.first;
-      ExecutionState *unbound_inner = branches_inner.second;
-      if (bound_inner) {
-        bound_inner->addPointer(address, mo, mo->getOffsetExpr(address));
-        switch (operation) {
-        case Write: {
-          if (os->readOnly) {
-            terminateStateOnError(*bound_inner,
-                                  "memory error: object read only",
-                                  StateTerminationType::ReadOnly);
-          } else {
-            ObjectState *wos = bound_inner->addressSpace.getWriteable(mo, os);
-            wos->write(mo->getOffsetExpr(address), value);
-          }
-          break;
-        }
-        case Read: {
-          ref<Expr> result = os->read(mo->getOffsetExpr(address), type);
-          bindLocal(target, *bound_inner, result);
-          break;
-        }
-        }
+      case Read: {
+        ref<Expr> result = os->read(mo->getOffsetExpr(address), type);
+        bindLocal(target, *bound, result);
+        break;
       }
-      if (unbound_inner) {
-        terminateStateOnError(
-            *unbound_inner, "memory error: out of bound pointer",
-            StateTerminationType::Ptr, getAddressInfo(*unbound, address));
       }
     }
 
