@@ -303,52 +303,8 @@ void KModule::optimiseAndPrepare(
   pm3.run(*module);
 }
 
-static void splitByCall(Function *function) {
-  unsigned n = function->getBasicBlockList().size();
-  BasicBlock **blocks = new BasicBlock *[n];
-  unsigned i = 0;
-  for (llvm::Function::iterator bbit = function->begin(),
-                                bbie = function->end();
-       bbit != bbie; bbit++, i++) {
-    blocks[i] = &*bbit;
-  }
-
-  for (unsigned j = 0; j < n; j++) {
-    BasicBlock *fbb = blocks[j];
-    llvm::BasicBlock::iterator it = fbb->begin();
-    llvm::BasicBlock::iterator ie = fbb->end();
-    Instruction *firstInst = &*it;
-    while (it != ie) {
-      if (isa<CallInst>(it)) {
-        Instruction *callInst = &*it++;
-        Instruction *afterCallInst = &*it;
-        if (afterCallInst->isTerminator() && !isa<InvokeInst>(afterCallInst))
-          continue;
-        if (callInst != firstInst)
-          fbb = fbb->splitBasicBlock(callInst);
-        fbb = fbb->splitBasicBlock(afterCallInst);
-        it = fbb->begin();
-        ie = fbb->end();
-        firstInst = &*it;
-      } else if (isa<InvokeInst>(it)) {
-        Instruction *invokeInst = &*it++;
-        if (invokeInst != firstInst)
-          fbb = fbb->splitBasicBlock(invokeInst);
-      } else {
-        it++;
-      }
-    }
-  }
-
-  delete[] blocks;
-}
 
 void KModule::manifest(InterpreterHandler *ih, bool forceSourceOutput) {
-
-  for (auto &Function : *module) {
-    splitByCall(&Function);
-  }
-
   if (OutputSource || forceSourceOutput) {
     std::unique_ptr<llvm::raw_fd_ostream> os(ih->openOutputFile("assembly.ll"));
     assert(os && !os->has_error() && "unable to open source output");
