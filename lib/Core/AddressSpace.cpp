@@ -74,10 +74,9 @@ bool AddressSpace::resolveOne(const ref<ConstantExpr> &addr,
   return false;
 }
 
-template <typename SuitableObjectsPredicate>
 bool AddressSpace::resolveOne(ExecutionState &state, TimingSolver *solver,
                               ref<Expr> address, ObjectPair &result,
-                              SuitableObjectsPredicate predicate,
+                              std::function<bool(const MemoryObject *)> predicate,
                               bool &success) const {
   if (ConstantExpr *CE = dyn_cast<ConstantExpr>(address)) {
     success = resolveOne(CE, result);
@@ -133,7 +132,7 @@ bool AddressSpace::resolveOne(ExecutionState &state, TimingSolver *solver,
     while (oi!=begin) {
       --oi;
       const auto &mo = oi->first;
-      if (!predicate.contain(mo))
+      if (!predicate(mo))
         continue;
 
       bool mayBeTrue;
@@ -160,7 +159,7 @@ bool AddressSpace::resolveOne(ExecutionState &state, TimingSolver *solver,
     // search forwards
     for (oi=start; oi!=end; ++oi) {
       const auto &mo = oi->first;
-      if (!predicate.contain(mo))
+      if (!predicate(mo))
         continue;
 
       bool mustBeTrue;
@@ -194,24 +193,29 @@ bool AddressSpace::resolveOne(ExecutionState &state, TimingSolver *solver,
 bool AddressSpace::resolveOne(ExecutionState &state, TimingSolver *solver,
                               ref<Expr> address, ObjectPair &result,
                               bool &success) const {
-  return resolveOne<AllObjects>(state, solver, address, result, AllObjects(),
-                                success);
+  std::function<bool(const MemoryObject *)> predicate(
+      [](const MemoryObject *mo) { return true; });
+  return resolveOne(state, solver, address, result, predicate, success);
 }
 
 bool AddressSpace::fastResolveOne(ExecutionState &state, TimingSolver *solver,
                                   ref<Expr> address, ObjectPair &result,
                                   bool &success, unsigned timestamp) const {
-  return resolveOne<SuitableObjects>(
-      state, solver, address, result,
-      SuitableObjects(SymbolicObjects(state), OlderObjects(timestamp)),
-      success);
+  std::function<bool(const MemoryObject *)> predicate =
+      [&state, timestamp](const MemoryObject *mo) {
+        return mo && state.inSymbolics(mo) && mo->timestamp <= timestamp;
+      };
+  return resolveOne(state, solver, address, result, predicate, success);
 }
 
 bool AddressSpace::resolveOneOlder(ExecutionState &state, TimingSolver *solver,
                                    ref<Expr> address, ObjectPair &result,
                                    bool &success, unsigned timestamp) const {
-  return resolveOne<OlderObjects>(state, solver, address, result,
-                                  OlderObjects(timestamp), success);
+  std::function<bool(const MemoryObject *)> predicate =
+      [timestamp](const MemoryObject *mo) {
+        return mo->timestamp <= timestamp;
+      };
+  return resolveOne(state, solver, address, result, predicate, success);
 }
 
 int AddressSpace::checkPointerInObject(ExecutionState &state,
@@ -250,10 +254,9 @@ int AddressSpace::checkPointerInObject(ExecutionState &state,
   return 2;
 }
 
-template <typename SuitableObjectsPredicate>
 bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
                            ref<Expr> p, ResolutionList &rl,
-                           SuitableObjectsPredicate predicate,
+                           std::function<bool(const MemoryObject *)> predicate,
                            unsigned maxResolutions, time::Span timeout) const {
   if (ConstantExpr *CE = dyn_cast<ConstantExpr>(p)) {
     ObjectPair res;
@@ -312,7 +315,7 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
     while (oi != begin) {
       --oi;
       const MemoryObject *mo = oi->first;
-      if (!predicate.contain(mo))
+      if (!predicate(mo))
         continue;
       if (timeout && timeout < timer.delta())
         return true;
@@ -336,7 +339,7 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
     // search forwards
     for (oi = start; oi != end; ++oi) {
       const MemoryObject *mo = oi->first;
-      if (!predicate.contain(mo))
+      if (!predicate(mo))
         continue;
       if (timeout && timeout < timer.delta())
         return true;
@@ -363,26 +366,32 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
 bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
                            ref<Expr> p, ResolutionList &rl,
                            unsigned maxResolutions, time::Span timeout) const {
-  return resolve<AllObjects>(state, solver, p, rl, AllObjects(), maxResolutions,
-                             timeout);
+  std::function<bool(const MemoryObject *)> predicate(
+      [](const MemoryObject *mo) { return true; });
+  return resolve(state, solver, p, rl, predicate, maxResolutions, timeout);
 }
 
 bool AddressSpace::fastResolve(ExecutionState &state, TimingSolver *solver,
                                ref<Expr> p, ResolutionList &rl,
                                unsigned maxResolutions, time::Span timeout,
                                unsigned timestamp) const {
-  return resolve<SuitableObjects>(
-      state, solver, p, rl,
-      SuitableObjects(SymbolicObjects(state), OlderObjects(timestamp)),
-      maxResolutions, timeout);
+  std::function<bool(const MemoryObject *)> predicate =
+      [&state, timestamp](const MemoryObject *mo) {
+        return mo && state.inSymbolics(mo) && mo->timestamp <= timestamp;
+      };
+  return resolve(state, solver, p, rl, predicate, maxResolutions, timeout);
 }
 
 bool AddressSpace::resolveOlder(ExecutionState &state, TimingSolver *solver,
                                 ref<Expr> p, ResolutionList &rl,
                                 unsigned maxResolutions, time::Span timeout,
                                 unsigned timestamp) const {
-  return resolve<OlderObjects>(state, solver, p, rl, OlderObjects(timestamp),
-                               maxResolutions, timeout);
+  std::function<bool(const MemoryObject *)> predicate =
+      [timestamp](const MemoryObject *mo) {
+        return mo->timestamp <= timestamp;
+      };
+  return resolve(state, solver, p, rl, predicate, maxResolutions,
+                               timeout);
 }
 
 // These two are pretty big hack so we can sort of pass memory back
@@ -445,20 +454,4 @@ bool MemoryObjectLT::operator()(const MemoryObject *a,
     res = a->lazyInitializationSource != b->lazyInitializationSource;
   }
   return res ? a->address < b->address : false;
-}
-
-bool AllObjects::contain(const MemoryObject *mo) const {
-  return true;
-}
-
-bool SymbolicObjects::contain(const MemoryObject *mo) const {
-  return state.inSymbolics(mo);
-}
-
-bool OlderObjects::contain(const MemoryObject *mo) const {
-  return mo->timestamp <= timestamp;
-}
-
-bool SuitableObjects::contain(const MemoryObject *mo) const {
-  return mo != nullptr && symbolic.contain(mo) && older.contain(mo);
 }

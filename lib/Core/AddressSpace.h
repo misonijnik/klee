@@ -35,30 +35,6 @@ namespace klee {
   typedef ImmutableMap<const MemoryObject *, ref<ObjectState>, MemoryObjectLT>
       MemoryMap;
 
-  struct AllObjects {
-    bool contain(const MemoryObject *mo) const;
-  };
-
-  struct SymbolicObjects {
-    const ExecutionState &state;
-    SymbolicObjects(const ExecutionState &_state) : state(_state) {}
-    bool contain(const MemoryObject *mo) const;
-  };
-
-  struct OlderObjects {
-    unsigned timestamp;
-    OlderObjects(unsigned _timestamp) : timestamp(_timestamp) {}
-    bool contain(const MemoryObject *mo) const;
-  };
-
-  struct SuitableObjects {
-    SymbolicObjects symbolic;
-    OlderObjects older;
-    SuitableObjects(SymbolicObjects _symbolic, OlderObjects _older)
-        : symbolic(_symbolic), older(_older) {}
-    bool contain(const MemoryObject *mo) const;
-  };
-
   class AddressSpace {
   private:
     /// Epoch counter used to control ownership of objects.
@@ -106,13 +82,12 @@ namespace klee {
     /// \param[out] result An ObjectPair this address can resolve to 
     ///               (when returning true).
     /// \return true iff an object was found at \a address.
-    template <typename SuitableObjectsPredicate>
-    bool resolveOne(ExecutionState &state, TimingSolver *solver,
-                    ref<Expr> address, ObjectPair &result,
-                    SuitableObjectsPredicate predicate, bool &success) const;
-
     bool resolveOne(ExecutionState &state, TimingSolver *solver,
                     ref<Expr> address, ObjectPair &result, bool &success) const;
+    bool resolveOne(ExecutionState &state, TimingSolver *solver,
+                    ref<Expr> address, ObjectPair &result,
+                    std::function<bool(const MemoryObject *)> predicate,
+                    bool &success) const;
 
     /// Resolve pointer `p` to a list of `ObjectPairs` it can point
     /// to. If `maxResolutions` is non-zero then no more than that many
@@ -120,21 +95,20 @@ namespace klee {
     ///
     /// \return true iff the resolution is incomplete (`maxResolutions`
     /// is non-zero and it was reached, or a query timed out).
-    template <typename SuitableObjectsPredicate>
-    bool resolve(ExecutionState &state, TimingSolver *solver, ref<Expr> p,
-                 ResolutionList &rl, SuitableObjectsPredicate predicate,
-                 unsigned maxResolutions = 0,
-                 time::Span timeout = time::Span()) const;
-
     bool resolve(ExecutionState &state, TimingSolver *solver, ref<Expr> p,
                  ResolutionList &rl, unsigned maxResolutions = 0,
+                 time::Span timeout = time::Span()) const;
+    bool resolve(ExecutionState &state, TimingSolver *solver, ref<Expr> p,
+                 ResolutionList &rl,
+                 std::function<bool(const MemoryObject *)> predicate,
+                 unsigned maxResolutions = 0,
                  time::Span timeout = time::Span()) const;
 
     /// Resolve as above, but only to MakeSymbolic and LazyInstantiated
     /// variables
     bool fastResolveOne(ExecutionState &state, TimingSolver *solver,
                         ref<Expr> address, ObjectPair &result, bool &success,
-                        unsigned timestamp = -1) const;
+                        unsigned timestamp = UINT_MAX) const;
     bool fastResolve(ExecutionState &state, TimingSolver *solver, ref<Expr> p,
                      ResolutionList &rl, unsigned maxResolutions = 0,
                      time::Span timeout = time::Span(),
@@ -142,7 +116,7 @@ namespace klee {
 
     bool resolveOneOlder(ExecutionState &state, TimingSolver *solver,
                          ref<Expr> address, ObjectPair &result, bool &success,
-                         unsigned timestamp = -1) const;
+                         unsigned timestamp = UINT_MAX) const;
     bool resolveOlder(ExecutionState &state, TimingSolver *solver, ref<Expr> p,
                       ResolutionList &rl, unsigned maxResolutions = 0,
                       time::Span timeout = time::Span(),
