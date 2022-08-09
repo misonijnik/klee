@@ -4983,7 +4983,6 @@ void Executor::setInitializationGraph(const ExecutionState &state,
                                       KTest &ktest) {
   std::map<size_t, std::vector<Pointer>> pointers;
   std::map<size_t, std::map<unsigned, std::pair<unsigned, unsigned>>> s;
-  // llvm::errs() << "Start\n";
 
   for (const auto &pointer : state.pointers) {
 
@@ -4991,7 +4990,6 @@ void Executor::setInitializationGraph(const ExecutionState &state,
     auto resolved = state.getBase(pointer.first, pointerResolution);
 
     if (resolved) {
-      // llvm::errs() << pointer.first << " -> ";
       // The objects have to be symbolic
       bool pointerFound = false, pointeeFound = false;
       size_t pointerIndex = 0, pointeeIndex = 0;
@@ -5023,8 +5021,7 @@ void Executor::setInitializationGraph(const ExecutionState &state,
         Pointer o;
         o.offset = offset->getZExtValue();
         o.index = pointeeIndex;
-        o.indexOffset = offset->getZExtValue();
-        // llvm::errs() << pointerIndex << " " << pointeeIndex << " offset: " << o.offset << "\n";
+        o.indexOffset = indexOffset->getZExtValue();
         if (s[pointerIndex].count(o.offset) && s[pointerIndex][o.offset] != std::make_pair(o.index, o.indexOffset)) {
           assert(0 && "wft");
         }
@@ -5035,7 +5032,6 @@ void Executor::setInitializationGraph(const ExecutionState &state,
       }
     }
   }
-  // llvm::errs() << "End\n";
   for (auto i : pointers) {
     ktest.objects[i.first].numPointers = i.second.size();
     ktest.objects[i.first].pointers = new Pointer[i.second.size()];
