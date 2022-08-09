@@ -241,6 +241,12 @@ void ExecutionState::removePointers(const MemoryObject *mo) {
   }
 }
 
+void ExecutionState::addPointer(ref<Expr> pointer, const MemoryObject *mo, ref<Expr> offset) {
+  if (!isa<ConstantExpr>(pointer)) {
+    pointers[pointer] = std::make_pair(mo, offset);
+  }
+}
+
 /**/
 
 llvm::raw_ostream &klee::operator<<(llvm::raw_ostream &os, const MemoryMap &mm) {

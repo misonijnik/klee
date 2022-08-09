@@ -311,6 +311,7 @@ public:
                std::pair<ref<const MemoryObject>, ref<Expr>> &resolution) const;
 
   void removePointers(const MemoryObject *mo);
+  void addPointer(ref<Expr> pointer, const MemoryObject *mo, ref<Expr> offset);
 
   void addConstraint(ref<Expr> e);
   void addCexPreference(const ref<Expr> &cond);

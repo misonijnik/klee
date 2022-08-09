@@ -4453,7 +4453,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     if (inBounds) {
       ref<Expr> result;
       const ObjectState *os = op.second;
-      state.pointers[address] = std::make_pair(mo, offset);
+      state.addPointer(address, mo, offset);
       switch (operation) {
       case Write:
         if (os->readOnly) {
@@ -4526,7 +4526,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
       ExecutionState *bound_inner = branches_inner.first;
       ExecutionState *unbound_inner = branches_inner.second;
       if (bound_inner) {
-        bound_inner->pointers[address] = std::make_pair(mo, mo->getOffsetExpr(address));
+        bound_inner->addPointer(address, mo, mo->getOffsetExpr(address));
         switch (operation) {
         case Write: {
           if (os->readOnly) {
@@ -4592,7 +4592,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
                               getAddressInfo(*unbound, address));
       } else {
         addConstraint(*unbound, inBounds);
-        unbound->pointers[address] = std::make_pair(mo, p.first->getOffsetExpr(address));
+        unbound->addPointer(address, mo, p.first->getOffsetExpr(address));
         switch (operation) {
         case Write: {
           ObjectState *wos =
