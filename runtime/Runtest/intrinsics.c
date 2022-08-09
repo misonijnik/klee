@@ -60,13 +60,15 @@ void recursively_allocate(KTestObject *obj, size_t index, void *addr,
     memcpy(address, obj->bytes, obj->numBytes);
     addresses[index] = (uintptr_t)address;
   }
-  for (size_t i = 0; i < obj->numOffsets; i++) {
-    if (!addresses[obj->offsets[i].index]) {
-      recursively_allocate(&testData->objects[obj->offsets[i].index],
-                           obj->offsets[i].index, 0, 1);
+  for (size_t i = 0; i < obj->numPointers; i++) {
+    if (!addresses[obj->pointers[i].index]) {
+      recursively_allocate(&testData->objects[obj->pointers[i].index],
+                           obj->pointers[i].index, 0, 1);
     }
-    void *offset_addr = (void *)(addresses[index] + (obj->offsets[i].offset));
-    memcpy(offset_addr, &addresses[obj->offsets[i].index], sizeof(void *));
+    void *offset_addr = (void *)(addresses[index] + (obj->pointers[i].offset));
+    memcpy(offset_addr,
+           &addresses[obj->pointers[i].index] + obj->pointers[i].indexOffset,
+           sizeof(void *));
   }
   return;
 }

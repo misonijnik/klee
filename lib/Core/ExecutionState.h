@@ -27,6 +27,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <utility>
 #include <vector>
 
 namespace klee {
@@ -232,8 +233,8 @@ public:
   // FIXME: Move to a shared list structure (not critical).
   std::vector<Symbolic> symbolics;
 
-  /// @brief map from memory accesses to accessed objects.
-  ExprHashMap<const MemoryObject *> pointers;
+  /// @brief map from memory accesses to accessed objects and access offsets.
+  ExprHashMap<std::pair<const MemoryObject *, ref<Expr>>> pointers;
 
   /// @brief A set of boolean expressions
   /// the user has requested be true of a counterexample.

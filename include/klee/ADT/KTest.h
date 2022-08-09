@@ -14,10 +14,11 @@
 extern "C" {
 #endif
 
-  typedef struct Offset Offset;
-  struct Offset {
+  typedef struct Pointer Pointer;
+  struct Pointer {
     unsigned offset;
     unsigned index;
+    unsigned indexOffset;
   };
 
   typedef struct KTestObject KTestObject;
@@ -25,8 +26,8 @@ extern "C" {
     char *name;
     unsigned numBytes;
     unsigned char *bytes;
-    unsigned numOffsets;
-    Offset *offsets;
+    unsigned numPointers;
+    Pointer *pointers;
   };
   
   typedef struct KTest KTest;

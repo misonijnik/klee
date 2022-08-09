@@ -57,6 +57,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/BasicBlock.h"
+#include <utility>
 #if LLVM_VERSION_CODE < LLVM_VERSION(8, 0)
 #include "llvm/IR/CallSite.h"
 #endif
@@ -4398,7 +4399,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
 
   if (state.pointers.count(address)) {
     success = true;
-    const MemoryObject* mo = state.pointers[address];
+    const MemoryObject* mo = state.pointers[address].first;
     op = std::make_pair(mo, state.addressSpace.findObject(mo));
   } else {
     solver->setTimeout(coreSolverTimeout);
@@ -4449,7 +4450,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     if (inBounds) {
       ref<Expr> result;
       const ObjectState *os = op.second;
-      state.pointers[address] = mo;
+      state.pointers[address] = std::make_pair(mo, offset);
       switch (operation) {
       case Write:
         if (os->readOnly) {
@@ -4527,7 +4528,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
       ExecutionState *bound_inner = branches_inner.first;
       ExecutionState *unbound_inner = branches_inner.second;
       if (bound_inner) {
-        bound_inner->pointers[address] = mo;
+        bound_inner->pointers[address] = std::make_pair(mo, mo->getOffsetExpr(address));
         switch (operation) {
         case Write: {
           if (os->readOnly) {
@@ -4593,7 +4594,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
                               getAddressInfo(*unbound, address));
       } else {
         addConstraint(*unbound, inBounds);
-        unbound->pointers[address] = mo;
+        unbound->pointers[address] = std::make_pair(mo, p.first->getOffsetExpr(address));
         switch (operation) {
         case Write: {
           ObjectState *wos =
@@ -4982,8 +4983,9 @@ void Executor::logState(const ExecutionState &state, int id,
 
 void Executor::setInitializationGraph(const ExecutionState &state,
                                       KTest &ktest) {
-  std::map<size_t, std::vector<Offset>> ofst;
-  std::map<size_t, std::map<unsigned, unsigned>> s;
+  std::map<size_t, std::vector<Pointer>> pointers;
+  std::map<size_t, std::map<unsigned, std::pair<unsigned, unsigned>>> s;
+  // llvm::errs() << "Start\n";
 
   for (const auto &pointer : state.pointers) {
 
@@ -4991,13 +4993,7 @@ void Executor::setInitializationGraph(const ExecutionState &state,
     auto resolved = state.getBase(pointer.first, pointerResolution);
 
     if (resolved) {
-      ref<ConstantExpr> offset;
-      bool success =
-          solver->getValue(state.constraints, pointerResolution.second, offset,
-                           state.queryMetaData);
-      if (!success) {
-        klee_error("Offset resolution failure in setInitializationGraph");
-      }
+      // llvm::errs() << pointer.first << " -> ";
       // The objects have to be symbolic
       bool pointerFound = false, pointeeFound = false;
       size_t pointerIndex = 0, pointeeIndex = 0;
@@ -5006,31 +5002,47 @@ void Executor::setInitializationGraph(const ExecutionState &state,
           pointerIndex = i;
           pointerFound = true;
         }
-        if (state.symbolics[i].first == pointer.second) {
+        if (state.symbolics[i].first == pointer.second.first) {
           pointeeIndex = i;
           pointeeFound = true;
         }
       }
       if (pointerFound && pointeeFound) {
-        Offset o;
+        ref<ConstantExpr> offset;
+        bool success =
+            solver->getValue(state.constraints, pointerResolution.second,
+                             offset, state.queryMetaData);
+        if (!success) {
+          klee_error("Offset resolution failure in setInitializationGraph");
+        }
+        ref<ConstantExpr> indexOffset;
+        success =
+            solver->getValue(state.constraints, pointer.second.second,
+                             indexOffset, state.queryMetaData);
+        if (!success) {
+          klee_error("Index offset resolution failure in setInitializationGraph");
+        }
+        Pointer o;
         o.offset = offset->getZExtValue();
         o.index = pointeeIndex;
-        if (s[pointerIndex].count(o.offset) && s[pointeeIndex][o.offset] != o.index) {
+        o.indexOffset = offset->getZExtValue();
+        // llvm::errs() << pointerIndex << " " << pointeeIndex << " offset: " << o.offset << "\n";
+        if (s[pointerIndex].count(o.offset) && s[pointerIndex][o.offset] != std::make_pair(o.index, o.indexOffset)) {
           assert(0 && "wft");
         }
-        if (!s[pointeeIndex].count(o.offset)) {
-          ofst[pointerIndex].push_back(o);
-          s[pointerIndex][o.offset] = o.index;
+        if (!s[pointerIndex].count(o.offset)) {
+          pointers[pointerIndex].push_back(o);
+          s[pointerIndex][o.offset] = std::make_pair(o.index, o.indexOffset);
         }
       }
     }
   }
-
-  for (auto i : ofst) {
-    ktest.objects[i.first].numOffsets = i.second.size();
-    ktest.objects[i.first].offsets = new Offset[i.second.size()];
+  // llvm::errs() << "End\n";
+  for (auto i : pointers) {
+    ktest.objects[i.first].numPointers = i.second.size();
+    ktest.objects[i.first].pointers = new Pointer[i.second.size()];
     for (size_t j = 0; j < i.second.size(); j++) {
-      ktest.objects[i.first].offsets[j] = i.second[j];
+      ktest.objects[i.first].pointers[j] = i.second[j];
     }
   }
   return;
@@ -5089,8 +5101,8 @@ bool Executor::getSymbolicSolution(const ExecutionState &state,
     o->numBytes = values[i].size();
     o->bytes = new unsigned char[o->numBytes];
     std::copy(values[i].begin(), values[i].end(), o->bytes);
-    o->numOffsets = 0;
-    o->offsets = nullptr;
+    o->numPointers = 0;
+    o->pointers = nullptr;
   }
 
   return true;

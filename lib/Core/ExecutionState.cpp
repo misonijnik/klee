@@ -215,12 +215,10 @@ bool ExecutionState::getBase(ref<Expr> expr,
   default: {
     if (isGEPExpr(expr)) {
       ref<Expr> gepBase = gepExprBases.at(expr).first;
-      ref<Expr> offset = gepExprOffsets.at(expr);
       std::pair<ref<const MemoryObject>, ref<Expr>> gepResolved;
       if (expr != gepBase && getBase(gepBase, gepResolved)) {
         auto parent = gepResolved.first;
-        auto gepIndex = gepResolved.second;
-        auto index = AddExpr::create(gepIndex, offset);
+        auto index = gepResolved.second;
         resolution = std::make_pair(parent, index);
         return true;
       } else {
@@ -235,7 +233,7 @@ bool ExecutionState::getBase(ref<Expr> expr,
 
 void ExecutionState::removePointers(const MemoryObject *mo) {
   for (auto i = pointers.begin(), last = pointers.end(); i != last;) {
-    if (i->second == mo) {
+    if (i->second.first == mo) {
       i = pointers.erase(i);
     } else {
       ++i;
