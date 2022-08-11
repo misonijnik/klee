@@ -4453,7 +4453,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     if (inBounds) {
       ref<Expr> result;
       const ObjectState *os = op.second;
-      state.addPointer(address, mo, offset);
+      state.addPointer(base, address, mo);
       switch (operation) {
       case Write:
         if (os->readOnly) {
@@ -4519,7 +4519,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
 
     // bound can be 0 on failure or overlapped
     if (bound) {
-      bound->addPointer(address, mo, mo->getOffsetExpr(address));
+      bound->addPointer(base, address, mo);
       switch (operation) {
       case Write: {
         if (os->readOnly) {
@@ -4591,7 +4591,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
                               getAddressInfo(*unbound, address));
       } else {
         addConstraint(*unbound, inBounds);
-        unbound->addPointer(address, mo, p.first->getOffsetExpr(address));
+        unbound->addPointer(base, address, mo);
         switch (operation) {
         case Write: {
           ObjectState *wos =
@@ -4984,6 +4984,10 @@ void Executor::setInitializationGraph(const ExecutionState &state,
   std::map<size_t, std::map<unsigned, std::pair<unsigned, unsigned>>> s;
 
   for (const auto &pointer : state.pointers) {
+
+    if (!isa<ReadExpr>(pointer.first) && !isa<ConcatExpr>(pointer.first)) {
+      continue;
+    }
 
     std::pair<ref<const MemoryObject>, ref<Expr>> pointerResolution;
     auto resolved = state.getBase(pointer.first, pointerResolution);

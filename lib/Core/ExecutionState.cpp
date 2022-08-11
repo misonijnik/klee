@@ -241,9 +241,13 @@ void ExecutionState::removePointers(const MemoryObject *mo) {
   }
 }
 
-void ExecutionState::addPointer(ref<Expr> pointer, const MemoryObject *mo, ref<Expr> offset) {
-  if (!isa<ConstantExpr>(pointer)) {
-    pointers[pointer] = std::make_pair(mo, offset);
+// base address mo and ignore non pure reads in setinitializationgraph
+void ExecutionState::addPointer(ref<Expr> address, ref<Expr> base, const MemoryObject *mo) {
+  if (!isa<ConstantExpr>(address)) {
+    pointers[address] = std::make_pair(mo, mo->getOffsetExpr(address));
+  }
+  if (base != address && !isa<ConstantExpr>(base)) {
+    pointers[base] = std::make_pair(mo, mo->getOffsetExpr(base));
   }
 }
 
