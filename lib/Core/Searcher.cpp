@@ -388,7 +388,8 @@ void GuidedSearcher::update(
   KBlock *currTarget = current ? current->target : nullptr;
   if (currTarget) {
     targets.insert(currTarget);
-  } else if (current) {
+  } else if (current && std::find(removedStates.begin(), removedStates.end(),
+                                  current) == removedStates.end()) {
     targetlessState.push_back(current);
   }
   for (const auto state : targetlessState) {
