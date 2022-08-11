@@ -163,13 +163,13 @@ namespace {
                    cl::cat(StartCat));
 
   enum class ExecutionKind {
-    NonGuided, // Defualt symbolic execution
+    Basic, // Defualt symbolic execution
     Guided,  // Use GuidedSearcher and guidedRun
   };
 
   cl::opt<ExecutionKind> ExecutionMode(
       "execution-mode",
-      cl::values(clEnumValN(ExecutionKind::NonGuided, "basic",
+      cl::values(clEnumValN(ExecutionKind::Basic, "basic",
                             "Use basic klee symbolic execution"),
                  clEnumValN(ExecutionKind::Guided, "guided",
                             "Takes place in two steps. First, all acyclic "
@@ -1499,7 +1499,7 @@ int main(int argc, char **argv, char **envp) {
                    << " (" << ++i << "/" << kTestFiles.size() << ")\n";
       // XXX should put envp in .ktest ?
       switch (ExecutionMode) {
-      case ExecutionKind::NonGuided:
+      case ExecutionKind::Basic:
         interpreter->runFunctionAsMain(mainFn, out->numArgs, out->args, pEnvp);
         break;
       case ExecutionKind::Guided:
@@ -1555,7 +1555,7 @@ int main(int argc, char **argv, char **envp) {
       }
     }
     switch (ExecutionMode) {
-    case ExecutionKind::NonGuided:
+    case ExecutionKind::Basic:
       interpreter->runFunctionAsMain(mainFn, pArgc, pArgv, pEnvp);
       break;
     case ExecutionKind::Guided:
