@@ -159,13 +159,14 @@ cl::opt<bool> EmitAllErrors(
 
 cl::opt<bool> SkipNotSymbolicObjects(
     "skip-not-symbolic-objects", cl::init(true),
-    cl::desc("Set pointers only on symbolic objects (default=true)"),
+    cl::desc("Set pointers only on symbolic objects, "
+             "use only with timestamps (default=true)"),
     cl::cat(TestGenCat));
 
 cl::opt<bool> UseTimestamps(
     "use-timestamps", cl::init(true),
     cl::desc("Set symbolic pointers only to objects created before those "
-             "pointers were created (default=false)"),
+             "pointers were created (default=true)"),
     cl::cat(TestGenCat));
 
 /* Constraint solving options */
@@ -4415,9 +4416,16 @@ void Executor::executeMemoryOperation(ExecutionState &state,
           timestamp = moBasePair.first->timestamp;
         }
       }
-      if (!state.addressSpace.resolveOneOlder(state, solver, address, op, success, timestamp)) {
-        address = toConstant(state, address, "resolveOne failure");
-        success = state.addressSpace.resolveOne(cast<ConstantExpr>(address), op);
+      if (SkipNotSymbolicObjects) {
+        if (!state.addressSpace.fastResolveOne(state, solver, address, op, success, timestamp)) {
+          address = toConstant(state, address, "resolveOne failure");
+          success = state.addressSpace.resolveOne(cast<ConstantExpr>(address), op);
+        }
+      } else {
+        if (!state.addressSpace.resolveOneOlder(state, solver, address, op, success, timestamp)) {
+          address = toConstant(state, address, "resolveOne failure");
+          success = state.addressSpace.resolveOne(cast<ConstantExpr>(address), op);
+        }
       }
     } else {
       if (!state.addressSpace.resolveOne(state, solver, address, op, success)) {
@@ -4494,8 +4502,13 @@ void Executor::executeMemoryOperation(ExecutionState &state,
         timestamp = moBasePair.first->timestamp;
       }
     }
-    incomplete = state.addressSpace.resolveOlder(state, solver, base, rl, 0,
-                                                coreSolverTimeout, timestamp);
+    if (SkipNotSymbolicObjects) {
+      incomplete = state.addressSpace.fastResolve(state, solver, base, rl, 0,
+                                                  coreSolverTimeout, timestamp);
+    } else {
+      incomplete = state.addressSpace.resolveOlder(
+          state, solver, base, rl, 0, coreSolverTimeout, timestamp);
+    }
   } else {
     incomplete = state.addressSpace.resolve(state, solver, base, rl, 0,
                                             coreSolverTimeout);
