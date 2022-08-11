@@ -4511,7 +4511,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     const ObjectState *os = i->second;
 
     ref<Expr> inBounds;
-    inBounds = mo->getBoundsCheckPointer(base, 1);
+    inBounds = mo->getBoundsCheckPointer(base, size);
     inBounds = AndExpr::create(inBounds, mo->getBoundsCheckPointer(address, bytes));
 
     StatePair branches = fork(*unbound, inBounds, true, BranchType::MemOp);
@@ -4544,7 +4544,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     if (!unbound) {
       break;
     } else {
-      inBounds = AndExpr::create(Expr::createIsZero(mo->getBoundsCheckPointer(base, 1)),
+      inBounds = AndExpr::create(Expr::createIsZero(mo->getBoundsCheckPointer(base, size)),
                                  Expr::createIsZero(mo->getBoundsCheckPointer(address, bytes)));
       StatePair branches = fork(*unbound, inBounds, true, BranchType::MemOp);
       if (branches.second) {
@@ -4559,6 +4559,20 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   
   // XXX should we distinguish out of bounds and overlapped cases?
   if (unbound) {
+    StatePair branches = fork(*unbound, Expr::createIsZero(base), true, BranchType::MemOp);
+
+    if (branches.first) {
+      terminateStateOnError(*branches.first,
+                            "memory error: null pointer exception",
+                            StateTerminationType::Ptr);
+    }
+
+    if (!branches.second) {
+      return;
+    } else {
+      unbound = branches.second;
+    }
+
     if (incomplete) {
       terminateStateOnSolverError(*unbound, "Query timed out (resolve).");
     } else if (LazyInitialization &&
