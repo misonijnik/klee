@@ -4541,8 +4541,20 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     }
 
     unbound = branches.second;
-    if (!unbound)
+    if (!unbound) {
       break;
+    } else {
+      inBounds = AndExpr::create(Expr::createIsZero(mo->getBoundsCheckPointer(base, 1)),
+                                 Expr::createIsZero(mo->getBoundsCheckPointer(address, bytes)));
+      StatePair branches = fork(*unbound, inBounds, true, BranchType::MemOp);
+      if (branches.second) {
+        terminateStateEarly(*branches.second, "", StateTerminationType::SilentExit);
+      }
+      unbound = branches.first;
+      if (!unbound) {
+        break;
+      }
+    }
   }
   
   // XXX should we distinguish out of bounds and overlapped cases?
