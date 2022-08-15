@@ -158,9 +158,9 @@ cl::opt<bool> EmitAllErrors(
     cl::cat(TestGenCat));
 
 cl::opt<bool> SkipNotSymbolicObjects(
-    "skip-not-symbolic-objects", cl::init(true),
+    "skip-not-symbolic-objects", cl::init(false),
     cl::desc("Set pointers only on symbolic objects, "
-             "use only with timestamps (default=true)"),
+             "use only with timestamps (default=false)"),
     cl::cat(TestGenCat));
 
 cl::opt<bool> UseTimestamps(
