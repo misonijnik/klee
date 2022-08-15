@@ -4564,7 +4564,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
       StatePair branches = fork(*unbound, inBounds, true, BranchType::MemOp);
       if (branches.first) {
         // the resolved object size was unsuitable, base cannot resolve to this object
-        terminateStateEarly(*branches.second, "", StateTerminationType::SilentExit);
+        terminateStateEarly(*branches.first, "", StateTerminationType::SilentExit);
       }
       unbound = branches.second;
       if (!unbound) {
