@@ -57,6 +57,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/BasicBlock.h"
+#include "llvm/Support/Casting.h"
 #include <utility>
 #if LLVM_VERSION_CODE < LLVM_VERSION(8, 0)
 #include "llvm/IR/CallSite.h"
@@ -5017,6 +5018,19 @@ void Executor::setInitializationGraph(const ExecutionState &state,
 
     if (!isa<ReadExpr>(pointer.first) && !isa<ConcatExpr>(pointer.first)) {
       continue;
+    }
+
+    ref<Expr> update_check;
+    if (auto e = dyn_cast<ConcatExpr>(pointer.first)) {
+      update_check = e->getLeft();
+    } else {
+      update_check = e;
+    }
+
+    if (auto e = dyn_cast<ReadExpr>(update_check)) {
+      if (e->updates.getSize() != 0) {
+        continue;
+      }
     }
 
     std::pair<ref<const MemoryObject>, ref<Expr>> pointerResolution;
