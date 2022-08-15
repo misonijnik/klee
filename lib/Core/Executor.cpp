@@ -4525,7 +4525,10 @@ void Executor::executeMemoryOperation(ExecutionState &state,
 
     ref<Expr> inBounds;
     inBounds = mo->getBoundsCheckPointer(base, size);
-    inBounds = AndExpr::create(inBounds, mo->getBoundsCheckPointer(address, bytes));
+    if (unbound->isGEPExpr(address)) {
+      inBounds =
+          AndExpr::create(inBounds, mo->getBoundsCheckPointer(address, bytes));
+    }
 
     StatePair branches = fork(*unbound, inBounds, true, BranchType::MemOp);
     ExecutionState *bound = branches.first;
@@ -4557,13 +4560,13 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     if (!unbound) {
       break;
     } else {
-      inBounds = AndExpr::create(Expr::createIsZero(mo->getBoundsCheckPointer(base, size)),
-                                 Expr::createIsZero(mo->getBoundsCheckPointer(address, bytes)));
+      inBounds = mo->getBoundsCheckPointer(base, 1);
       StatePair branches = fork(*unbound, inBounds, true, BranchType::MemOp);
-      if (branches.second) {
+      if (branches.first) {
+        // the resolved object size was unsuitable, base cannot resolve to this object
         terminateStateEarly(*branches.second, "", StateTerminationType::SilentExit);
       }
-      unbound = branches.first;
+      unbound = branches.second;
       if (!unbound) {
         break;
       }
