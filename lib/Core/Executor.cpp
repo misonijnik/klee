@@ -2770,7 +2770,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     if (kgepi->offset)
       offset = AddExpr::create(offset, Expr::createPointer(kgepi->offset));
     ref<Expr> address = AddExpr::create(base, offset);
-    if (!isa<ConstantExpr>(address) && !isa<ConstantExpr>(base)) {
+    if (!isa<ConstantExpr>(address)) {
       ref<Expr> extractedOffset = ExtractExpr::create(offset, 0, Expr::Int32);
       if (state.isGEPExpr(base)) {
         state.gepExprBases[address] = state.gepExprBases[base];
@@ -4524,12 +4524,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     const MemoryObject *mo = i->first;
     const ObjectState *os = i->second;
 
-    ref<Expr> inBounds;
-    inBounds = mo->getBoundsCheckPointer(base, size);
-    if (unbound->isGEPExpr(address)) {
-      inBounds =
-          AndExpr::create(inBounds, mo->getBoundsCheckPointer(address, bytes));
-    }
+    ref<Expr> inBounds = mo->getBoundsCheckPointer(address, bytes);
 
     StatePair branches = fork(*unbound, inBounds, true, BranchType::MemOp);
     ExecutionState *bound = branches.first;
@@ -4560,36 +4555,49 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     unbound = branches.second;
     if (!unbound) {
       break;
-    } else {
-      inBounds = mo->getBoundsCheckPointer(base, 1);
-      StatePair branches = fork(*unbound, inBounds, true, BranchType::MemOp);
-      if (branches.first) {
-        // the resolved object size was unsuitable, base cannot resolve to this object
-        terminateStateEarly(*branches.first, "", StateTerminationType::SilentExit);
+    }
+
+    if (unbound->isGEPExpr(address)) {
+      ref<Expr> baseInBounds = mo->getBoundsCheckPointer(base, size);
+      StatePair branches = fork(*unbound, baseInBounds, true, BranchType::MemOp);
+      ExecutionState *bound = branches.first;
+      if (bound) {
+        terminateStateOnError(*bound, "memory error: out of bound pointer",
+                      StateTerminationType::Ptr,
+                      getAddressInfo(*bound, address));
       }
       unbound = branches.second;
-      if (!unbound) {
-        break;
-      }
+    }
+    if (!unbound) {
+      break;
+    }
+
+    ref<Expr> baseInObject = mo->getBoundsCheckPointer(base, 1);
+    branches = fork(*unbound, baseInObject, true, BranchType::MemOp);
+    bound = branches.first;
+    if (bound) {
+      // the resolved object size was unsuitable, base cannot resolve to this object
+      terminateStateEarly(*bound, "", StateTerminationType::SilentExit);
+    }
+    unbound = branches.second;
+    if (!unbound) {
+      break;
     }
   }
-  
-  // XXX should we distinguish out of bounds and overlapped cases?
-  if (unbound) {
-    StatePair branches = fork(*unbound, Expr::createIsZero(base), true, BranchType::MemOp);
 
-    if (branches.first) {
-      terminateStateOnError(*branches.first,
-                            "memory error: null pointer exception",
+  if (unbound) {
+    StatePair branches =
+        fork(*unbound, Expr::createIsZero(base), true, BranchType::MemOp);
+    ExecutionState *bound = branches.first;
+    if (bound) {
+      terminateStateOnError(*bound, "memory error: null pointer exception",
                             StateTerminationType::Ptr);
     }
+    unbound = branches.second;
+  }
 
-    if (!branches.second) {
-      return;
-    } else {
-      unbound = branches.second;
-    }
-
+  // XXX should we distinguish out of bounds and overlapped cases?
+  if (unbound) {
     if (incomplete) {
       terminateStateOnSolverError(*unbound, "Query timed out (resolve).");
     } else if (LazyInitialization &&
@@ -4598,7 +4606,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
 
       if (!isReadFromSymbolicArray(base)) {
         terminateStateEarly(
-            *unbound, "initialization source contains read from concrete array",
+            *unbound, "initialization source should be read from symbolic array",
             StateTerminationType::Execution);
         return;
       }
