@@ -14,6 +14,7 @@ set(KLEE_MODULE_COMPONENT_SRCS
   IntrinsicCleaner.cpp
   KInstruction.cpp
   KModule.cpp
+  KType.cpp
   LowerSwitch.cpp
   ModuleUtil.cpp
   Optimize.cpp
