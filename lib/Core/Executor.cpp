@@ -2876,7 +2876,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     if (kgepi->offset)
       offset = AddExpr::create(offset, Expr::createPointer(kgepi->offset));
     ref<Expr> address = AddExpr::create(base, offset);
-    if (UseGEPExpr && !isa<ConstantExpr>(address) && !isa<ConstantExpr>(base)) {
+    if (UseGEPExpr && !isa<ConstantExpr>(address)) {
       if (isGEPExpr(base))
         gepExprBases[address] = gepExprBases[base];
       else
@@ -4804,58 +4804,76 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   for (ResolutionList::iterator i = rl.begin(), ie = rl.end(); i != ie; ++i) {
     const MemoryObject *mo = i->first;
     const ObjectState *os = i->second;
-    ref<Expr> inBounds;
 
-    if (UseGEPExpr && isGEPExpr(address))
-      inBounds = mo->getBoundsCheckPointer(base, 1);
-    else
-      inBounds = mo->getBoundsCheckPointer(address, 1);
+    ref<Expr> inBounds = mo->getBoundsCheckPointer(address, bytes);
 
     StatePair branches = fork(*unbound, inBounds, true, BranchType::MemOp);
     ExecutionState *bound = branches.first;
 
-
     // bound can be 0 on failure or overlapped
     if (bound) {
-      ref<Expr> inBounds = mo->getBoundsCheckPointer(address, bytes);
-      if (UseGEPExpr && isGEPExpr(address)) {
-        inBounds =
-            AndExpr::create(inBounds, mo->getBoundsCheckPointer(base, size));
+      switch (operation) {
+      case Write: {
+        if (os->readOnly) {
+          terminateStateOnError(*bound,
+                                "memory error: object read only",
+                                StateTerminationType::ReadOnly);
+        } else {
+          ObjectState *wos = bound->addressSpace.getWriteable(mo, os);
+          wos->write(mo->getOffsetExpr(address), value);
+        }
+        break;
       }
-      StatePair branches_inner =
-          fork(*bound, inBounds, true, BranchType::MemOp);
-      ExecutionState *bound_inner = branches_inner.first;
-      ExecutionState *unbound_inner = branches_inner.second;
-      if (bound_inner) {
-        switch (operation) {
-        case Write: {
-          if (os->readOnly) {
-            terminateStateOnError(*bound_inner,
-                                  "memory error: object read only",
-                                  StateTerminationType::ReadOnly);
-          } else {
-            ObjectState *wos = bound_inner->addressSpace.getWriteable(mo, os);
-            wos->write(mo->getOffsetExpr(address), value);
-          }
-          break;
-        }
-        case Read: {
-          ref<Expr> result = os->read(mo->getOffsetExpr(address), type);
-          bindLocal(target, *bound_inner, result);
-          break;
-        }
-        }
+      case Read: {
+        ref<Expr> result = os->read(mo->getOffsetExpr(address), type);
+        bindLocal(target, *bound, result);
+        break;
       }
-      if (unbound_inner) {
-        terminateStateOnError(
-            *unbound_inner, "memory error: out of bound pointer",
-            StateTerminationType::Ptr, getAddressInfo(*unbound, address));
       }
     }
 
     unbound = branches.second;
-    if (!unbound)
+    if (!unbound) {
       break;
+    }
+
+    if (UseGEPExpr && isGEPExpr(address)) {
+      ref<Expr> baseInBounds = mo->getBoundsCheckPointer(base, size);
+      StatePair branches = fork(*unbound, baseInBounds, true, BranchType::MemOp);
+      ExecutionState *bound = branches.first;
+      if (bound) {
+        terminateStateOnError(*bound, "memory error: out of bound pointer",
+                      StateTerminationType::Ptr,
+                      getAddressInfo(*bound, address));
+      }
+      unbound = branches.second;
+    }
+    if (!unbound) {
+      break;
+    }
+
+    ref<Expr> baseInObject = mo->getBoundsCheckPointer(base, 1);
+    branches = fork(*unbound, baseInObject, true, BranchType::MemOp);
+    bound = branches.first;
+    if (bound) {
+      // the resolved object size was unsuitable, base cannot resolve to this object
+      terminateStateEarly(*bound, "", StateTerminationType::SilentExit);
+    }
+    unbound = branches.second;
+    if (!unbound) {
+      break;
+    }
+  }
+
+  if (unbound) {
+    StatePair branches =
+        fork(*unbound, Expr::createIsZero(base), true, BranchType::MemOp);
+    ExecutionState *bound = branches.first;
+    if (bound) {
+      terminateStateOnError(*bound, "memory error: null pointer exception",
+                            StateTerminationType::Ptr);
+    }
+    unbound = branches.second;
   }
   
   // XXX should we distinguish out of bounds and overlapped cases?
