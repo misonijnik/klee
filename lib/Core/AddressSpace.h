@@ -20,6 +20,7 @@ namespace klee {
   class ExecutionState;
   class MemoryObject;
   class ObjectState;
+  class KType;
   class TimingSolver;
 
   template<class T> class ref;
@@ -70,7 +71,7 @@ namespace klee {
 
     /// Resolve address to an ObjectPair in result.
     /// \return true iff an object was found.
-    bool resolveOne(const ref<ConstantExpr> &address, 
+    bool resolveOne(const ref<ConstantExpr> &address, KType *objectType,
                     ObjectPair &result) const;
 
     /// Resolve address to an ObjectPair in result.
@@ -82,10 +83,8 @@ namespace klee {
     /// \param[out] result An ObjectPair this address can resolve to 
     ///               (when returning true).
     /// \return true iff an object was found at \a address.
-    bool resolveOne(ExecutionState &state, 
-                    TimingSolver *solver,
-                    ref<Expr> address,
-                    ObjectPair &result,
+    bool resolveOne(ExecutionState &state, TimingSolver *solver,
+                    ref<Expr> address, KType *objectType, ObjectPair &result,
                     bool &success) const;
 
     /// Resolve pointer `p` to a list of `ObjectPairs` it can point
@@ -94,17 +93,16 @@ namespace klee {
     ///
     /// \return true iff the resolution is incomplete (`maxResolutions`
     /// is non-zero and it was reached, or a query timed out).
-    bool resolve(ExecutionState &state,
-                 TimingSolver *solver,
-                 ref<Expr> p,
-                 ResolutionList &rl, 
-                 unsigned maxResolutions=0,
-                 time::Span timeout=time::Span()) const;
+    bool resolve(ExecutionState &state, TimingSolver *solver, ref<Expr> p,
+                 KType *objectType, ResolutionList &rl,
+                 ResolutionList &rlSkipped, unsigned maxResolutions = 0,
+                 time::Span timeout = time::Span()) const;
 
     /// Resolve as above, but only to MakeSymbolic and LazyInstantiated
     /// variables
     bool fastResolve(ExecutionState &state, TimingSolver *solver, ref<Expr> p,
-                     ResolutionList &rl, unsigned maxResolutions = 0,
+                     KType *objectType, ResolutionList &rl,
+                     ResolutionList &rlSkipped, unsigned maxResolutions = 0,
                      time::Span timeout = time::Span()) const;
 
     /***/
