@@ -4132,8 +4132,8 @@ void Executor::guidedRun(ExecutionState &initialState) {
   haltExecution = false;
 }
 
-std::string Executor::getAddressInfo(ExecutionState &state, 
-                                     ref<Expr> address) const{
+std::string Executor::getAddressInfo(ExecutionState &state, ref<Expr> address,
+                                     const MemoryObject *mo) const {
   std::string Str;
   llvm::raw_string_ostream info(Str);
   info << "\taddress: " << address << "\n";
@@ -4149,7 +4149,10 @@ std::string Executor::getAddressInfo(ExecutionState &state,
     example = value->getZExtValue();
     info << "\texample: " << example << "\n";
     std::pair<ref<Expr>, ref<Expr>> res =
-        solver->getRange(state.constraints, address, state.queryMetaData);
+        mo ? std::make_pair(
+                 mo->getBaseExpr(),
+                 AddExpr::create(mo->getBaseExpr(), mo->getSizeExpr()))
+           : solver->getRange(state.constraints, address, state.queryMetaData);
     info << "\trange: [" << res.first << ", " << res.second <<"]\n";
   }
   
@@ -4183,7 +4186,6 @@ std::string Executor::getAddressInfo(ExecutionState &state,
 
   return info.str();
 }
-
 
 void Executor::terminateState(ExecutionState &state) {
   if (replayKTest && replayPosition!=replayKTest->numObjects) {
@@ -4992,7 +4994,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
       if (unbound_inner) {
         terminateStateOnError(
             *unbound_inner, "memory error: out of bound pointer",
-            StateTerminationType::Ptr, getAddressInfo(*unbound_inner, address));
+            StateTerminationType::Ptr, getAddressInfo(*unbound_inner, address, mo));
       }
     }
 
@@ -5031,7 +5033,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
       if (res == Solver::False) {
         terminateStateOnError(*unbound, "memory error: out of bound pointer",
                               StateTerminationType::Ptr,
-                              getAddressInfo(*unbound, address));
+                              getAddressInfo(*unbound, address, mo));
       } else {
         addConstraint(*unbound, inBounds);
         /* FIXME: same as above. Wasting memory. */
