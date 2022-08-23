@@ -11,6 +11,7 @@
 
 #include "Context.h"
 #include "CoreStats.h"
+#include "CXXTypeSystem/CXXTypeManager.h"
 #include "ExecutionState.h"
 #include "ExternalDispatcher.h"
 #include "GetElementPtrTypeIterator.h"
@@ -146,7 +147,9 @@ cl::opt<TypeSystemKind>
                cl::desc("Use information about type system from specified "
                         "language (default=llvm)"),
                cl::values(clEnumValN(TypeSystemKind::LLVM, "LLVM",
-                                     "Use plain type system from LLVM")),
+                                     "Use plain type system from LLVM"),
+                          clEnumValN(TypeSystemKind::CXX, "CXX",
+                                     "Use type system from CXX")),
                cl::init(TypeSystemKind::LLVM));
 
 cl::opt<bool>
@@ -3939,6 +3942,9 @@ void Executor::initializeTypeManager() {
   switch (TypeSystem) {
   case (TypeSystemKind::LLVM):
     typeSystemManager = new TypeManager(kmodule.get());
+    break;
+  case (TypeSystemKind::CXX):
+    typeSystemManager = new CXXTypeManager(kmodule.get());
     break;
   default:
     assert(false && "Unknown type system!");
