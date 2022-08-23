@@ -424,7 +424,8 @@ private:
   void executeGetValue(ExecutionState &state, ref<Expr> e, KInstruction *target);
 
   /// Get textual information regarding a memory address.
-  std::string getAddressInfo(ExecutionState &state, ref<Expr> address) const;
+  std::string getAddressInfo(ExecutionState &state, ref<Expr> address,
+                             const MemoryObject *mo = nullptr) const;
 
   // Determines the \param lastInstruction of the \param state which is not KLEE
   // internal and returns its InstructionInfo
