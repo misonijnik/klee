@@ -85,6 +85,7 @@ namespace klee {
   class StatsTracker;
   class TimingSolver;
   class TreeStreamWriter;
+  class TypeManager;
   class MergeHandler;
   class MergingSearcher;
   template<class T> class ref;
@@ -132,6 +133,8 @@ private:
   ExternalDispatcher *externalDispatcher;
   TimingSolver *solver;
   MemoryManager *memory;
+  TypeManager *typeSystemManager;
+
   std::set<ExecutionState*, ExecutionStateIDCompare> states;
   std::set<ExecutionState*, ExecutionStateIDCompare> pausedStates;
   StatsTracker *statsTracker;
@@ -139,7 +142,7 @@ private:
   SpecialFunctionHandler *specialFunctionHandler;
   TimerGroup timers;
   std::unique_ptr<PTree> processTree;
-  std::map<ref<Expr>, std::pair<ref<Expr>, unsigned>> gepExprBases;
+  std::map<ref<Expr>, std::pair<ref<Expr>, llvm::Type *>> gepExprBases;
 
   /// Used to track states that have been added during the current
   /// instructions step. 
@@ -247,9 +250,11 @@ private:
   void runWithTarget(ExecutionState &state, KFunction *kf, KBlock *target);
   void runGuided(ExecutionState &state, KFunction *kf);
 
+  void initializeTypeManager();
+
   // Given a concrete object in our [klee's] address space, add it to 
   // objects checked code can reference.
-  MemoryObject *addExternalObject(ExecutionState &state, void *addr, 
+  MemoryObject *addExternalObject(ExecutionState &state, void *addr, KType *,
                                   unsigned size, bool isReadOnly);
 
   void initializeGlobalAlias(const llvm::Constant *c, ExecutionState &state);
@@ -273,7 +278,8 @@ private:
                             std::vector< ref<Expr> > &arguments);
 
   ObjectState *bindObjectInState(ExecutionState &state, const MemoryObject *mo,
-                                 bool isLocal, const Array *array = 0);
+                                 KType *dynamicType, bool IsAlloca,
+                                 const Array *array = 0);
 
   /// Resolve a pointer to the memory objects it could point to the
   /// start of, forking execution when necessary and generating errors
@@ -285,10 +291,8 @@ private:
   /// beginning of.
   typedef std::vector< std::pair<std::pair<const MemoryObject*, const ObjectState*>, 
                                  ExecutionState*> > ExactResolutionList;
-  void resolveExact(ExecutionState &state,
-                    ref<Expr> p,
-                    ExactResolutionList &results,
-                    const std::string &name);
+  void resolveExact(ExecutionState &state, ref<Expr> p, KType *type,
+                    ExactResolutionList &results, const std::string &name);
 
   /// Allocate and bind a new object in a particular state. NOTE: This
   /// function may fork.
@@ -309,13 +313,10 @@ private:
   /// \param allocationAlignment If non-zero, the given alignment is
   /// used. Otherwise, the alignment is deduced via
   /// Executor::getAllocationAlignment
-  void executeAlloc(ExecutionState &state,
-                    ref<Expr> size,
-                    bool isLocal,
-                    KInstruction *target,
-                    bool zeroMemory=false,
-                    const ObjectState *reallocFrom=0,
-                    size_t allocationAlignment=0);
+  void executeAlloc(ExecutionState &state, ref<Expr> size, bool isLocal,
+                    KInstruction *target, KType *type, bool zeroMemory = false,
+                    const ObjectState *reallocFrom = 0,
+                    size_t allocationAlignment = 0);
 
   /// Free the given address with checking for errors. If target is
   /// given it will be bound to 0 in the resulting states (this is a
@@ -343,13 +344,12 @@ private:
                    
   // do address resolution / object binding / out of bounds checking
   // and perform the operation
-  void executeMemoryOperation(ExecutionState &state,
-                              MemoryOperation operation,
-                              ref<Expr> address,
+  void executeMemoryOperation(ExecutionState &state, MemoryOperation operation,
+                              KType *targetType, ref<Expr> address,
                               ref<Expr> value /* undef if read */,
                               KInstruction *target /* undef if write */);
 
-  ObjectPair lazyInstantiate(ExecutionState &state, bool isLocal,
+  ObjectPair lazyInstantiate(ExecutionState &state, KType *type, bool isLocal,
                              const MemoryObject *mo);
 
   ObjectPair lazyInstantiateAlloca(ExecutionState &state,
@@ -357,10 +357,11 @@ private:
                                    bool isLocal);
 
   ObjectPair lazyInstantiateVariable(ExecutionState &state, ref<Expr> address,
-                                     KInstruction *target, uint64_t size);
+                                     KInstruction *target, KType *targetType,
+                                     uint64_t size);
 
   void executeMakeSymbolic(ExecutionState &state, const MemoryObject *mo,
-                           const std::string &name, bool isLocal);
+                           KType *type, const std::string &name, bool isLocal);
 
   /// Create a new state where each input condition has been added as
   /// a constraint and return the results. The input state is included

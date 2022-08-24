@@ -14,6 +14,7 @@
 #include "TimingSolver.h"
 
 #include "klee/Expr/Expr.h"
+#include "klee/Module/KType.h"
 #include "klee/Statistics/TimerStatIncrementer.h"
 
 #include "CoreStats.h"
@@ -39,8 +40,6 @@ const ObjectState *AddressSpace::findObject(const MemoryObject *mo) const {
 
 ObjectState *AddressSpace::getWriteable(const MemoryObject *mo,
                                         const ObjectState *os) {
-  assert(!os->readOnly);
-
   // If this address space owns they object, return it
   if (cowKey == os->copyOnWriteOwner)
     return const_cast<ObjectState*>(os);
@@ -54,7 +53,7 @@ ObjectState *AddressSpace::getWriteable(const MemoryObject *mo,
 
 /// 
 
-bool AddressSpace::resolveOne(const ref<ConstantExpr> &addr, 
+bool AddressSpace::resolveOne(const ref<ConstantExpr> &addr, KType *objectType,
                               ObjectPair &result) const {
   uint64_t address = addr->getZExtValue();
   MemoryObject hack(address);
@@ -74,13 +73,11 @@ bool AddressSpace::resolveOne(const ref<ConstantExpr> &addr,
   return false;
 }
 
-bool AddressSpace::resolveOne(ExecutionState &state,
-                              TimingSolver *solver,
-                              ref<Expr> address,
-                              ObjectPair &result,
-                              bool &success) const {
+bool AddressSpace::resolveOne(ExecutionState &state, TimingSolver *solver,
+                              ref<Expr> address, KType *objectType,
+                              ObjectPair &result, bool &success) const {
   if (ConstantExpr *CE = dyn_cast<ConstantExpr>(address)) {
-    success = resolveOne(CE, result);
+    success = resolveOne(CE, objectType, result);
     return true;
   } else {
     TimerStatIncrementer timer(stats::resolveTime);
@@ -116,10 +113,12 @@ bool AddressSpace::resolveOne(ExecutionState &state,
     if (res) {
       const MemoryObject *mo = res->first;
       if (example - mo->address < mo->size) {
-        result.first = res->first;
-        result.second = res->second.get();
-        success = true;
-        return true;
+        if (res->second->isAccessableFrom(objectType)) {
+          result.first = res->first;
+          result.second = res->second.get();
+          success = true;
+          return true;
+        }
       }
     }
 
@@ -133,6 +132,10 @@ bool AddressSpace::resolveOne(ExecutionState &state,
     while (oi!=begin) {
       --oi;
       const auto &mo = oi->first;
+
+      if (!oi->second->isAccessableFrom(objectType)) {
+        continue;
+      }
 
       bool mayBeTrue;
       if (!solver->mayBeTrue(state.constraints,
@@ -158,6 +161,10 @@ bool AddressSpace::resolveOne(ExecutionState &state,
     // search forwards
     for (oi=start; oi!=end; ++oi) {
       const auto &mo = oi->first;
+
+      if (!oi->second->isAccessableFrom(objectType)) {
+        continue;
+      }
 
       bool mustBeTrue;
       if (!solver->mustBeTrue(state.constraints,
@@ -224,11 +231,12 @@ int AddressSpace::checkPointerInObject(ExecutionState &state,
 }
 
 bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
-                           ref<Expr> p, ResolutionList &rl,
-                           unsigned maxResolutions, time::Span timeout) const {
+                           ref<Expr> p, KType *objectType, ResolutionList &rl,
+                           ResolutionList &rlSkipped, unsigned maxResolutions,
+                           time::Span timeout) const {
   if (ConstantExpr *CE = dyn_cast<ConstantExpr>(p)) {
     ObjectPair res;
-    if (resolveOne(CE, res))
+    if (resolveOne(CE, objectType, res))
       rl.push_back(res);
     return false;
   } else {
@@ -283,6 +291,11 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
     while (oi != begin) {
       --oi;
       const MemoryObject *mo = oi->first;
+      if (!oi->second->isAccessableFrom(objectType)) {
+        rlSkipped.emplace_back(mo, oi->second.get());
+        continue;
+      }
+
       if (timeout && timeout < timer.delta())
         return true;
 
@@ -305,6 +318,11 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
     // search forwards
     for (oi = start; oi != end; ++oi) {
       const MemoryObject *mo = oi->first;
+      if (!oi->second->isAccessableFrom(objectType)) {
+        rlSkipped.emplace_back(mo, oi->second.get());
+        continue;
+      }
+
       if (timeout && timeout < timer.delta())
         return true;
 
@@ -328,12 +346,13 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
 }
 
 bool AddressSpace::fastResolve(ExecutionState &state, TimingSolver *solver,
-                               ref<Expr> p, ResolutionList &rl,
+                               ref<Expr> p, KType *objectType,
+                               ResolutionList &rl, ResolutionList &rlSkipped,
                                unsigned maxResolutions,
                                time::Span timeout) const {
   if (ConstantExpr *CE = dyn_cast<ConstantExpr>(p)) {
     ObjectPair res;
-    if (resolveOne(CE, res))
+    if (resolveOne(CE, objectType, res))
       rl.push_back(res);
     return false;
   } else {
@@ -389,8 +408,12 @@ bool AddressSpace::fastResolve(ExecutionState &state, TimingSolver *solver,
     while (oi != begin) {
       --oi;
       const MemoryObject *mo = oi->first;
-      if (mo == nullptr || !mo->isLazyInstantiated() || !mo->isKleeMakeSymbolic)
+      if (mo == nullptr || !mo->isLazyInstantiated() ||
+          !mo->isKleeMakeSymbolic ||
+          !oi->second->isAccessableFrom(objectType)) {
+        rlSkipped.emplace_back(mo, oi->second.get());
         continue;
+      }
 
       if (timeout && timeout < timer.delta())
         return true;
@@ -414,8 +437,12 @@ bool AddressSpace::fastResolve(ExecutionState &state, TimingSolver *solver,
     // search forwards
     for (oi = start; oi != end; ++oi) {
       const MemoryObject *mo = oi->first;
-      if (mo == nullptr || !mo->isLazyInstantiated() || !mo->isKleeMakeSymbolic)
+      if (mo == nullptr || !mo->isLazyInstantiated() ||
+          !mo->isKleeMakeSymbolic ||
+          !oi->second->isAccessableFrom(objectType)) {
+        rlSkipped.emplace_back(mo, oi->second.get());
         continue;
+      }
 
       if (timeout && timeout < timer.delta())
         return true;

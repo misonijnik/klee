@@ -12,6 +12,7 @@ klee_add_component(kleeCore
   CallPathManager.cpp
   Context.cpp
   CoreStats.cpp
+  CXXTypeSystem/CXXTypeManager.cpp
   ExecutionState.cpp
   Executor.cpp
   ExecutorUtil.cpp
@@ -25,6 +26,7 @@ klee_add_component(kleeCore
   SpecialFunctionHandler.cpp
   StatsTracker.cpp
   TimingSolver.cpp
+  TypeManager.cpp
   UserSearcher.cpp
 )
 

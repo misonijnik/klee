@@ -29,8 +29,11 @@ namespace klee {
 class ArrayCache;
 class BitArray;
 class ExecutionState;
+class KType;
 class MemoryManager;
 class Solver;
+
+extern llvm::cl::opt<bool> UseTBAA;
 
 class MemoryObject {
   friend class STPBuilder;
@@ -218,6 +221,8 @@ private:
   // mutable because we may need flush during read of const
   mutable UpdateList updates;
 
+  KType *dynamicType;
+
 public:
   unsigned size;
 
@@ -227,11 +232,11 @@ public:
   /// Create a new object state for the given memory object with concrete
   /// contents. The initial contents are undefined, it is the callers
   /// responsibility to initialize the object contents appropriately.
-  ObjectState(const MemoryObject *mo);
+  ObjectState(const MemoryObject *mo, KType *dt);
 
   /// Create a new object state for the given memory object with symbolic
   /// contents.
-  ObjectState(const MemoryObject *mo, const Array *array);
+  ObjectState(const MemoryObject *mo, const Array *array, KType *dt);
 
   ObjectState(const ObjectState &os);
   ~ObjectState();
@@ -265,6 +270,10 @@ public:
   */
   void flushToConcreteStore(TimingSolver *solver,
                             const ExecutionState &state) const;
+
+  bool isAccessableFrom(KType *) const;
+
+  KType *getDynamicType() const;
 
 private:
   const UpdateList &getUpdates() const;
