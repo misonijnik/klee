@@ -635,6 +635,8 @@ KFunction::KFunction(llvm::Function *_function,
     function(_function),
     numArgs(function->arg_size()),
     numInstructions(0),
+    numBlocks(0),
+    entryKBlock(nullptr),
     trackCoverage(true) {
   for (auto &BasicBlock : *function) {
     numInstructions += BasicBlock.size();
@@ -685,7 +687,10 @@ KFunction::KFunction(llvm::Function *_function,
       finalKBlocks.push_back(kb);
   }
 
-  entryKBlock = blockMap[&*function->begin()];
+  if (numBlocks > 0) {
+    assert(function->begin() != function->end());
+    entryKBlock = blockMap[&*function->begin()];
+  }
 }
 
 KFunction::~KFunction() {
