@@ -11,12 +11,13 @@
 #include "llvm/IR/CFG.h"
 
 #include <deque>
+#include <unordered_map>
 
 using namespace klee;
 
 void CFGDistance::calculateDistance(KBlock *bb) {
   auto blockMap = bb->parent->blockMap;
-  std::map<KBlock *, unsigned int> &dist = blockDistance[bb];
+  std::unordered_map<KBlock *, unsigned int> &dist = blockDistance[bb];
   std::vector<std::pair<KBlock *, unsigned>> &sort = blockSortedDistance[bb];
   std::deque<KBlock *> nodes;
   nodes.push_back(bb);
@@ -25,7 +26,7 @@ void CFGDistance::calculateDistance(KBlock *bb) {
   while (!nodes.empty()) {
     KBlock *currBB = nodes.front();
     for (auto const &succ : successors(currBB->basicBlock)) {
-      if (dist.find(blockMap[succ]) == dist.end()) {
+      if (dist.count(blockMap[succ]) == 0) {
         dist[blockMap[succ]] = dist[currBB] + 1;
         sort.push_back({blockMap[succ], dist[currBB] + 1});
         nodes.push_back(blockMap[succ]);
@@ -37,7 +38,7 @@ void CFGDistance::calculateDistance(KBlock *bb) {
 
 void CFGDistance::calculateBackwardDistance(KBlock *bb) {
   auto blockMap = bb->parent->blockMap;
-  std::map<KBlock *, unsigned int> &bdist = blockBackwardDistance[bb];
+  std::unordered_map<KBlock *, unsigned int> &bdist = blockBackwardDistance[bb];
   std::vector<std::pair<KBlock *, unsigned>> &bsort =
       blockSortedBackwardDistance[bb];
   std::deque<KBlock *> nodes;
@@ -47,7 +48,7 @@ void CFGDistance::calculateBackwardDistance(KBlock *bb) {
   while (!nodes.empty()) {
     KBlock *currBB = nodes.front();
     for (auto const &pred : predecessors(currBB->basicBlock)) {
-      if (bdist.find(blockMap[pred]) == bdist.end()) {
+      if (bdist.count(blockMap[pred]) == 0) {
         bdist[blockMap[pred]] = bdist[currBB] + 1;
         bsort.push_back({blockMap[pred], bdist[currBB] + 1});
         nodes.push_back(blockMap[pred]);
@@ -59,7 +60,7 @@ void CFGDistance::calculateBackwardDistance(KBlock *bb) {
 
 void CFGDistance::calculateDistance(KFunction *kf) {
   auto functionMap = kf->parent->functionMap;
-  std::map<KFunction *, unsigned int> &dist = functionDistance[kf];
+  std::unordered_map<KFunction *, unsigned int> &dist = functionDistance[kf];
   std::vector<std::pair<KFunction *, unsigned>> &sort =
       functionSortedDistance[kf];
   std::deque<KFunction *> nodes;
@@ -74,7 +75,7 @@ void CFGDistance::calculateDistance(KFunction *kf) {
         continue;
       }
       KFunction *callKF = functionMap[callBlock->calledFunction];
-      if (dist.find(callKF) == dist.end()) {
+      if (dist.count(callKF) == 0) {
         dist[callKF] = dist[callKF] + 1;
         sort.push_back({callKF, dist[currKF] + 1});
         nodes.push_back(callKF);
@@ -87,7 +88,7 @@ void CFGDistance::calculateDistance(KFunction *kf) {
 void CFGDistance::calculateBackwardDistance(KFunction *kf) {
   auto functionMap = kf->parent->functionMap;
   auto callMap = kf->parent->callMap;
-  std::map<KFunction *, unsigned int> &bdist = functionBackwardDistance[kf];
+  std::unordered_map<KFunction *, unsigned int> &bdist = functionBackwardDistance[kf];
   std::vector<std::pair<KFunction *, unsigned>> &bsort =
       functionSortedBackwardDistance[kf];
   std::deque<KFunction *> nodes;
@@ -101,7 +102,7 @@ void CFGDistance::calculateBackwardDistance(KFunction *kf) {
         continue;
       }
       KFunction *callKF = functionMap[cf];
-      if (bdist.find(callKF) == bdist.end()) {
+      if (bdist.count(callKF) == 0) {
         bdist[callKF] = bdist[callKF] + 1;
         bsort.push_back({callKF, bdist[currKF] + 1});
         nodes.push_back(callKF);
@@ -111,56 +112,56 @@ void CFGDistance::calculateBackwardDistance(KFunction *kf) {
   }
 }
 
-const std::map<KBlock *, unsigned> &CFGDistance::getDistance(KBlock *kb) {
-  if (blockDistance.find(kb) == blockDistance.end())
+const std::unordered_map<KBlock *, unsigned> &CFGDistance::getDistance(KBlock *kb) {
+  if (blockDistance.count(kb) == 0)
     calculateDistance(kb);
   return blockDistance[kb];
 }
 
-const std::map<KBlock *, unsigned> &
+const std::unordered_map<KBlock *, unsigned> &
 CFGDistance::getBackwardDistance(KBlock *kb) {
-  if (blockBackwardDistance.find(kb) == blockBackwardDistance.end())
+  if (blockBackwardDistance.count(kb) == 0)
     calculateBackwardDistance(kb);
   return blockBackwardDistance[kb];
 }
 
 const std::vector<std::pair<KBlock *, unsigned int>> &
 CFGDistance::getSortedDistance(KBlock *kb) {
-  if (blockDistance.find(kb) == blockDistance.end())
+  if (blockDistance.count(kb) == 0)
     calculateDistance(kb);
   return blockSortedDistance[kb];
 }
 
 const std::vector<std::pair<KBlock *, unsigned int>> &
 CFGDistance::getSortedBackwardDistance(KBlock *kb) {
-  if (blockBackwardDistance.find(kb) == blockBackwardDistance.end())
+  if (blockBackwardDistance.count(kb) == 0)
     calculateBackwardDistance(kb);
   return blockSortedBackwardDistance[kb];
 }
 
-const std::map<KFunction *, unsigned> &CFGDistance::getDistance(KFunction *kf) {
-  if (functionDistance.find(kf) == functionDistance.end())
+const std::unordered_map<KFunction *, unsigned> &CFGDistance::getDistance(KFunction *kf) {
+  if (functionDistance.count(kf) == 0)
     calculateDistance(kf);
   return functionDistance[kf];
 }
 
-const std::map<KFunction *, unsigned> &
+const std::unordered_map<KFunction *, unsigned> &
 CFGDistance::getBackwardDistance(KFunction *kf) {
-  if (functionBackwardDistance.find(kf) == functionBackwardDistance.end())
+  if (functionBackwardDistance.count(kf) == 0)
     calculateBackwardDistance(kf);
   return functionBackwardDistance[kf];
 }
 
 const std::vector<std::pair<KFunction *, unsigned int>> &
 CFGDistance::getSortedDistance(KFunction *kf) {
-  if (functionDistance.find(kf) == functionDistance.end())
+  if (functionDistance.count(kf) == 0)
     calculateDistance(kf);
   return functionSortedDistance[kf];
 }
 
 const std::vector<std::pair<KFunction *, unsigned int>> &
 CFGDistance::getSortedBackwardDistance(KFunction *kf) {
-  if (functionBackwardDistance.find(kf) == functionBackwardDistance.end())
+  if (functionBackwardDistance.count(kf) == 0)
     calculateBackwardDistance(kf);
   return functionSortedBackwardDistance[kf];
 }

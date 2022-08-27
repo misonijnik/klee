@@ -17,6 +17,7 @@
 #include "StatsTracker.h"
 
 #include "klee/ADT/DiscretePDF.h"
+#include "klee/ADT/WeightedQueue.h"
 #include "klee/ADT/RNG.h"
 #include "klee/Statistics/Statistics.h"
 #include "klee/Module/CFGDistance.h"
@@ -145,9 +146,22 @@ void RandomSearcher::printName(llvm::raw_ostream &os) {
   os << "RandomSearcher\n";
 }
 
+static unsigned int ulog2(unsigned int val) {
+  if (val == 0)
+    return UINT_MAX;
+  if (val == 1)
+    return 0;
+  unsigned int ret = 0;
+  while (val > 1) {
+    val >>= 1;
+    ret++;
+  }
+  return ret;
+}
+
 TargetedSearcher::TargetedSearcher(KBlock *targetBB, CFGDistance &_distance)
     : states(std::make_unique<
-             DiscretePDF<ExecutionState *, ExecutionStateIDCompare>>()),
+             WeightedQueue<ExecutionState *, ExecutionStateIDCompare>>()),
       target(targetBB), cfgDistance(_distance),
       distanceToTargetFunction(
           cfgDistance.getBackwardDistance(target->parent)) {}
@@ -157,19 +171,18 @@ ExecutionState &TargetedSearcher::selectState() { return *states->choose(0); }
 bool TargetedSearcher::distanceInCallGraph(KFunction *kf, KBlock *kb,
                                            unsigned int &distance) {
   distance = UINT_MAX;
-  const std::map<KBlock *, unsigned> &dist = cfgDistance.getDistance(kb);
+  const std::unordered_map<KBlock *, unsigned> &dist = cfgDistance.getDistance(kb);
 
-  if (kf == target->parent && dist.find(target) != dist.end()) {
+  if (kf == target->parent && dist.count(target) != 0) {
     distance = 0;
     return true;
   }
 
   for (auto &kCallBlock : kf->kCallBlocks) {
-    if (dist.find(kCallBlock) != dist.end()) {
+    if (dist.count(kCallBlock) != 0) {
       KFunction *calledKFunction =
           kf->parent->functionMap[kCallBlock->calledFunction];
-      if (distanceToTargetFunction.find(calledKFunction) !=
-              distanceToTargetFunction.end() &&
+      if (distanceToTargetFunction.count(calledKFunction) != 0 &&
           distance > distanceToTargetFunction.at(calledKFunction) + 1) {
         distance = distanceToTargetFunction.at(calledKFunction) + 1;
       }
@@ -179,12 +192,12 @@ bool TargetedSearcher::distanceInCallGraph(KFunction *kf, KBlock *kb,
 }
 
 TargetedSearcher::WeightResult
-TargetedSearcher::tryGetLocalWeight(ExecutionState *es, double &weight,
+TargetedSearcher::tryGetLocalWeight(ExecutionState *es, weight_type &weight,
                                     const std::vector<KBlock *> &localTargets) {
   unsigned int intWeight = es->steppedMemoryInstructions;
   KFunction *currentKF = es->stack.back().kf;
   KBlock *currentKB = currentKF->blockMap[es->getPCBlock()];
-  const std::map<KBlock *, unsigned> &dist = cfgDistance.getDistance(currentKB);
+  const std::unordered_map<KBlock *, unsigned> &dist = cfgDistance.getDistance(currentKB);
   unsigned int localWeight = UINT_MAX;
   for (auto &end : localTargets) {
     if (dist.count(end) > 0) {
@@ -199,12 +212,12 @@ TargetedSearcher::tryGetLocalWeight(ExecutionState *es, double &weight,
     return Done;
 
   intWeight += localWeight;
-  weight = intWeight / 4294967296.0; // number on [0,1)-real-interval
+  weight = ulog2(intWeight); // number on [0,32)-discrete-interval
   return Continue;
 }
 
 TargetedSearcher::WeightResult
-TargetedSearcher::tryGetPreTargetWeight(ExecutionState *es, double &weight) {
+TargetedSearcher::tryGetPreTargetWeight(ExecutionState *es, weight_type &weight) {
   KFunction *currentKF = es->stack.back().kf;
   std::vector<KBlock *> localTargets;
   for (auto &kCallBlock : currentKF->kCallBlocks) {
@@ -219,12 +232,12 @@ TargetedSearcher::tryGetPreTargetWeight(ExecutionState *es, double &weight) {
     return Miss;
 
   WeightResult res = tryGetLocalWeight(es, weight, localTargets);
-  weight = 1.0 / 2.0 + weight / 2.0; // number on [0.5,1)-real-interval
+  weight = weight + 32; // number on [32,64)-discrete-interval
   return res == Done ? Continue : res;
 }
 
 TargetedSearcher::WeightResult
-TargetedSearcher::tryGetPostTargetWeight(ExecutionState *es, double &weight) {
+TargetedSearcher::tryGetPostTargetWeight(ExecutionState *es, weight_type &weight) {
   KFunction *currentKF = es->stack.back().kf;
   std::vector<KBlock *> &localTargets = currentKF->finalKBlocks;
 
@@ -232,22 +245,26 @@ TargetedSearcher::tryGetPostTargetWeight(ExecutionState *es, double &weight) {
     return Miss;
 
   WeightResult res = tryGetLocalWeight(es, weight, localTargets);
-  weight = 1.0 / 2.0 + weight / 2.0; // number on [0.5,1)-real-interval
+  weight = weight + 32; // number on [32,64)-discrete-interval
   return res == Done ? Continue : res;
 }
 
 TargetedSearcher::WeightResult
-TargetedSearcher::tryGetTargetWeight(ExecutionState *es, double &weight) {
+TargetedSearcher::tryGetTargetWeight(ExecutionState *es, weight_type &weight) {
   std::vector<KBlock *> localTargets = {target};
   WeightResult res = tryGetLocalWeight(es, weight, localTargets);
-  weight = weight / 2.0; // number on [0,0.5)-real-interval
   return res;
 }
 
 TargetedSearcher::WeightResult
-TargetedSearcher::tryGetWeight(ExecutionState *es, double &weight) {
+TargetedSearcher::tryGetWeight(ExecutionState *es, weight_type &weight) {
   BasicBlock *bb = es->getPCBlock();
   KBlock *kb = es->stack.back().kf->blockMap[bb];
+  KInstruction *ki = es->pc;
+  if (kb->numInstructions && kb->instructions[0] != ki &&
+      states->tryGetWeight(es, weight)) {
+    return Continue;
+  }
   unsigned int minCallWeight = UINT_MAX, minSfNum = UINT_MAX, sfNum = 0;
   for (auto sfi = es->stack.rbegin(), sfe = es->stack.rend(); sfi != sfe;
        sfi++) {
@@ -284,7 +301,8 @@ TargetedSearcher::tryGetWeight(ExecutionState *es, double &weight) {
 void TargetedSearcher::update(
     ExecutionState *current, const std::vector<ExecutionState *> &addedStates,
     const std::vector<ExecutionState *> &removedStates) {
-  double weight = 0;
+  weight_type weight = 0;
+
   // update current
   if (current && std::find(removedStates.begin(), removedStates.end(),
                            current) == removedStates.end()) {
@@ -367,43 +385,67 @@ void GuidedSearcher::update(
     const std::vector<ExecutionState *> &removedStates) {
   std::map<KBlock *, std::vector<ExecutionState *>> addedTStates;
   std::map<KBlock *, std::vector<ExecutionState *>> removedTStates;
-  std::vector<ExecutionState *> targetlessState;
-  std::vector<ExecutionState *> addedTargetlessState(addedStates.begin(),
-                                                     addedStates.end());
+  std::vector<ExecutionState *> targetlessStates;
+  std::vector<ExecutionState *> addedTargetlessStates(addedStates.begin(),
+                                                      addedStates.end());
+  std::vector<ExecutionState *> removedTargetlessStates(removedStates.begin(),
+                                                        removedStates.end());
+
   std::set<KBlock *> targets;
+
   for (const auto state : addedStates) {
     if (state->target) {
       targets.insert(state->target);
       addedTStates[state->target].push_back(state);
     } else {
-      targetlessState.push_back(state);
+      targetlessStates.push_back(state);
     }
   }
+
   for (const auto state : removedStates) {
     if (state->target) {
       targets.insert(state->target);
       removedTStates[state->target].push_back(state);
     }
   }
+
   KBlock *currTarget = current ? current->target : nullptr;
   if (currTarget) {
     targets.insert(currTarget);
   } else if (current && std::find(removedStates.begin(), removedStates.end(),
                                   current) == removedStates.end()) {
-    targetlessState.push_back(current);
+    targetlessStates.push_back(current);
   }
-  for (const auto state : targetlessState) {
+
+  if (!removedTargetlessStates.empty()) {
+    std::vector<ExecutionState *> alt = removedTargetlessStates;
+    for (const auto state : alt) {
+      auto it = pausedStates.find(state);
+      if (it != pausedStates.end()) {
+        pausedStates.erase(it);
+        removedTargetlessStates.erase(
+            std::remove(removedTargetlessStates.begin(),
+                        removedTargetlessStates.end(), state),
+            removedTargetlessStates.end());
+      }
+    }
+  }
+
+  for (const auto state : targetlessStates) {
     if (state->multilevel.count(state->getPCBlock()) > bound) {
       state->target = stateHistory.calculateTargetByBlockHistory(*state);
       if (state->target) {
         targets.insert(state->target);
         addedTStates[state->target].push_back(state);
       } else {
+        pausedStates.insert(state);
         if (std::find(addedStates.begin(), addedStates.end(), state) !=
             addedStates.end()) {
-          auto is = std::find(addedTargetlessState.begin(),
-                              addedTargetlessState.end(), state);
-          addedTargetlessState.erase(is);
+          auto is = std::find(addedTargetlessStates.begin(),
+                              addedTargetlessStates.end(), state);
+          addedTargetlessStates.erase(is);
+        } else {
+          removedTargetlessStates.push_back(state);
         }
       }
     }
@@ -419,7 +461,7 @@ void GuidedSearcher::update(
       targetedSearchers.erase(target);
   }
 
-  baseSearcher->update(current, addedTargetlessState, removedStates);
+  baseSearcher->update(current, addedTargetlessStates, removedTargetlessStates);
 }
 
 bool GuidedSearcher::empty() { return baseSearcher->empty(); }

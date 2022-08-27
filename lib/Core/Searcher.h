@@ -34,6 +34,7 @@ namespace llvm {
 namespace klee {
   class CFGDistance;
   template<class T, class Comparator> class DiscretePDF;
+  template<class T, class Comparator> class WeightedQueue;
   class ExecutionState;
   class Executor;
 
@@ -164,19 +165,21 @@ namespace klee {
     };
 
   private:
-    std::unique_ptr<DiscretePDF<ExecutionState *, ExecutionStateIDCompare>>
+    typedef unsigned weight_type;
+
+    std::unique_ptr<WeightedQueue<ExecutionState *, ExecutionStateIDCompare>>
         states;
     KBlock *target;
     CFGDistance &cfgDistance;
-    const std::map<KFunction *, unsigned int> &distanceToTargetFunction;
+    const std::unordered_map<KFunction *, unsigned int> &distanceToTargetFunction;
 
     bool distanceInCallGraph(KFunction *kf, KBlock *kb, unsigned int &distance);
-    WeightResult tryGetLocalWeight(ExecutionState *es, double &weight,
+    WeightResult tryGetLocalWeight(ExecutionState *es, weight_type &weight,
                                    const std::vector<KBlock *> &localTargets);
-    WeightResult tryGetPreTargetWeight(ExecutionState *es, double &weight);
-    WeightResult tryGetTargetWeight(ExecutionState *es, double &weight);
-    WeightResult tryGetPostTargetWeight(ExecutionState *es, double &weight);
-    WeightResult tryGetWeight(ExecutionState *es, double &weight);
+    WeightResult tryGetPreTargetWeight(ExecutionState *es, weight_type &weight);
+    WeightResult tryGetTargetWeight(ExecutionState *es, weight_type &weight);
+    WeightResult tryGetPostTargetWeight(ExecutionState *es, weight_type &weight);
+    WeightResult tryGetWeight(ExecutionState *es, weight_type &weight);
 
   public:
     ExecutionState *result = nullptr;
@@ -194,6 +197,7 @@ namespace klee {
 
   private:
     std::unique_ptr<Searcher> baseSearcher;
+    std::set<ExecutionState *, ExecutionStateIDCompare> pausedStates;
     std::map<KBlock *, std::unique_ptr<TargetedSearcher>> targetedSearchers;
     CFGDistance &cfgDistance;
     StateHistory &stateHistory;
