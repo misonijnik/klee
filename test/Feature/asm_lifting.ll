@@ -15,9 +15,14 @@ define i32 @unlifted_asm() nounwind {
 entry:
   %0 = alloca [47 x i8], align 16
   %1 = getelementptr inbounds [47 x i8], [47 x i8]* %0, i64 0, i64 0
-  ; Make sure memory barrier with function arguments is kept
-  %2 = call i8* asm sideeffect "", "=r,0,~{memory},~{dirflag},~{fpsr},~{flags}"(i8* nonnull %1)
-  ; CHECK: %2 = call i8* asm sideeffect "", "=r,0,~{memory},~{dirflag},~{fpsr},~{flags}"(i8* nonnull %1)
+  br label %2
+
+2:                                                ; preds = %entry
+  %3 = call i8* asm sideeffect "", "=r,0,~{memory},~{dirflag},~{fpsr},~{flags}"(i8* nonnull %1)
+  ; CHECK: %3 = call i8* asm sideeffect "", "=r,0,~{memory},~{dirflag},~{fpsr},~{flags}"(i8* nonnull %1)
+  br label %4
+
+4:                                                ; preds = %2
   ret i32 0
 }
 

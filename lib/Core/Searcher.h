@@ -197,16 +197,20 @@ namespace klee {
 
   private:
     std::unique_ptr<Searcher> baseSearcher;
-    std::set<ExecutionState *, ExecutionStateIDCompare> pausedStates;
     std::map<KBlock *, std::unique_ptr<TargetedSearcher>> targetedSearchers;
     CFGDistance &cfgDistance;
     StateHistory &stateHistory;
-    unsigned bound;
+    std::set<ExecutionState *, ExecutionStateIDCompare> &pausedStates;
+    std::size_t bound;
     unsigned index{1};
     void addTarget(KBlock *target);
 
   public:
-    GuidedSearcher(Searcher *baseSearcher, CFGDistance &cfgDistance, StateHistory &stateHistory, unsigned bound);
+    GuidedSearcher(
+        Searcher *baseSearcher, CFGDistance &cfgDistance,
+        StateHistory &stateHistory,
+        std::set<ExecutionState *, ExecutionStateIDCompare> &pausedStates,
+        std::size_t bound);
     ~GuidedSearcher() override = default;
     ExecutionState &selectState() override;
     void update(ExecutionState *current,

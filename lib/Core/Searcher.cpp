@@ -311,7 +311,6 @@ void TargetedSearcher::update(
       states->update(current, weight);
       break;
     case Done:
-      current->multilevel.clear();
       result = current;
       break;
     case Miss:
@@ -329,7 +328,6 @@ void TargetedSearcher::update(
       break;
     case Done:
       states->insert(state, weight);
-      state->multilevel.clear();
       result = state;
       break;
     case Miss:
@@ -359,11 +357,13 @@ void TargetedSearcher::printName(llvm::raw_ostream &os) {
   os << "TargetedSearcher";
 }
 
-GuidedSearcher::GuidedSearcher(Searcher *_baseSearcher,
-                               CFGDistance &cfgDistance,
-                               StateHistory &stateHistory, unsigned bound)
+GuidedSearcher::GuidedSearcher(
+    Searcher *_baseSearcher, CFGDistance &cfgDistance,
+    StateHistory &stateHistory,
+    std::set<ExecutionState *, ExecutionStateIDCompare> &pausedStates,
+    std::size_t bound)
     : baseSearcher(_baseSearcher), cfgDistance(cfgDistance),
-      stateHistory(stateHistory), bound(bound) {}
+      stateHistory(stateHistory), pausedStates(pausedStates), bound(bound) {}
 
 ExecutionState &GuidedSearcher::selectState() {
   unsigned size = targetedSearchers.size();
@@ -432,7 +432,9 @@ void GuidedSearcher::update(
   }
 
   for (const auto state : targetlessStates) {
-    if (state->multilevel.count(state->getPCBlock()) > bound) {
+    KInstruction *prevKI = state->prevPC;
+    if (prevKI->inst->isTerminator() &&
+        state->multilevel.count(state->getPCBlock()) > bound) {
       state->target = stateHistory.calculateTargetByBlockHistory(*state);
       if (state->target) {
         targets.insert(state->target);
