@@ -21,7 +21,6 @@ namespace klee {
 char CallSplitter::ID = 0;
 
 bool CallSplitter::runOnFunction(Function &F) {
-  bool changed = false;
   unsigned n = F.getBasicBlockList().size();
   BasicBlock **blocks = new BasicBlock *[n];
   unsigned i = 0;
@@ -40,23 +39,20 @@ bool CallSplitter::runOnFunction(Function &F) {
         Instruction *callInst = &*it++;
         Instruction *afterCallInst = &*it;
         if (callInst != firstInst) {
-          fbb = llvm::SplitBlock(fbb, callInst);
-          changed = true;
+          fbb = fbb->splitBasicBlock(callInst);
         }
         if (afterCallInst->isTerminator() && !isa<InvokeInst>(afterCallInst) &&
             !isa<ReturnInst>(afterCallInst)) {
           break;
         }
-        fbb = llvm::SplitBlock(fbb, afterCallInst);
-        changed = true;
+        fbb = fbb->splitBasicBlock(afterCallInst);
         it = fbb->begin();
         ie = fbb->end();
         firstInst = &*it;
       } else if (isa<InvokeInst>(it)) {
         Instruction *invokeInst = &*it++;
         if (invokeInst != firstInst) {
-          fbb = llvm::SplitBlock(fbb, invokeInst);
-          changed = true;
+          fbb = fbb->splitBasicBlock(invokeInst);
         }
       } else {
         it++;
@@ -66,6 +62,6 @@ bool CallSplitter::runOnFunction(Function &F) {
 
   delete[] blocks;
 
-  return changed;
+  return false;
 }
 } // namespace klee

@@ -3639,17 +3639,6 @@ void Executor::executeStep(ExecutionState &state) {
   }
 }
 
-bool Executor::tryBoundedExecuteStep(ExecutionState &state, unsigned bound) {
-  KInstruction *prevKI = state.prevPC;
-
-  if (prevKI->inst->isTerminator()) {
-    stateHistory->updateHistory(state);
-  }
-
-  executeStep(state);
-  return true;
-}
-
 void Executor::targetedRun(ExecutionState &initialState, KBlock *target) {
   // Delay init till now so that ticks don't accrue during optimization and
   // such.
@@ -3714,7 +3703,7 @@ void Executor::guidedRun(ExecutionState &initialState) {
 
   searcher =
       new GuidedSearcher(constructUserSearcher(*this), *cfgDistance.get(),
-                         *stateHistory, MaxCycles - 1);
+                         *stateHistory, pausedStates, MaxCycles - 1);
 
   std::vector<ExecutionState *> newStates(states.begin(), states.end());
   searcher->update(0, newStates, std::vector<ExecutionState *>());
@@ -3722,10 +3711,13 @@ void Executor::guidedRun(ExecutionState &initialState) {
   while (!states.empty() && !haltExecution) {
     while (!searcher->empty() && !haltExecution) {
       ExecutionState &state = searcher->selectState();
-      if (state.target)
-        executeStep(state);
-      else if (!tryBoundedExecuteStep(state, MaxCycles - 1)) {
+      KInstruction *prevKI = state.prevPC;
+
+      if (prevKI->inst->isTerminator()) {
+        stateHistory->updateHistory(state);
       }
+
+      executeStep(state);
     }
 
     if (searcher->empty())

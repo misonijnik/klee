@@ -603,7 +603,6 @@ public:
   const Array *makeArray(ExecutionState &state, const uint64_t size,
                          const std::string &name);
   void executeStep(ExecutionState &state);
-  bool tryBoundedExecuteStep(ExecutionState &state, unsigned bound);
 };
   
 } // End klee namespace
