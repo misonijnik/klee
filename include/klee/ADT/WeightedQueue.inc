@@ -94,7 +94,7 @@ WeightedQueue<T, Comparator>::maxWeight() {
   if (weightToQueue.empty()) {
     return 0;
   }
-  return weightToQueue.end()->first;
+  return (--weightToQueue.end())->first;
 }
 
 } // namespace klee
