@@ -37,7 +37,7 @@ namespace klee {
 
   private:
     std::map<weight_type, std::deque<T>> weightToQueue;
-    std::map<T, weight_type, Comparator> valueToWeight;
+    std::unordered_map<T, weight_type> valueToWeight;
   };
 
 }
