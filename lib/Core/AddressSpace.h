@@ -104,24 +104,6 @@ namespace klee {
                  unsigned maxResolutions = 0,
                  time::Span timeout = time::Span()) const;
 
-    /// Resolve as above, but only to MakeSymbolic and LazyInstantiated
-    /// variables
-    bool fastResolveOne(ExecutionState &state, TimingSolver *solver,
-                        ref<Expr> address, ObjectPair &result, bool &success,
-                        unsigned timestamp = UINT_MAX) const;
-    bool fastResolve(ExecutionState &state, TimingSolver *solver, ref<Expr> p,
-                     ResolutionList &rl, unsigned maxResolutions = 0,
-                     time::Span timeout = time::Span(),
-                     unsigned timestamp = UINT_MAX) const;
-
-    bool resolveOneOlder(ExecutionState &state, TimingSolver *solver,
-                         ref<Expr> address, ObjectPair &result, bool &success,
-                         unsigned timestamp = UINT_MAX) const;
-    bool resolveOlder(ExecutionState &state, TimingSolver *solver, ref<Expr> p,
-                      ResolutionList &rl, unsigned maxResolutions = 0,
-                      time::Span timeout = time::Span(),
-                      unsigned timestamp = UINT_MAX) const;
-
     /***/
 
     /// Add a binding to the address space.

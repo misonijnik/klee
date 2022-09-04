@@ -18,6 +18,24 @@
 
 #include "CoreStats.h"
 
+namespace klee {
+llvm::cl::OptionCategory
+    PointerResolvingCat("Pointer resolving options",
+                        "These options impact pointer resolving.");
+
+llvm::cl::opt<bool> SkipNotSymbolicObjects(
+    "skip-not-symbolic-objects", llvm::cl::init(false),
+    llvm::cl::desc("Set pointers only on symbolic objects, "
+                   "use only with timestamps (default=false)"),
+    llvm::cl::cat(PointerResolvingCat));
+
+llvm::cl::opt<bool> UseTimestamps(
+    "use-timestamps", llvm::cl::init(true),
+    llvm::cl::desc("Set symbolic pointers only to objects created before those "
+                   "pointers were created (default=true)"),
+    llvm::cl::cat(PointerResolvingCat));
+} // namespace klee
+
 using namespace klee;
 
 ///
@@ -197,26 +215,25 @@ bool AddressSpace::resolveOne(ExecutionState &state, TimingSolver *solver,
                               bool &success) const {
   std::function<bool(const MemoryObject *)> predicate(
       [](const MemoryObject *mo) { return true; });
-  return resolveOne(state, solver, address, result, predicate, success);
-}
+  if (UseTimestamps) {
+    ref<Expr> base = state.isGEPExpr(address) ? state.gepExprBases[address].first : address;
+    unsigned timestamp = UINT_MAX;
+    if (!isa<ConstantExpr>(address)) {
+      std::pair<ref<const MemoryObject>, ref<Expr>> moBasePair;
+      if (state.getBase(base, moBasePair)) {
+        timestamp = moBasePair.first->timestamp;
+      }
+    }
+    predicate = [timestamp, predicate](const MemoryObject *mo) {
+      return predicate(mo) && mo->timestamp <= timestamp;
+    };
+  }
+  if (SkipNotSymbolicObjects) {
+    predicate = [&state, predicate](const MemoryObject *mo) {
+      return predicate(mo) && state.inSymbolics(mo);
+    };
+  }
 
-bool AddressSpace::fastResolveOne(ExecutionState &state, TimingSolver *solver,
-                                  ref<Expr> address, ObjectPair &result,
-                                  bool &success, unsigned timestamp) const {
-  std::function<bool(const MemoryObject *)> predicate =
-      [&state, timestamp](const MemoryObject *mo) {
-        return mo && state.inSymbolics(mo) && mo->timestamp <= timestamp;
-      };
-  return resolveOne(state, solver, address, result, predicate, success);
-}
-
-bool AddressSpace::resolveOneOlder(ExecutionState &state, TimingSolver *solver,
-                                   ref<Expr> address, ObjectPair &result,
-                                   bool &success, unsigned timestamp) const {
-  std::function<bool(const MemoryObject *)> predicate =
-      [timestamp](const MemoryObject *mo) {
-        return mo->timestamp <= timestamp;
-      };
   return resolveOne(state, solver, address, result, predicate, success);
 }
 
@@ -372,30 +389,26 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
                            unsigned maxResolutions, time::Span timeout) const {
   std::function<bool(const MemoryObject *)> predicate(
       [](const MemoryObject *mo) { return true; });
-  return resolve(state, solver, p, rl, predicate, maxResolutions, timeout);
-}
+  if (UseTimestamps) {
+    ref<Expr> base = state.isGEPExpr(p) ? state.gepExprBases[p].first : p;
+    unsigned timestamp = UINT_MAX;
+    if (!isa<ConstantExpr>(p)) {
+      std::pair<ref<const MemoryObject>, ref<Expr>> moBasePair;
+      if (state.getBase(base, moBasePair)) {
+        timestamp = moBasePair.first->timestamp;
+      }
+    }
+    predicate = [timestamp, predicate](const MemoryObject *mo) {
+      return predicate(mo) && mo->timestamp <= timestamp;
+    };
+  }
+  if (SkipNotSymbolicObjects) {
+    predicate = [&state, predicate](const MemoryObject *mo) {
+      return predicate(mo) && state.inSymbolics(mo);
+    };
+  }
 
-bool AddressSpace::fastResolve(ExecutionState &state, TimingSolver *solver,
-                               ref<Expr> p, ResolutionList &rl,
-                               unsigned maxResolutions, time::Span timeout,
-                               unsigned timestamp) const {
-  std::function<bool(const MemoryObject *)> predicate =
-      [&state, timestamp](const MemoryObject *mo) {
-        return mo && state.inSymbolics(mo) && mo->timestamp <= timestamp;
-      };
   return resolve(state, solver, p, rl, predicate, maxResolutions, timeout);
-}
-
-bool AddressSpace::resolveOlder(ExecutionState &state, TimingSolver *solver,
-                                ref<Expr> p, ResolutionList &rl,
-                                unsigned maxResolutions, time::Span timeout,
-                                unsigned timestamp) const {
-  std::function<bool(const MemoryObject *)> predicate =
-      [timestamp](const MemoryObject *mo) {
-        return mo->timestamp <= timestamp;
-      };
-  return resolve(state, solver, p, rl, predicate, maxResolutions,
-                               timeout);
 }
 
 // These two are pretty big hack so we can sort of pass memory back

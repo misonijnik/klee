@@ -158,18 +158,6 @@ cl::opt<bool> EmitAllErrors(
              "(default=false, i.e. one per (error,instruction) pair)"),
     cl::cat(TestGenCat));
 
-cl::opt<bool> SkipNotSymbolicObjects(
-    "skip-not-symbolic-objects", cl::init(false),
-    cl::desc("Set pointers only on symbolic objects, "
-             "use only with timestamps (default=false)"),
-    cl::cat(TestGenCat));
-
-cl::opt<bool> UseTimestamps(
-    "use-timestamps", cl::init(true),
-    cl::desc("Set symbolic pointers only to objects created before those "
-             "pointers were created (default=true)"),
-    cl::cat(TestGenCat));
-
 /* Constraint solving options */
 
 cl::opt<unsigned> MaxSymArraySize(
@@ -4407,31 +4395,11 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   } else {
     solver->setTimeout(coreSolverTimeout);
 
-    if (UseTimestamps) {
-      unsigned timestamp = UINT_MAX;
-      if (!isa<ConstantExpr>(address)) {
-        std::pair<ref<const MemoryObject>, ref<Expr>> moBasePair;
-        if (state.getBase(base, moBasePair)) {
-          timestamp = moBasePair.first->timestamp;
-        }
-      }
-      if (SkipNotSymbolicObjects) {
-        if (!state.addressSpace.fastResolveOne(state, solver, address, op, success, timestamp)) {
-          address = toConstant(state, address, "resolveOne failure");
-          success = state.addressSpace.resolveOne(cast<ConstantExpr>(address), op);
-        }
-      } else {
-        if (!state.addressSpace.resolveOneOlder(state, solver, address, op, success, timestamp)) {
-          address = toConstant(state, address, "resolveOne failure");
-          success = state.addressSpace.resolveOne(cast<ConstantExpr>(address), op);
-        }
-      }
-    } else {
-      if (!state.addressSpace.resolveOne(state, solver, address, op, success)) {
-        address = toConstant(state, address, "resolveOne failure");
-        success = state.addressSpace.resolveOne(cast<ConstantExpr>(address), op);
-      }
+    if (!state.addressSpace.resolveOne(state, solver, address, op, success)) {
+      address = toConstant(state, address, "resolveOne failure");
+      success = state.addressSpace.resolveOne(cast<ConstantExpr>(address), op);
     }
+
     solver->setTimeout(time::Span());
   }
 
@@ -4491,27 +4459,9 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   address = optimizer.optimizeExpr(address, true);
   ResolutionList rl;  
   solver->setTimeout(coreSolverTimeout);
-  bool incomplete;
 
-  if (UseTimestamps) {
-    unsigned timestamp = UINT_MAX;
-    if (!isa<ConstantExpr>(address)) {
-      std::pair<ref<const MemoryObject>, ref<Expr>> moBasePair;
-      if (state.getBase(base, moBasePair)) {
-        timestamp = moBasePair.first->timestamp;
-      }
-    }
-    if (SkipNotSymbolicObjects) {
-      incomplete = state.addressSpace.fastResolve(state, solver, base, rl, 0,
-                                                  coreSolverTimeout, timestamp);
-    } else {
-      incomplete = state.addressSpace.resolveOlder(
-          state, solver, base, rl, 0, coreSolverTimeout, timestamp);
-    }
-  } else {
-    incomplete = state.addressSpace.resolve(state, solver, base, rl, 0,
-                                            coreSolverTimeout);
-  }
+  bool incomplete =
+      state.addressSpace.resolve(state, solver, address, rl, 0, coreSolverTimeout);
 
   solver->setTimeout(time::Span());
   
