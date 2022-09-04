@@ -84,10 +84,12 @@ bool AddressSpace::resolveOne(ExecutionState &state, TimingSolver *solver,
   } else {
     TimerStatIncrementer timer(stats::resolveTime);
 
+    ref<Expr> base =
+        state.isGEPExpr(address) ? state.gepExprBases[address].first : address;
     MemoryObject *symHack = nullptr;
     for (auto &moa : state.symbolics) {
       if (moa.first->isLazyInitialized() &&
-          moa.first->getLazyInitializationSource() == address) {
+          moa.first->getLazyInitializationSource() == base) {
         symHack = const_cast<MemoryObject *>(moa.first.get());
         break;
       }
@@ -266,10 +268,12 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
   } else {
     TimerStatIncrementer timer(stats::resolveTime);
 
+    ref<Expr> base =
+        state.isGEPExpr(p) ? state.gepExprBases[p].first : p;
     MemoryObject *symHack = nullptr;
     for (auto &moa : state.symbolics) {
       if (moa.first->isLazyInitialized() &&
-          moa.first->getLazyInitializationSource() == p) {
+          moa.first->getLazyInitializationSource() == base) {
         symHack = const_cast<MemoryObject *>(moa.first.get());
         break;
       }

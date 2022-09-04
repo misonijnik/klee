@@ -4549,33 +4549,25 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     }
 
     unbound = branches.second;
-    if (!unbound) {
-      break;
-    }
 
-    if (unbound->isGEPExpr(address)) {
-      ref<Expr> baseInBounds = mo->getBoundsCheckPointer(base, size);
-      StatePair branches = fork(*unbound, baseInBounds, true, BranchType::MemOp);
-      ExecutionState *bound = branches.first;
-      if (bound) {
-        terminateStateOnError(*bound, "memory error: out of bound pointer",
-                      StateTerminationType::Ptr,
-                      getAddressInfo(*bound, address));
+    if (unbound && isReadFromSymbolicArray(base)) {
+      if (base == mo->getBaseExpr()) {
+        terminateStateOnError(*unbound, "memory error: out of bound pointer",
+                              StateTerminationType::Ptr,
+                              getAddressInfo(*unbound, address));
+        unbound = nullptr;
+      } else {
+        ref<Expr> baseInObject = mo->getBoundsCheckPointer(base, 1);
+        branches = fork(*unbound, baseInObject, true, BranchType::MemOp);
+        bound = branches.first;
+        if (bound) {
+          // the resolved object size was unsuitable, base cannot resolve to this object
+          terminateStateEarly(*bound, "", StateTerminationType::SilentExit);
+        }
+        unbound = branches.second;
       }
-      unbound = branches.second;
-    }
-    if (!unbound) {
-      break;
     }
 
-    ref<Expr> baseInObject = mo->getBoundsCheckPointer(base, 1);
-    branches = fork(*unbound, baseInObject, true, BranchType::MemOp);
-    bound = branches.first;
-    if (bound) {
-      // the resolved object size was unsuitable, base cannot resolve to this object
-      terminateStateEarly(*bound, "", StateTerminationType::SilentExit);
-    }
-    unbound = branches.second;
     if (!unbound) {
       break;
     }
@@ -4596,17 +4588,9 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   if (unbound) {
     if (incomplete) {
       terminateStateOnSolverError(*unbound, "Query timed out (resolve).");
-    } else if (LazyInitialization &&
+    } else if (LazyInitialization && isReadFromSymbolicArray(base) &&
                (isa<ReadExpr>(address) || isa<ConcatExpr>(address) ||
                 state.isGEPExpr(address))) {
-
-      if (!isReadFromSymbolicArray(base)) {
-        terminateStateEarly(
-            *unbound, "initialization source should be read from symbolic array",
-            StateTerminationType::Execution);
-        return;
-      }
-
       ObjectPair p = lazyInitializeVariable(*unbound, base, target, size);
       assert(p.first && p.second);
 
