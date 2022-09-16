@@ -16,6 +16,7 @@
 
 #include "klee/ADT/ImmutableSet.h"
 #include "klee/ADT/TreeStream.h"
+#include "klee/Expr/Assignment.h"
 #include "klee/Expr/Constraints.h"
 #include "klee/Expr/Expr.h"
 #include "klee/Expr/ExprHashMap.h"
@@ -201,6 +202,9 @@ public:
   /// @brief Constraints collected so far
   ConstraintSet constraints;
 
+  std::set<std::pair<const MemoryObject *, ref<ObjectState>>>
+      unaddressableSymbolics;
+
   /// Statistics and information
 
   /// @brief Metadata utilized and collected by solvers for this state
@@ -235,6 +239,9 @@ public:
 
   /// @brief Set of used array names for this state.  Used to avoid collisions.
   std::set<std::string> arrayNames;
+
+  /// @brief Symcrete concretisations for this state
+  Assignment symcretes;
 
   /// @brief The objects handling the klee_open_merge calls this state ran through
   std::vector<ref<MergeHandler>> openMergeStack;
@@ -305,6 +312,13 @@ public:
 
   void removePointerResolutions(const MemoryObject *mo);
   void addPointerResolution(ref<Expr> address, ref<Expr> base, const MemoryObject *mo);
+
+  bool isSymcrete(const Array *array);
+
+  void addSymcrete(const Array *array,
+                   const std::vector<unsigned char> &concretisation);
+
+  ref<Expr> evaluateWithSymcretes(ref<Expr> e);
 
   void addConstraint(ref<Expr> e);
   void addCexPreference(const ref<Expr> &cond);

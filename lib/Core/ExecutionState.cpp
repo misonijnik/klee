@@ -109,6 +109,7 @@ ExecutionState::ExecutionState(const ExecutionState& state):
     resolvedPointers(state.resolvedPointers),
     cexPreferences(state.cexPreferences),
     arrayNames(state.arrayNames),
+    symcretes(state.symcretes),
     openMergeStack(state.openMergeStack),
     steppedInstructions(state.steppedInstructions),
     steppedMemoryInstructions(state.steppedMemoryInstructions),
@@ -250,6 +251,24 @@ void ExecutionState::addPointerResolution(ref<Expr> address, ref<Expr> base,
   if (base != address && !isa<ConstantExpr>(base)) {
     resolvedPointers[base] = std::make_pair(mo, mo->getOffsetExpr(base));
   }
+}
+
+bool ExecutionState::isSymcrete(const Array *array) {
+  return symcretes.bindings.count(array);
+}
+
+void ExecutionState::addSymcrete(
+    const Array *array, const std::vector<unsigned char> &concretisation) {
+  assert(array && array->isSymbolicArray() &&
+         "Cannot make concrete array symcrete");
+  assert(array->size == concretisation.size() &&
+         "Given concretisation does not fit the array");
+  assert(!isSymcrete(array) && "Array already symcrete");
+  symcretes.bindings[array] = concretisation;
+}
+
+ref<Expr> ExecutionState::evaluateWithSymcretes(ref<Expr> e) {
+  return symcretes.evaluate(e);
 }
 
 /**/
