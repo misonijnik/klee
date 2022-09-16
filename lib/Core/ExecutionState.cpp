@@ -132,6 +132,7 @@ ExecutionState::ExecutionState(const ExecutionState& state):
     symbolics(state.symbolics),
     cexPreferences(state.cexPreferences),
     arrayNames(state.arrayNames),
+    symcretes(state.symcretes),
     openMergeStack(state.openMergeStack),
     steppedInstructions(state.steppedInstructions),
     steppedMemoryInstructions(state.steppedMemoryInstructions),
@@ -203,6 +204,24 @@ void ExecutionState::popFrame() {
 
 void ExecutionState::addSymbolic(const MemoryObject *mo, const Array *array) {
   symbolics.emplace_back(ref<const MemoryObject>(mo), array);
+}
+
+bool ExecutionState::isSymcrete(const Array *array) {
+  return symcretes.bindings.count(array);
+}
+
+void ExecutionState::addSymcrete(
+    const Array *array, const std::vector<unsigned char> &concretisation) {
+  assert(array && array->isSymbolicArray() &&
+         "Cannot make concrete array symcrete");
+  assert(array->size == concretisation.size() &&
+         "Given concretisation does not fit the array");
+  assert(!isSymcrete(array) && "Array already symcrete");
+  symcretes.bindings[array] = concretisation;
+}
+
+ref<Expr> ExecutionState::evaluateWithSymcretes(ref<Expr> e) {
+  return symcretes.evaluate(e);
 }
 
 /**/
