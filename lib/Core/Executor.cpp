@@ -4945,6 +4945,11 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     const ObjectState *os = i->second;
 
     ref<Expr> inBounds = mo->getBoundsCheckPointer(address, bytes);
+    if (UseGEPExpr && isGEPExpr(address)) {
+      inBounds = AndExpr::create(inBounds, mo->getBoundsCheckPointer(base, 1));
+      inBounds =
+          AndExpr::create(inBounds, mo->getBoundsCheckPointer(base, size));
+    }
 
     StatePair branches = fork(*unbound, inBounds, true, BranchType::MemOp);
     ExecutionState *bound = branches.first;
@@ -4993,6 +4998,10 @@ void Executor::executeMemoryOperation(ExecutionState &state,
         unbound = nullptr;
       } else {
         ref<Expr> baseInObject = mo->getBoundsCheckPointer(base, 1);
+        if (UseGEPExpr && isGEPExpr(address)) {
+          baseInObject = OrExpr::create(baseInObject,
+                                        mo->getBoundsCheckPointer(base, size));
+        }
         branches = fork(*unbound, baseInObject, true, BranchType::MemOp);
         bound = branches.first;
         if (bound) {
@@ -5007,7 +5016,6 @@ void Executor::executeMemoryOperation(ExecutionState &state,
       break;
     }
   }
-
 
   if (unbound) {
     StatePair branches =
@@ -5028,7 +5036,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
                (isa<ReadExpr>(address) || isa<ConcatExpr>(address) ||
                 (UseGEPExpr && isGEPExpr(address)))) {
       ObjectPair p =
-          lazyInstantiateVariable(*unbound, base, target, targetType, size);
+          lazyInstantiateVariable(*unbound, base, target, baseTargetType, size);
       assert(p.first && p.second);
 
       const MemoryObject *mo = p.first;
