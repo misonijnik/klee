@@ -185,6 +185,8 @@ void CXXTypeManager::onFinishInitModule() {
 static ref<Expr> getComplexPointerRestrictions(
     ref<Expr> object,
     const std::vector<std::pair<size_t, KType *>> &offsetsToTypes) {
+  ConstraintSet restrictions;
+  ConstraintManager cm(restrictions);
   ref<Expr> resultCondition;
   for (auto &offsetToTypePair : offsetsToTypes) {
     size_t offset = offsetToTypePair.first;
@@ -199,11 +201,14 @@ static ref<Expr> getComplexPointerRestrictions(
       continue;
     }
 
+    cm.addConstraint(innerAlignmentRequirement);
+  }
+
+  for (auto restriction : restrictions) {
     if (resultCondition.isNull()) {
-      resultCondition = innerAlignmentRequirement;
+      resultCondition = restriction;
     } else {
-      resultCondition =
-          AndExpr::create(resultCondition, innerAlignmentRequirement);
+      resultCondition = AndExpr::create(resultCondition, restriction);
     }
   }
   return resultCondition;
