@@ -196,6 +196,9 @@ public:
   /// @brief Constraints collected so far
   ConstraintSet constraints;
 
+  /// @brief Cached constraint, evaluated with symcretes 
+  ConstraintSet constraintsWithSymcretes;
+
   std::set<std::pair<const MemoryObject *, ref<ObjectState>>>
       unaddressableSymbolics;
 
@@ -232,7 +235,7 @@ public:
   std::set<std::string> arrayNames;
 
   /// @brief Symcrete concretisations for this state
-  Assignment symcretes;
+  mutable Assignment symcretes = Assignment(true);
 
   /// @brief The objects handling the klee_open_merge calls this state ran through
   std::vector<ref<MergeHandler>> openMergeStack;
@@ -301,9 +304,10 @@ public:
   bool isSymcrete(const Array *array);
 
   void addSymcrete(const Array *array,
-                   const std::vector<unsigned char> &concretisation);
+                   const std::vector<unsigned char> &concretisation, uint64_t value);
 
-  ref<Expr> evaluateWithSymcretes(ref<Expr> e);
+  ref<Expr> evaluateWithSymcretes(ref<Expr> e) const;
+  ConstraintSet evaluateConstraintsWithSymcretes() const;
 
   void addConstraint(ref<Expr> e);
   void addCexPreference(const ref<Expr> &cond);

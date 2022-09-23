@@ -336,7 +336,7 @@ SpecialFunctionHandler::readStringAtAddress(ExecutionState &state,
   const MemoryObject *mo = op.first;
   const ObjectState *os = op.second;
 
-  auto relativeOffset = mo->getOffsetExpr(address);
+  auto relativeOffset = state.evaluateWithSymcretes(mo->getOffsetExpr(address));
   // the relativeOffset must be concrete as the address is concrete
   size_t offset = cast<ConstantExpr>(relativeOffset)->getZExtValue();
 
@@ -590,7 +590,8 @@ void SpecialFunctionHandler::handleAssume(ExecutionState &state,
   
   bool res;
   bool success __attribute__((unused)) = executor.solver->mustBeFalse(
-      state.constraints, e, res, state.queryMetaData);
+      state.evaluateConstraintsWithSymcretes(), state.evaluateWithSymcretes(e),
+      res, state.queryMetaData);
   assert(success && "FIXME: Unhandled solver failure");
   if (res) {
     if (SilentKleeAssume) {
@@ -697,12 +698,14 @@ void SpecialFunctionHandler::handlePrintRange(ExecutionState &state,
     // FIXME: Pull into a unique value method?
     ref<ConstantExpr> value;
     bool success __attribute__((unused)) = executor.solver->getValue(
-        state.constraints, arguments[1], value, state.queryMetaData);
+        state.evaluateConstraintsWithSymcretes(),
+        state.evaluateWithSymcretes(arguments[1]), value, state.queryMetaData);
     assert(success && "FIXME: Unhandled solver failure");
     bool res;
-    success = executor.solver->mustBeTrue(state.constraints,
-                                          EqExpr::create(arguments[1], value),
-                                          res, state.queryMetaData);
+    success = executor.solver->mustBeTrue(
+        state.evaluateConstraintsWithSymcretes(),
+        state.evaluateWithSymcretes(EqExpr::create(arguments[1], value)), res,
+        state.queryMetaData);
     assert(success && "FIXME: Unhandled solver failure");
     if (res) {
       llvm::errs() << " == " << value;
@@ -824,7 +827,6 @@ void SpecialFunctionHandler::handleRealloc(ExecutionState &state,
       executor.resolveExact(*zeroPointer.second, address,
                             executor.typeSystemManager->getUnknownType(), rl,
                             "realloc");
-
       for (Executor::ExactResolutionList::iterator it = rl.begin(), 
              ie = rl.end(); it != ie; ++it) {
         executor.executeAlloc(*it->second, size, false, target,
@@ -867,9 +869,9 @@ void SpecialFunctionHandler::handleCheckMemoryAccess(ExecutionState &state,
                                      StateTerminationType::Ptr,
                                      executor.getAddressInfo(state, address));
     } else {
-      ref<Expr> chk = 
-        op.first->getBoundsCheckPointer(address, 
-                                        cast<ConstantExpr>(size)->getZExtValue());
+      ref<Expr> chk =
+          state.evaluateWithSymcretes(op.first->getBoundsCheckPointer(
+              address, cast<ConstantExpr>(size)->getZExtValue()));
       if (!chk->isTrue()) {
         executor.terminateStateOnError(state,
                                        "check_memory_access: memory error",
@@ -889,6 +891,15 @@ void SpecialFunctionHandler::handleGetValue(ExecutionState &state,
   executor.executeGetValue(state, arguments[0], target);
 }
 
+
+// TODO: REMOVE THIS
+static std::vector<unsigned char> addressToBytes(uint64_t value) {
+  unsigned char *addressBytesIterator =
+      reinterpret_cast<unsigned char *>(&value);
+  return std::vector<unsigned char>(addressBytesIterator,
+                                    addressBytesIterator + sizeof(value));
+}
+
 void SpecialFunctionHandler::handleDefineFixedObject(ExecutionState &state,
                                                      KInstruction *target,
                                                      std::vector<ref<Expr> > &arguments) {
@@ -904,6 +915,7 @@ void SpecialFunctionHandler::handleDefineFixedObject(ExecutionState &state,
   MemoryObject *mo = executor.memory->allocateFixed(address, size, state.prevPC->inst);
   executor.bindObjectInState(
       state, mo, executor.typeSystemManager->getUnknownType(), false);
+  
   mo->isUserSpecified = true; // XXX hack;
 }
 
@@ -946,9 +958,9 @@ void SpecialFunctionHandler::handleMakeSymbolic(ExecutionState &state,
     // FIXME: Type coercion should be done consistently somewhere.
     bool res;
     bool success __attribute__((unused)) = executor.solver->mustBeTrue(
-        s->constraints,
+        s->evaluateConstraintsWithSymcretes(),
         EqExpr::create(
-            ZExtExpr::create(arguments[1], Context::get().getPointerWidth()),
+            s->evaluateWithSymcretes(ZExtExpr::create(arguments[1], Context::get().getPointerWidth())),
             mo->getSizeExpr()),
         res, s->queryMetaData);
     assert(success && "FIXME: Unhandled solver failure");
@@ -960,6 +972,7 @@ void SpecialFunctionHandler::handleMakeSymbolic(ExecutionState &state,
       executor.terminateStateOnUserError(*s, "Wrong size given to klee_make_symbolic");
     }
   }
+
 }
 
 void SpecialFunctionHandler::handleMarkGlobal(ExecutionState &state,
