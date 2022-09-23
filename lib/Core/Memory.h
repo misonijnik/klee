@@ -11,9 +11,11 @@
 #define KLEE_MEMORY_H
 
 #include "Context.h"
+#include "MemoryManager.h"
 #include "TimingSolver.h"
 
 #include "klee/Expr/Expr.h"
+#include "klee/Expr/ArrayCache.h"
 
 #include "llvm/ADT/StringExtras.h"
 
@@ -48,8 +50,14 @@ private:
 public:
   unsigned id;
   unsigned timestamp;
+  
+  /// "Physical" memory address
   uint64_t address;
-  ref<Expr> lazyInitializationSource;
+
+  /// "Virtual" memory address 
+  const Array *concreteAddress = nullptr;
+
+  ref<Expr> lazyInstantiatedSource;
 
   /// size in bytes
   unsigned size;
@@ -109,6 +117,12 @@ public:
     } else {
       timestamp = time++;
     }
+    assert(parent);
+    /// FIXME: temporary solution
+    static int addressCounter = 0;
+
+    concreteAddress = parent->getArrayCache()->CreateArray(
+        name + std::to_string(addressCounter++), Context::get().getPointerWidth() / CHAR_BIT);
   }
 
   ~MemoryObject();
@@ -131,12 +145,20 @@ public:
     return ConstantExpr::create(address, Context::get().getPointerWidth());
   }
   ref<Expr> getBaseExpr() const {
-    if (!lazyInitializationSource) {
+    return isLazyInstantiated()
+               ? Expr::createTempRead(concreteAddress,
+                                      Context::get().getPointerWidth())
+               : ref<Expr>(cast<Expr>(getBaseConstantExpr()));
+  }
+
+  ref<Expr> getSourceExpr() const {
+    if (lazyInstantiatedSource.isNull())
       return getBaseConstantExpr();
     } else {
       return lazyInitializationSource;
     }
   }
+
   ref<ConstantExpr> getSizeExpr() const { 
     return ConstantExpr::create(size, Context::get().getPointerWidth());
   }

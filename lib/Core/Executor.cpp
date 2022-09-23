@@ -445,6 +445,13 @@ cl::opt<bool> DebugCheckForImpliedValues(
 extern "C" unsigned dumpStates, dumpPTree;
 unsigned dumpStates = 0, dumpPTree = 0;
 
+static std::vector<unsigned char> addressToBytes(uint64_t value) {
+  unsigned char *addressBytesIterator =
+      reinterpret_cast<unsigned char *>(&value);
+  return std::vector<unsigned char>(addressBytesIterator,
+                                    addressBytesIterator + sizeof(value));
+}
+
 Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
                    InterpreterHandler *ih)
     : Interpreter(opts), interpreterHandler(ih), searcher(0),
@@ -685,6 +692,8 @@ void Executor::allocateGlobalObjects(ExecutionState &state) {
       // its address can be used for function pointers.
       // TODO: Check whether the object is accessed?
       auto mo = memory->allocate(8, false, true, &f, 8);
+      assert(mo);
+
       addr = Expr::createPointer(mo->address);
       legalFunctions.emplace(mo->address, &f);
     }
@@ -767,8 +776,9 @@ void Executor::allocateGlobalObjects(ExecutionState &state) {
                                         /*alignment=*/globalObjectAlignment);
     if (!mo)
       klee_error("out of memory");
+    
     globalObjects.emplace(&v, mo);
-    globalAddresses.emplace(&v, mo->getBaseExpr());
+    globalAddresses.emplace(&v, mo->getBaseConstantExpr());
   }
 }
 
@@ -963,7 +973,8 @@ void Executor::branch(ExecutionState &state,
 
 ref<Expr> Executor::maxStaticPctChecks(ExecutionState &current,
                                        ref<Expr> condition) {
-  if (isa<klee::ConstantExpr>(condition))
+  ref<Expr> conditionWithSymcretes = current.evaluateWithSymcretes(condition);
+  if (isa<klee::ConstantExpr>(conditionWithSymcretes))
     return condition;
 
   if (MaxStaticForkPct == 1. && MaxStaticSolvePct == 1. &&
@@ -1000,8 +1011,9 @@ ref<Expr> Executor::maxStaticPctChecks(ExecutionState &current,
   if (reached_max_fork_limit || reached_max_cp_fork_limit ||
       reached_max_solver_limit || reached_max_cp_solver_limit) {
     ref<klee::ConstantExpr> value;
-    bool success = solver->getValue(current.constraints, condition, value,
-                                    current.queryMetaData);
+    bool success = solver->getValue(current.evaluateConstraintsWithSymcretes(),
+                                    current.evaluateWithSymcretes(condition),
+                                    value, current.queryMetaData);
     assert(success && "FIXME: Unhandled solver failure");
     (void)success;
 
@@ -1031,7 +1043,8 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
   if (isSeeding)
     timeout *= static_cast<unsigned>(it->second.size());
   solver->setTimeout(timeout);
-  bool success = solver->evaluate(current.constraints, condition, res,
+  bool success = solver->evaluate(current.evaluateConstraintsWithSymcretes(),
+                                  current.evaluateWithSymcretes(condition), res,
                                   current.queryMetaData);
   solver->setTimeout(time::Span());
   if (!success) {
@@ -1223,8 +1236,8 @@ void Executor::addConstraint(ExecutionState &state, ref<Expr> condition) {
     for (std::vector<SeedInfo>::iterator siit = it->second.begin(), 
            siie = it->second.end(); siit != siie; ++siit) {
       bool res;
-      bool success = solver->mustBeFalse(state.constraints,
-                                         siit->assignment.evaluate(condition),
+      bool success = solver->mustBeFalse(state.evaluateConstraintsWithSymcretes(),
+                                         siit->assignment.evaluate(state.evaluateWithSymcretes(condition)),
                                          res, state.queryMetaData);
       assert(success && "FIXME: Unhandled solver failure");
       (void) success;
@@ -1278,17 +1291,18 @@ void Executor::bindArgument(KFunction *kf, unsigned index,
 
 ref<Expr> Executor::toUnique(const ExecutionState &state, 
                              ref<Expr> &e) {
-  ref<Expr> result = e;
+  ref<Expr> result = state.evaluateWithSymcretes(e);
 
-  if (!isa<ConstantExpr>(e)) {
+  if (!isa<ConstantExpr>(result)) {
     ref<ConstantExpr> value;
     bool isTrue = false;
-    e = optimizer.optimizeExpr(e, true);
+    result = optimizer.optimizeExpr(result, true);
     solver->setTimeout(coreSolverTimeout);
-    if (solver->getValue(state.constraints, e, value, state.queryMetaData)) {
+    if (solver->getValue(state.evaluateConstraintsWithSymcretes(), result, value, state.queryMetaData)) {
       ref<Expr> cond = EqExpr::create(e, value);
       cond = optimizer.optimizeExpr(cond, false);
-      if (solver->mustBeTrue(state.constraints, cond, isTrue,
+      if (solver->mustBeTrue(state.evaluateConstraintsWithSymcretes(),
+                             state.evaluateWithSymcretes(cond), isTrue,
                              state.queryMetaData) &&
           isTrue)
         result = value;
@@ -1306,13 +1320,14 @@ ref<klee::ConstantExpr>
 Executor::toConstant(ExecutionState &state, 
                      ref<Expr> e,
                      const char *reason) {
+  e = state.evaluateWithSymcretes(e);
   e = ConstraintManager::simplifyExpr(state.constraints, e);
   if (ConstantExpr *CE = dyn_cast<ConstantExpr>(e))
     return CE;
 
   ref<ConstantExpr> value;
   bool success =
-      solver->getValue(state.constraints, e, value, state.queryMetaData);
+      solver->getValue(state.evaluateConstraintsWithSymcretes(), e, value, state.queryMetaData);
   assert(success && "FIXME: Unhandled solver failure");
   (void) success;
 
@@ -1341,8 +1356,9 @@ void Executor::executeGetValue(ExecutionState &state,
   if (it==seedMap.end() || isa<ConstantExpr>(e)) {
     ref<ConstantExpr> value;
     e = optimizer.optimizeExpr(e, true);
-    bool success =
-        solver->getValue(state.constraints, e, value, state.queryMetaData);
+    bool success = solver->getValue(state.evaluateConstraintsWithSymcretes(),
+                                    state.evaluateWithSymcretes(e), value,
+                                    state.queryMetaData);
     assert(success && "FIXME: Unhandled solver failure");
     (void) success;
     bindLocal(target, state, value);
@@ -1350,11 +1366,11 @@ void Executor::executeGetValue(ExecutionState &state,
     std::set< ref<Expr> > values;
     for (std::vector<SeedInfo>::iterator siit = it->second.begin(), 
            siie = it->second.end(); siit != siie; ++siit) {
-      ref<Expr> cond = siit->assignment.evaluate(e);
+      ref<Expr> cond = siit->assignment.evaluate(state.evaluateWithSymcretes(e));
       cond = optimizer.optimizeExpr(cond, true);
       ref<ConstantExpr> value;
       bool success =
-          solver->getValue(state.constraints, cond, value, state.queryMetaData);
+          solver->getValue(state.evaluateConstraintsWithSymcretes(), cond, value, state.queryMetaData);
       assert(success && "FIXME: Unhandled solver failure");
       (void) success;
       values.insert(value);
@@ -1545,7 +1561,7 @@ MemoryObject *Executor::serializeLandingpad(ExecutionState &state,
 
   MemoryObject *mo =
       memory->allocate(serialized.size(), true, false, nullptr, 1);
-  ObjectState *os = bindObjectInState(state, mo, false);
+  assert(mo);
   for (unsigned i = 0; i < serialized.size(); i++) {
     os->write8(i, serialized[i]);
   }
@@ -1979,6 +1995,7 @@ void Executor::executeCall(ExecutionState &state, KInstruction *ki, Function *f,
         terminateStateOnExecError(state, "out of memory (varargs)");
         return;
       }
+      assert(mo);
 
       if (mo) {
         if ((WordSize == Expr::Int64) && (mo->address & 15) &&
@@ -1994,7 +2011,8 @@ void Executor::executeCall(ExecutionState &state, KInstruction *ki, Function *f,
           if (!cs.isByValArgument(k)) {
             os->write(offsets[k], arguments[k]);
           } else {
-            ConstantExpr *CE = dyn_cast<ConstantExpr>(arguments[k]);
+            ref<ConstantExpr> CE = dyn_cast<ConstantExpr>(
+                state.evaluateWithSymcretes(arguments[k]));
             assert(CE); // byval argument needs to be a concrete pointer
 
             ObjectPair op;
@@ -2158,6 +2176,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       ref<Expr> cond = eval(ki, 0, state).value;
 
       cond = optimizer.optimizeExpr(cond, false);
+
       Executor::StatePair branches = fork(state, cond, false, BranchType::ConditionalBranch);
 
       // NOTE: There is a hidden dependency here, markBranchVisited
@@ -3599,13 +3618,14 @@ std::string Executor::getAddressInfo(ExecutionState &state, ref<Expr> address,
                                      const MemoryObject *mo) const {
   std::string Str;
   llvm::raw_string_ostream info(Str);
+  address = state.evaluateWithSymcretes(address);
   info << "\taddress: " << address << "\n";
   uint64_t example;
   if (ConstantExpr *CE = dyn_cast<ConstantExpr>(address)) {
     example = CE->getZExtValue();
   } else {
     ref<ConstantExpr> value;
-    bool success = solver->getValue(state.constraints, address, value,
+    bool success = solver->getValue(state.evaluateConstraintsWithSymcretes(), address, value,
                                     state.queryMetaData);
     assert(success && "FIXME: Unhandled solver failure");
     (void) success;
@@ -3613,9 +3633,9 @@ std::string Executor::getAddressInfo(ExecutionState &state, ref<Expr> address,
     info << "\texample: " << example << "\n";
     std::pair<ref<Expr>, ref<Expr>> res =
         mo ? std::make_pair(
-                 mo->getBaseExpr(),
-                 AddExpr::create(mo->getBaseExpr(), mo->getSizeExpr()))
-           : solver->getRange(state.constraints, address, state.queryMetaData);
+                 state.evaluateWithSymcretes(mo->getBaseExpr()),
+                 state.evaluateWithSymcretes(AddExpr::create(mo->getBaseExpr(), mo->getSizeExpr())))
+           : solver->getRange(state.evaluateConstraintsWithSymcretes(), address, state.queryMetaData);
     info << "\trange: [" << res.first << ", " << res.second <<"]\n";
   }
   
@@ -3885,7 +3905,7 @@ void Executor::callExternalFunction(ExecutionState &state,
       *ai = optimizer.optimizeExpr(*ai, true);
       ref<ConstantExpr> ce;
       bool success =
-          solver->getValue(state.constraints, *ai, ce, state.queryMetaData);
+          solver->getValue(state.evaluateConstraintsWithSymcretes(), *ai, ce, state.queryMetaData);
       assert(success && "FIXME: Unhandled solver failure");
       (void) success;
       ce->toMemory(&args[wordIndex]);
@@ -3925,7 +3945,9 @@ void Executor::callExternalFunction(ExecutionState &state,
       ConstantExpr::create((uint64_t)errno_addr, Expr::Int64), result);
   if (!resolved)
     klee_error("Could not resolve memory object for errno");
-  ref<Expr> errValueExpr = result.second->read(0, sizeof(*errno_addr) * 8);
+  ref<Expr> errValueExpr = state.evaluateWithSymcretes(
+      result.second->read(0, sizeof(*errno_addr) * 8));
+
   ConstantExpr *errnoValue = dyn_cast<ConstantExpr>(errValueExpr);
   if (!errnoValue) {
     terminateStateOnExecError(state,
@@ -4082,7 +4104,7 @@ void Executor::executeAlloc(ExecutionState &state,
 
     ref<ConstantExpr> example;
     bool success =
-        solver->getValue(state.constraints, size, example, state.queryMetaData);
+        solver->getValue(state.evaluateConstraintsWithSymcretes(), state.evaluateWithSymcretes(size), example, state.queryMetaData);
     assert(success && "FIXME: Unhandled solver failure");
     (void) success;
     
@@ -4275,15 +4297,18 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     if (MaxSymArraySize && mo->size >= MaxSymArraySize) {
       address = toConstant(state, address, "max-sym-array-size");
     }
-    
+
     ref<Expr> offset = mo->getOffsetExpr(address);
     ref<Expr> check = mo->getBoundsCheckOffset(offset, bytes);
     check = optimizer.optimizeExpr(check, true);
 
     bool inBounds;
     solver->setTimeout(coreSolverTimeout);
-    bool success = solver->mustBeTrue(state.constraints, check, inBounds,
-                                      state.queryMetaData);
+
+    /// FIXME: constrains should be also modified with symcretes!
+    bool success = solver->mustBeTrue(state.evaluateConstraintsWithSymcretes(),
+                                      state.evaluateWithSymcretes(check),
+                                      inBounds, state.queryMetaData);
     solver->setTimeout(time::Span());
     if (!success) {
       state.pc = state.prevPC;
@@ -4314,7 +4339,6 @@ void Executor::executeMemoryOperation(ExecutionState &state,
         bindLocal(target, state, result);
         break;
       }
-
       return;
     }
   }
@@ -4333,7 +4357,9 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   
   // XXX there is some query wasteage here. who cares?
   ExecutionState *unbound = &state;
-  
+
+  ref<Expr> actualAddresses = nullptr;
+
   for (ResolutionList::iterator i = rl.begin(), ie = rl.end(); i != ie; ++i) {
     const MemoryObject *mo = i->first;
     const ObjectState *os = i->second;
@@ -4345,12 +4371,29 @@ void Executor::executeMemoryOperation(ExecutionState &state,
           AndExpr::create(inBounds, mo->getBoundsCheckPointer(base, size));
     }
 
+    ref<Expr> actualObjectAddressEquality =
+        EqExpr::create(mo->getBaseExpr(), mo->getSourceExpr());
+
     StatePair branches = fork(*unbound, inBounds, true, BranchType::MemOp);
     ExecutionState *bound = branches.first;
 
     // bound can be 0 on failure or overlapped
     if (bound) {
       bound->addPointerResolution(base, address, mo);
+      if (actualAddresses.isNull()) {
+        actualAddresses = actualObjectAddressEquality;
+      } else {
+        actualAddresses =
+            AndExpr::create(actualAddresses, actualObjectAddressEquality);
+      }
+
+      /* FIXME: Notice, that here we are creating a new instance of object
+      for every memory operation in order to handle type changes. This might
+      waste too much memory as we do now always modify something. To fix this
+      we can ask memory if we will make anything, and create a copy if
+      required. */
+      ObjectState *wos = bound->addressSpace.getWriteable(mo, os);
+
       switch (operation) {
       case Write: {
         if (os->readOnly) {
@@ -4373,7 +4416,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
 
     unbound = branches.second;
 
-    if (unbound && isReadFromSymbolicArray(base)) {
+    if (unbound && isReadFromSymbolicArray(state.evaluateWithSymcretes(base))) {
       if (base == mo->getBaseExpr()) {
         terminateStateOnError(*unbound, "memory error: out of bound pointer",
                               StateTerminationType::Ptr,
@@ -4411,6 +4454,26 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     unbound = branches.second;
   }
 
+  // FIXME: do this check, but not this way!
+  // Check if we need to make LI
+  // actualAddresses: AND_i getbaseExpr_i <- expr<address_i | LISource_i>
+  if (!actualAddresses.isNull() && unbound) {
+    solver->setTimeout(coreSolverTimeout);
+    bool needLasyInstantiation = false;
+    actualAddresses = ConstraintManager::simplifyExpr(unbound->constraints, actualAddresses);
+    bool success =
+        solver->mayBeTrue(unbound->constraints, actualAddresses,
+                          needLasyInstantiation, unbound->queryMetaData);
+    solver->setTimeout(time::Span());
+    if (!success) {
+      terminateStateOnSolverError(*unbound, "Query timed out (resolve).");
+      unbound = nullptr;
+    } else if (!needLasyInstantiation) {
+      terminateStateEarly(*unbound, "", StateTerminationType::SilentExit);
+      unbound = nullptr;
+    }
+  }
+
   // XXX should we distinguish out of bounds and overlapped cases?
   if (unbound) {
     if (incomplete) {
@@ -4419,15 +4482,21 @@ void Executor::executeMemoryOperation(ExecutionState &state,
                (isa<ReadExpr>(address) || isa<ConcatExpr>(address) ||
                 state.isGEPExpr(address))) {
       ObjectPair p = lazyInitializeObject(*unbound, base, target, size);
+      if (p.first == nullptr && p.second == nullptr) {
+        return;
+      }
       assert(p.first && p.second);
 
       const MemoryObject *mo = p.first;
+      
       ref<Expr> inBounds = mo->getBoundsCheckPointer(address, bytes);
 
       Solver::Validity res;
       time::Span timeout = coreSolverTimeout;
       solver->setTimeout(timeout);
-      solver->evaluate(unbound->constraints, inBounds, res,
+      /// Here we check SAT for constarint and need to evaluate with symbolics
+      solver->evaluate(unbound->evaluateConstraintsWithSymcretes(),
+                       state.evaluateWithSymcretes(inBounds), res,
                        unbound->queryMetaData);
       solver->setTimeout(time::Span());
 
@@ -4483,10 +4552,35 @@ ObjectPair Executor::lazyInitializeObject(ExecutionState &state,
   MemoryObject *mo =
       memory->allocate(size, false, /*isGlobal=*/false, allocSite,
                        /*allocationAlignment=*/8, address, timestamp);
-  executeMakeSymbolic(state, mo, "lazy_initialization", false);
-  ObjectPair op;
-  state.addressSpace.resolveOne(mo->getBaseConstantExpr().get(), op);
-  return op;
+  assert(mo);
+
+  ref<Expr> checkPointerExpr = EqExpr::create(address, mo->getBaseExpr());
+  bool isAddressNeq;
+
+  /// Check that the constructed model does not contradict itself 
+  solver->setTimeout(coreSolverTimeout);
+  bool success =
+      solver->mustBeFalse(state.evaluateConstraintsWithSymcretes(),
+                          state.evaluateWithSymcretes(checkPointerExpr),
+                          isAddressNeq, state.queryMetaData);
+  solver->setTimeout(time::Span());
+
+  if (!success) {
+    terminateStateOnSolverError(state, "Query timed out.");
+    return ObjectPair(nullptr, nullptr);
+  }
+  solver->setTimeout(time::Span());
+
+  if (isAddressNeq) {
+    terminateStateOnExecError(
+        state, "Malloc returned address not consistent with constrains");
+    return ObjectPair(nullptr, nullptr);
+  }
+  
+  state.addSymcrete(mo->concreteAddress, addressToBytes(mo->address), mo->address);
+  state.addConstraint(EqExpr::create(mo->getBaseExpr(), address));
+
+  return lazyInitialize(state, /*isLocal=*/false, mo);
 }
 
 const Array *Executor::makeArray(ExecutionState &state, const uint64_t size,
@@ -4623,6 +4717,7 @@ ExecutionState* Executor::formState(Function *f,
   }
 
   ExecutionState *state = new ExecutionState(kmodule->functionMap[f]);
+
 
   assert(arguments.size() == f->arg_size() && "wrong number of arguments");
   for (unsigned i = 0, e = f->arg_size(); i != e; ++i)
@@ -4855,13 +4950,13 @@ void Executor::setInitializationGraph(const ExecutionState &state,
       if (pointerFound && pointeeFound) {
         ref<ConstantExpr> offset;
         bool success =
-            solver->getValue(state.constraints, pointerResolution.second,
+            solver->getValue(state.evaluateConstraintsWithSymcretes(), state.evaluateWithSymcretes(pointerResolution.second),
                              offset, state.queryMetaData);
         if (!success) {
           klee_error("Offset resolution failure in setInitializationGraph");
         }
         ref<ConstantExpr> indexOffset;
-        success = solver->getValue(state.constraints, pointer.second.second,
+        success = solver->getValue(state.evaluateConstraintsWithSymcretes(), state.evaluateWithSymcretes(pointer.second.second),
                                    indexOffset, state.queryMetaData);
         if (!success) {
           klee_error(
@@ -4897,7 +4992,7 @@ bool Executor::getSymbolicSolution(const ExecutionState &state,
                                    KTest &res) {
   solver->setTimeout(coreSolverTimeout);
 
-  ConstraintSet extendedConstraints(state.constraints);
+  ConstraintSet extendedConstraints = state.evaluateConstraintsWithSymcretes();
   ConstraintManager cm(extendedConstraints);
 
   // Go through each byte in every test case and attempt to restrict
@@ -4911,15 +5006,16 @@ bool Executor::getSymbolicSolution(const ExecutionState &state,
     bool mustBeTrue;
     // Attempt to bound byte to constraints held in cexPreferences
     bool success =
-      solver->mustBeTrue(extendedConstraints, Expr::createIsZero(pi),
-        mustBeTrue, state.queryMetaData);
+        solver->mustBeTrue(extendedConstraints,
+                           state.evaluateWithSymcretes(Expr::createIsZero(pi)),
+                           mustBeTrue, state.queryMetaData);
     // If it isn't possible to add the condition without making the entire list
     // UNSAT, then just continue to the next condition
     if (!success) break;
     // If the particular constraint operated on in this iteration through
     // the loop isn't implied then add it to the list of constraints.
     if (!mustBeTrue)
-      cm.addConstraint(pi);
+      cm.addConstraint(state.evaluateWithSymcretes(pi));
   }
 
   std::vector< std::vector<unsigned char> > values;

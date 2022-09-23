@@ -96,7 +96,7 @@ bool AddressSpace::resolveOne(ExecutionState &state, TimingSolver *solver,
                               ref<Expr> address, ObjectPair &result,
                               std::function<bool(const MemoryObject *)> predicate,
                               bool &success) const {
-  if (ConstantExpr *CE = dyn_cast<ConstantExpr>(address)) {
+  if (ConstantExpr *CE = dyn_cast<ConstantExpr>(state.evaluateWithSymcretes(address))) {
     success = resolveOne(CE, result);
     return true;
   } else {
@@ -105,6 +105,7 @@ bool AddressSpace::resolveOne(ExecutionState &state, TimingSolver *solver,
     ref<Expr> base =
         state.isGEPExpr(address) ? state.gepExprBases[address].first : address;
     MemoryObject *symHack = nullptr;
+    /// TODO: seems useless, as we know concrete addresses
     for (auto &moa : state.symbolics) {
       if (moa.first->isLazyInitialized() &&
           moa.first->getLazyInitializationSource() == base) {
@@ -126,10 +127,16 @@ bool AddressSpace::resolveOne(ExecutionState &state, TimingSolver *solver,
     // try cheap search, will succeed for any inbounds pointer
 
     ref<ConstantExpr> cex;
-    if (!solver->getValue(state.constraints, address, cex, state.queryMetaData))
+    
+    if (!solver->getValue(state.evaluateConstraintsWithSymcretes(),
+                          state.evaluateWithSymcretes(address), cex,
+                          state.queryMetaData))
       return false;
+
     uint64_t example = cex->getZExtValue();
     MemoryObject hack(example);
+    
+    /// FIXME: Here we are trying to find existing object, INCLUDING symbolic. Seems ok...
     const auto res = objects.lookup_previous(&hack);
 
     if (res) {
@@ -156,9 +163,10 @@ bool AddressSpace::resolveOne(ExecutionState &state, TimingSolver *solver,
         continue;
 
       bool mayBeTrue;
-      if (!solver->mayBeTrue(state.constraints,
-                             mo->getBoundsCheckPointer(address), mayBeTrue,
-                             state.queryMetaData))
+      if (!solver->mayBeTrue(
+              state.evaluateConstraintsWithSymcretes(),
+              state.evaluateWithSymcretes(mo->getBoundsCheckPointer(address)),
+              mayBeTrue, state.queryMetaData))
         return false;
       if (mayBeTrue) {
         result.first = oi->first;
@@ -167,10 +175,14 @@ bool AddressSpace::resolveOne(ExecutionState &state, TimingSolver *solver,
         return true;
       } else {
         bool mustBeTrue;
-        if (!solver->mustBeTrue(state.constraints,
-                                UgeExpr::create(address, mo->getBaseExpr()),
+        if (!solver->mustBeTrue(state.evaluateConstraintsWithSymcretes(),
+                                state.evaluateWithSymcretes(UgeExpr::create(
+                                    address, mo->getBaseExpr())),
                                 mustBeTrue, state.queryMetaData))
           return false;
+        
+        /// FIXME: Make a binary search optimization?
+        /// We will optimize it in general case, as constraints are linear
         if (mustBeTrue)
           break;
       }
@@ -183,8 +195,9 @@ bool AddressSpace::resolveOne(ExecutionState &state, TimingSolver *solver,
         continue;
 
       bool mustBeTrue;
-      if (!solver->mustBeTrue(state.constraints,
-                              UltExpr::create(address, mo->getBaseExpr()),
+      if (!solver->mustBeTrue(state.evaluateConstraintsWithSymcretes(),
+                              state.evaluateWithSymcretes(
+                                  UltExpr::create(address, mo->getBaseExpr())),
                               mustBeTrue, state.queryMetaData))
         return false;
       if (mustBeTrue) {
@@ -192,9 +205,10 @@ bool AddressSpace::resolveOne(ExecutionState &state, TimingSolver *solver,
       } else {
         bool mayBeTrue;
 
-        if (!solver->mayBeTrue(state.constraints,
-                               mo->getBoundsCheckPointer(address), mayBeTrue,
-                               state.queryMetaData))
+        if (!solver->mayBeTrue(
+                state.evaluateConstraintsWithSymcretes(),
+                state.evaluateWithSymcretes(mo->getBoundsCheckPointer(address)),
+                mayBeTrue, state.queryMetaData))
           return false;
         if (mayBeTrue) {
           result.first = oi->first;
@@ -245,9 +259,11 @@ int AddressSpace::checkPointerInObject(ExecutionState &state,
   // mustBeTrue before mayBeTrue for the first result. easy
   // to add I just want to have a nice symbolic test case first.
   const MemoryObject *mo = op.first;
-  ref<Expr> inBounds = mo->getBoundsCheckPointer(p);
+  ref<Expr> inBoundsWithSymcretes =
+      state.evaluateWithSymcretes(mo->getBoundsCheckPointer(p));
   bool mayBeTrue;
-  if (!solver->mayBeTrue(state.constraints, inBounds, mayBeTrue,
+  if (!solver->mayBeTrue(state.evaluateConstraintsWithSymcretes(),
+                         inBoundsWithSymcretes, mayBeTrue,
                          state.queryMetaData)) {
     return 1;
   }
@@ -259,7 +275,8 @@ int AddressSpace::checkPointerInObject(ExecutionState &state,
     auto size = rl.size();
     if (size == 1) {
       bool mustBeTrue;
-      if (!solver->mustBeTrue(state.constraints, inBounds, mustBeTrue,
+      if (!solver->mustBeTrue(state.evaluateConstraintsWithSymcretes(),
+                              inBoundsWithSymcretes, mustBeTrue,
                               state.queryMetaData))
         return 1;
       if (mustBeTrue)
@@ -277,7 +294,8 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
                            ref<Expr> p, ResolutionList &rl,
                            std::function<bool(const MemoryObject *)> predicate,
                            unsigned maxResolutions, time::Span timeout) const {
-  if (ConstantExpr *CE = dyn_cast<ConstantExpr>(p)) {
+  if (ref<ConstantExpr> CE =
+          dyn_cast<ConstantExpr>(state.evaluateWithSymcretes(p))) {
     ObjectPair res;
     if (resolveOne(CE, res))
       rl.push_back(res);
@@ -320,7 +338,9 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
     // just get this by inspection of the expr.
 
     ref<ConstantExpr> cex;
-    if (!solver->getValue(state.constraints, p, cex, state.queryMetaData))
+    if (!solver->getValue(state.evaluateConstraintsWithSymcretes(),
+                          state.evaluateWithSymcretes(p), cex,
+                          state.queryMetaData))
       return true;
     uint64_t example = cex->getZExtValue();
     MemoryObject hack(example);
@@ -349,9 +369,10 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
         return incomplete ? true : false;
 
       bool mustBeTrue;
-      if (!solver->mustBeTrue(state.constraints,
-                              UgeExpr::create(p, mo->getBaseExpr()), mustBeTrue,
-                              state.queryMetaData))
+      if (!solver->mustBeTrue(state.evaluateConstraintsWithSymcretes(),
+                              state.evaluateWithSymcretes(
+                                  UgeExpr::create(p, mo->getBaseExpr())),
+                              mustBeTrue, state.queryMetaData))
         return true;
       if (mustBeTrue)
         break;
@@ -366,9 +387,10 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
         return true;
 
       bool mustBeTrue;
-      if (!solver->mustBeTrue(state.constraints,
-                              UltExpr::create(p, mo->getBaseExpr()), mustBeTrue,
-                              state.queryMetaData))
+      if (!solver->mustBeTrue(state.evaluateConstraintsWithSymcretes(),
+                              state.evaluateWithSymcretes(
+                                  UltExpr::create(p, mo->getBaseExpr())),
+                              mustBeTrue, state.queryMetaData))
         return true;
       if (mustBeTrue)
         break;
