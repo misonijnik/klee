@@ -39,6 +39,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/Host.h"
 
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/Signals.h"
