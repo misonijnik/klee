@@ -110,6 +110,12 @@ cl::opt<std::string> BCovCheckInterval(
              "Set to 0s to disable (default=0s)"),
     cl::init("0s"), cl::cat(StatsCat));
 
+cl::opt<bool> UseCovCheck("use-cov-check",
+                          cl::desc("Check klee for coverage progress. "
+                                   "Check progress after each n instructions. "
+                                   "Set to false to disable (default=false)"),
+                          cl::init(false), cl::cat(StatsCat));
+
 // XXX I really would like to have dynamic rate control for something like this.
 cl::opt<std::string> UncoveredUpdateInterval(
     "uncovered-update-interval", cl::init("30s"),
@@ -178,6 +184,8 @@ StatsTracker::StatsTracker(Executor &_executor, std::string _objectFilename,
     fullBranches(0),
     partialBranches(0),
     totalBranches(0),
+    totalInstructions(0),
+    localInstructionCount(0),
     updateMinDistToUncovered(_updateMinDistToUncovered) {
 
   const time::Span statsWriteInterval(StatsWriteInterval);
@@ -295,13 +303,15 @@ StatsTracker::StatsTracker(Executor &_executor, std::string _objectFilename,
     }));
   }
 
+  covCheckAfterInstructions = stats::coveredInstructions + stats::uncoveredInstructions;
+
   if (bCovCheckInterval) {
     executor.timers.add(std::make_unique<Timer>(bCovCheckInterval, [&] {
       if ((2 * fullBranches + partialBranches) > totalBranches) {
         totalBranches = 2 * fullBranches + partialBranches;
       } else {
-        klee_message(
-            "HaltTimer invoked due to absense of progress in branch coverage");
+        klee_message("HaltTimer invoked due to absense of progress in branch "
+                     "coverage");
         executor.setHaltExecution(true);
       }
     }));
@@ -399,6 +409,22 @@ void StatsTracker::stepInstruction(ExecutionState &es) {
   if (istatsFile && IStatsWriteAfterInstructions &&
       stats::instructions % IStatsWriteAfterInstructions.getValue() == 0)
     writeIStats();
+
+  ++localInstructionCount;
+
+  if (UseCovCheck && localInstructionCount >= covCheckAfterInstructions) {
+    if ((2 * fullBranches + partialBranches) > totalBranches ||
+        stats::coveredInstructions > totalInstructions) {
+      totalBranches = 2 * fullBranches + partialBranches;
+      totalInstructions = stats::coveredInstructions;
+      localInstructionCount = 0;
+    } else {
+      klee_message(
+          "InhibitForking enabled due to absense of progress in coverage");
+      UseCovCheck = false;
+      executor.setInhibitForking(true);
+    }
+  }
 }
 
 ///

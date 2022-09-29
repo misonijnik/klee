@@ -50,6 +50,8 @@ namespace klee {
 
     unsigned numBranches;
     unsigned fullBranches, partialBranches, totalBranches;
+    unsigned totalInstructions, localInstructionCount;
+    unsigned covCheckAfterInstructions;
 
     CallPathManager callPathManager;
 
