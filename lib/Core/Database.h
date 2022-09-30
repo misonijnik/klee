@@ -5,7 +5,7 @@
 #include <utility>
 #include <vector>
 
-#include "Path.h"
+#include "klee/Core/Path.h"
 #include "klee/Expr/Expr.h"
 
 namespace klee {

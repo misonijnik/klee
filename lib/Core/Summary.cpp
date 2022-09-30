@@ -1,6 +1,6 @@
 #include "Summary.h"
 #include "CoreStats.h"
-#include "Path.h"
+#include "klee/Core/Path.h"
 #include "SearcherUtil.h"
 #include "klee/ADT/Ref.h"
 #include "klee/Expr/Expr.h"
@@ -64,7 +64,7 @@ void Summary::summarize(const ProofObligation *pob,
   label_stream << "State Path is:\n";
   label_stream << path.toString() << "\n";
   label_stream << "Pob Path is:\n";
-  label_stream << pob->path.toString() << "\n";
+  label_stream << pob->condition.getPath() << "\n";
   label_stream << "\n";
 
   (*summaryFile) << label_stream.str();

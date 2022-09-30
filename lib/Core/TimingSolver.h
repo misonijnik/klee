@@ -19,7 +19,7 @@
 #include <vector>
 
 namespace klee {
-class ConstraintSet;
+class PathConstraints;
 class Solver;
 
 /// TimingSolver - A simple class which wraps a solver and handles
@@ -44,35 +44,35 @@ public:
     return solver->getConstraintLog(query);
   }
 
-  bool evaluate(const ConstraintSet &, ref<Expr>, Solver::Validity &result,
+  bool evaluate(const PathConstraints &, ref<Expr>, Solver::Validity &result,
                 SolverQueryMetaData &metaData,
                 bool produceUnsatCore = false);
 
-  bool mustBeTrue(const ConstraintSet &, ref<Expr>, bool &result,
+  bool mustBeTrue(const PathConstraints &, ref<Expr>, bool &result,
                   SolverQueryMetaData &metaData,
                   bool produceUnsatCore = false);
 
-  bool mustBeFalse(const ConstraintSet &, ref<Expr>, bool &result,
+  bool mustBeFalse(const PathConstraints &, ref<Expr>, bool &result,
                    SolverQueryMetaData &metaData,
                    bool produceUnsatCore = false);
 
-  bool mayBeTrue(const ConstraintSet &, ref<Expr>, bool &result,
+  bool mayBeTrue(const PathConstraints &, ref<Expr>, bool &result,
                  SolverQueryMetaData &metaData,
                  bool produceUnsatCore = false);
 
-  bool mayBeFalse(const ConstraintSet &, ref<Expr>, bool &result,
+  bool mayBeFalse(const PathConstraints &, ref<Expr>, bool &result,
                   SolverQueryMetaData &metaData,
                   bool produceUnsatCore = false);
 
-  bool getValue(const ConstraintSet &, ref<Expr> expr,
+  bool getValue(const PathConstraints &, ref<Expr> expr,
                 ref<ConstantExpr> &result, SolverQueryMetaData &metaData);
 
-  bool getInitialValues(const ConstraintSet &,
+  bool getInitialValues(const PathConstraints &,
                         const std::vector<const Array *> &objects,
                         std::vector<std::vector<unsigned char>> &result,
                         SolverQueryMetaData &metaData);
 
-  std::pair<ref<Expr>, ref<Expr>> getRange(const ConstraintSet &,
+  std::pair<ref<Expr>, ref<Expr>> getRange(const PathConstraints &,
                                            ref<Expr> query,
                                            SolverQueryMetaData &metaData);
 

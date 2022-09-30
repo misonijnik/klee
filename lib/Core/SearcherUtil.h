@@ -2,7 +2,7 @@
 #pragma once
 
 #include "ExecutionState.h"
-#include "Path.h"
+#include "klee/Core/Path.h"
 #include "ProofObligation.h"
 #include "klee/Module/KInstruction.h"
 #include "klee/Module/KModule.h"

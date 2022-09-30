@@ -159,29 +159,31 @@ public:
 };
 
 bool ConstraintManager::rewriteConstraints(ExprVisitor &visitor, bool *sat) {
-  ConstraintSet old;
-  ExprHashMap<KInstruction *> oldLocations;
+  PathConstraints old;
   bool changed = false;
 
-  std::swap(constraints.constraints, old);
-  std::swap(constraints.constraintLocations, oldLocations);
+  std::swap(constraints, old);
 
-  for (auto &ce : old) {
-    auto loc = oldLocations[ce];
-    ref<Expr> e = visitor.visit(ce);
+  for (auto &blockAndCeps : old.getConstraints()) {
+    constraints.append(blockAndCeps.first);
+    for (auto &cep : blockAndCeps.second) {
+      auto loc = cep.first;
+      auto ce = cep.second;
+      ref<Expr> e = visitor.visit(ce);
 
-    if (e!=ce) {
-      addConstraintInternal(e, loc, sat); // enable further reductions
-      changed = true;
-    } else {
-      constraints.insert(ce, loc);
+      if (e!=ce) {
+        addConstraintInternal(e, loc, sat); // enable further reductions
+        changed = true;
+      } else {
+        constraints.insert(ce, loc);
+      }
     }
   }
 
   return changed;
 }
 
-ref<Expr> ConstraintManager::simplifyExpr(const ConstraintSet &constraints,
+ref<Expr> ConstraintManager::simplifyExpr(const PathConstraints &constraints,
                                           const ref<Expr> &e) {
 
   if (isa<ConstantExpr>(e))
@@ -254,52 +256,29 @@ void ConstraintManager::addConstraint(const ref<Expr> &e, KInstruction *location
   addConstraintInternal(simplified, location, sat);
 }
 
-ConstraintManager::ConstraintManager(Constraints &_constraints)
+ConstraintManager::ConstraintManager(PathConstraints &_constraints)
     : constraints(_constraints) {}
 
-bool ConstraintSet::empty() const { return constraints.empty(); }
-
-klee::ConstraintSet::constraint_iterator ConstraintSet::begin() const {
-  return constraints.begin();
+bool PathConstraints::empty() const {
+  for (const auto &b : constraints)
+    if (!b.second.empty())
+      return false;
+  return true;
 }
 
-klee::ConstraintSet::constraint_iterator ConstraintSet::end() const {
-  return constraints.end();
+size_t PathConstraints::size() const noexcept {
+  size_t size = 0;
+  for (const auto &b : constraints)
+    size += b.second.size();
+  return size;
 }
 
-size_t ConstraintSet::size() const noexcept { return constraints.size(); }
-
-
-void ConstraintSet::push_back(const ref<Expr> &e) {
-  constraints.push_back(e);
-}
-
-bool Constraints::empty() const { return constraints.empty(); }
-
-klee::ConstraintSet::constraint_iterator Constraints::begin() const {
-  return constraints.begin();
-}
-
-klee::ConstraintSet::constraint_iterator Constraints::end() const {
-  return constraints.end();
-}
-
-size_t Constraints::size() const noexcept { return constraints.size(); }
-
-void Constraints::insert(const ref<Expr> &e, KInstruction *l) {
-  constraints.push_back(e);
-  constraintLocations.insert({e, l});
-}
-
-KInstruction *Constraints::getLocation(const ref<Expr> &e) const {
-  if (!constraintLocations.count(e)) {
-    llvm::errs() << e;
-    llvm::errs() << "\n";
+void PathConstraints::push_back(const ref<Expr> &e) {
+  if (constraints.empty()) {
+    block_constraints_ty v;
+    v.emplace_back(nullptr, e);
+    constraints.emplace_back(nullptr, v);
+  } else {
+    constraints.back().second.emplace_back(nullptr, e);
   }
-  assert(constraintLocations.count(e) && "the constraint is not contained in the constraint set");
-  return constraintLocations.at(e);
-}
-
-const ConstraintSet &Constraints::set() const {
-  return constraints;
 }

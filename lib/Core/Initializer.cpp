@@ -1,6 +1,6 @@
 #include "Initializer.h"
 #include "ExecutionState.h"
-#include "Path.h"
+#include "klee/Core/Path.h"
 #include "ProofObligation.h"
 #include "SearcherUtil.h"
 #include "klee/Module/KInstruction.h"
@@ -170,4 +170,3 @@ void ConflictCoreInitializer::addConflictInit(const Conflict &conflict, KBlock *
 }
 
 };
- 

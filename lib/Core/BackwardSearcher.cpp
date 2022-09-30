@@ -75,7 +75,7 @@ void RecencyRankedSearcher::addState(Target target, ExecutionState *state) {
   for (auto pob : pobs) {
     Target pobsTarget(pob->location);
     if (target == pobsTarget && checkStack(state, pob)) {
-      assert(state->path.getFinalBlock() == pob->path.getInitialBlock() &&
+      assert(state->constraints.getFinalBlock() == pob->condition.getInitialBlock() &&
              "Paths are not compatible.");
       if (state->isIsolated()) {
         propagatePobToStates[pob].insert(state);

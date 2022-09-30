@@ -36,7 +36,7 @@ protected:
 };
 
 TEST_F(Z3SolverTest, GetConstraintLog) {
-  Constraints Constraints;
+  PathConstraints Constraints;
   ConstraintManager cm(Constraints);
 
   const std::vector<uint64_t> ConstantValues{1, 2, 3, 4};

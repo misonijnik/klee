@@ -1786,7 +1786,7 @@ void QueryCommand::dump() {
     ObjectsBegin = &Objects[0];
     ObjectsEnd = ObjectsBegin + Objects.size();
   }
-  ExprPPrinter::printQuery(llvm::outs(), ConstraintSet(Constraints), Query,
+  ExprPPrinter::printQuery(llvm::outs(), PathConstraints(Constraints), Query,
                            ValuesBegin, ValuesEnd, ObjectsBegin, ObjectsEnd,
                            false);
 }

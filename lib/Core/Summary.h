@@ -1,7 +1,7 @@
 // -*- C++ -*-
 #pragma once
 
-#include "Path.h"
+#include "klee/Core/Path.h"
 #include "ProofObligation.h"
 #include "Database.h"
 #include "klee/Expr/Expr.h"

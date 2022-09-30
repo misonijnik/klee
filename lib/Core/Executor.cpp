@@ -18,7 +18,7 @@
 #include "ImpliedValue.h"
 #include "Memory.h"
 #include "PForest.h"
-#include "Path.h"
+#include "klee/Core/Path.h"
 #include "ProofObligation.h"
 #include "SearcherUtil.h"
 #include "TimingSolver.h"
@@ -1730,7 +1730,7 @@ void Executor::unwindToNextLandingpad(ExecutionState &state) {
         state.pushFrame(state.prevPC, kf);
         state.pc = kf->instructions;
         state.increaseLevel();
-        state.path.append(kf->blockMap[state.getPCBlock()]);
+        state.constraints.append(kf->blockMap[state.getPCBlock()]);
 
         bindArgument(kf, 0, state, sui->exceptionObject);
         bindArgument(kf, 1, state, clauses_mo->getSizeExpr());
@@ -2108,7 +2108,7 @@ void Executor::transferToBasicBlock(BasicBlock *dst, BasicBlock *src,
     state.incomingBBIndex = first->getBasicBlockIndex(src);
   }
   if (!isa<KReturnBlock>(state.prevPC->parent)) {
-    state.path.append(kf->blockMap[dst]);
+    state.constraints.append(kf->blockMap[dst]);
   }
 }
 
@@ -2116,9 +2116,9 @@ void Executor::makeConflictCore(const ExecutionState &state,
                                 const std::vector<ref<Expr>> &unsatCore,
                                 ref<Expr> condition, KInstruction *location,
                                 Conflict::core_ty &core) {
-  for (auto &constraint : unsatCore) {
-    core.push_back(std::make_pair(
-        constraint, state.constraintInfos.getLocation(constraint)));
+  auto unsatCoreWithLocs = state.constraints.recover(unsatCore);
+  for (auto &p : unsatCoreWithLocs) {
+    core.push_back(p);
   }
   core.push_back(std::make_pair(condition, location));
 }
@@ -2137,12 +2137,12 @@ Conflict makeConflict(const ExecutionState &state,
                       ref<Expr> condition) {
   Conflict::core_ty core =
       makeConflictCore(state, unsatCore, condition, state.prevPC);
-  return Conflict(state.path, core);
+  return Conflict(state.constraints.buildPath(), core);
 }
 
 Conflict makeConflict(const ExecutionState &state,
                       const Conflict::core_ty &conflictCore) {
-  return Conflict(state.path, conflictCore);
+  return Conflict(state.constraints.buildPath(), conflictCore);
 }
 
 ref<TargetedConflict>
@@ -2291,7 +2291,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
                (!branches.first && branches.second));
         if (DebugExecutor) {
           llvm::errs() << "Contradiction was found\n";
-          llvm::errs() << "Path: " << state.path.toString() << "\n";
+          llvm::errs() << "Path: " << state.constraints.getPath() << "\n";
           llvm::errs() << "Constraint:" << state.constraints;
         }
         KBlock *target = getKBlock(*bi->getSuccessor(branches.first ? 1 : 0));
@@ -5031,7 +5031,7 @@ bool Executor::getSymbolicSolution(const ExecutionState &state,
                                    TestCase &res) {
   solver->setTimeout(coreSolverTimeout);
 
-  Constraints extendedConstraints(state.constraintInfos);
+  PathConstraints extendedConstraints(state.constraints);
   ConstraintManager cm(extendedConstraints);
 
   // Go through each byte in every test case and attempt to restrict
@@ -5465,9 +5465,10 @@ void Executor::replayStateFromPob(ProofObligation *pob) {
   assert(pob->location->instructions[0]->inst == emptyState->initPC->inst);
 
   ExecutionState *replayState = initialState->copy();
-  for (const auto &constraint : pob->condition) {
-    replayState->addConstraint(
-        constraint, pob->condition.getLocation(constraint));
+  for (const auto &p : pob->condition.loc_constraints()) {
+    auto loc = p.first;
+    auto &constraint = p.second;
+    replayState->addConstraint(constraint, loc);
   }
   for (auto &symbolic : pob->sourcedSymbolics) {
     replayState->symbolics.push_back(symbolic);
@@ -5509,7 +5510,7 @@ void Executor::run(ExecutionState &state) {
         return;
       }
 
-      std::map<ExecutionState*, std::vector<SeedInfo> >::iterator it = 
+      std::map<ExecutionState*, std::vector<SeedInfo> >::iterator it =
         seedMap.upper_bound(lastState);
       if (it == seedMap.end())
         it = seedMap.begin();
@@ -5698,7 +5699,7 @@ ref<BackwardResult> Executor::goBackward(ref<BackwardAction> action) {
     if (DebugExecutor) {
       llvm::errs() << "Propagated pobs\n";
       for (auto &pob : newPobs) {
-        llvm::errs() << "Path: " << pob->path.toString() << "\n";
+        llvm::errs() << "Path: " << pob->condition.getPath() << "\n";
         llvm::errs() << "Constraints:\n" << pob->condition << "\n";
         llvm::errs() << "\n";
       }
@@ -5764,7 +5765,7 @@ int Executor::getBase(ref<Expr> expr,
   return 1;
 }
 
-int Executor::resolveLazyInstantiation(ExecutionState &state, 
+int Executor::resolveLazyInstantiation(ExecutionState &state,
   std::map<ref<Expr>, std::pair<Symbolic, ref<Expr>>> &resolved) {
   int status = 0;
   for (auto &symbolic : state.symbolics) {

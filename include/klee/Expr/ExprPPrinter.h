@@ -16,12 +16,12 @@ namespace llvm {
   class raw_ostream;
 }
 namespace klee {
-  class ConstraintSet;
+  class PathConstraints;
 
   class ExprPPrinter {
   protected:
     ExprPPrinter() {}
-    
+
   public:
     static ExprPPrinter *create(llvm::raw_ostream &os);
 
@@ -63,10 +63,10 @@ namespace klee {
     static void printSingleArray(llvm::raw_ostream &os, const Array *A);
 
     static void printConstraints(llvm::raw_ostream &os,
-                                 const ConstraintSet &constraints);
+                                 const PathConstraints &constraints);
 
     static void printQuery(llvm::raw_ostream &os,
-                           const ConstraintSet &constraints,
+                           const PathConstraints &constraints,
                            const ref<Expr> &q,
                            const ref<Expr> *evalExprsBegin = 0,
                            const ref<Expr> *evalExprsEnd = 0,

@@ -10,12 +10,12 @@
 #ifndef KLEE_EXECUTIONSTATE_H
 #define KLEE_EXECUTIONSTATE_H
 
-#include "Path.h"
+#include "klee/Core/Path.h"
 #include "ProofObligation.h"
 
 #include "AddressSpace.h"
 #include "MergeHandler.h"
-#include "Path.h"
+#include "klee/Core/Path.h"
 
 #include "klee/ADT/TreeStream.h"
 #include "klee/Expr/Constraints.h"
@@ -179,7 +179,7 @@ struct Target {
     return block == other.block;
   }
 
-  bool atReturn() const { return isa<KReturnBlock>(block); } 
+  bool atReturn() const { return isa<KReturnBlock>(block); }
 
   std::string print() const {
     std::string repr = "Target: ";
@@ -189,7 +189,7 @@ struct Target {
     }
     return repr;
   }
-  
+
 };
 
 /// @brief ExecutionState representing a path under exploration
@@ -241,9 +241,8 @@ public:
   /// @brief Address space used by this state (e.g. Global and Heap)
   AddressSpace addressSpace;
 
-  /// @brief Constraints collected so far
-  Constraints constraintInfos;
-  const ConstraintSet &constraints;
+  /// @brief Path with constraints collected so far
+  PathConstraints constraints;
 
   /// Statistics and information
 
@@ -309,8 +308,6 @@ public:
   /// @brief The target basic block that the state must achieve
   std::set<Target> targets;
 
-  Path path;
-
   /// @brief Index of current symbolic in case of pre-loaded symbolics.
   size_t symbolicCounter;
 
@@ -322,7 +319,7 @@ public:
 public:
   #ifdef KLEE_UNITTEST
   // provide this function only in the context of unittests
-  ExecutionState() : constraints(constraintInfos) {}
+  ExecutionState() {}
   #endif
   // only to create the initial state
   explicit ExecutionState(KFunction *kf);

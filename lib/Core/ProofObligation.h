@@ -2,7 +2,7 @@
 
 #include "Memory.h"
 
-#include "Path.h"
+#include "klee/Core/Path.h"
 #include "klee/Expr/Constraints.h"
 #include "klee/Module/KInstruction.h"
 #include "klee/Module/KModule.h"
@@ -32,8 +32,7 @@ public:
   std::map<ExecutionState *, unsigned> propagationCount;
 
   KBlock *location;
-  Constraints condition;
-  Path path;
+  PathConstraints condition;
 
   std::vector<std::pair<ref<const MemoryObject>, const Array *>> sourcedSymbolics;
 
@@ -42,7 +41,7 @@ public:
         stack(_parent ? _parent->stack : std::vector<KInstruction *>()),
         propagationCount(_parent ? _parent->propagationCount
                                  : std::map<ExecutionState *, unsigned>()),
-        location(_location), path({_location}) {
+        location(_location), condition(_location) {
     if (parent) {
       parent->children.insert(this);
     }
@@ -51,8 +50,7 @@ public:
   explicit ProofObligation(ProofObligation *pob)
       : id(counter++), parent(pob->parent), root(pob->root), stack(pob->stack),
         propagationCount(pob->propagationCount),
-        location(pob->location), condition(pob->condition),
-        path(pob->path) {
+        location(pob->location), condition(pob->condition) {
     if (parent) {
       parent->children.insert(this);
     }

@@ -1,4 +1,4 @@
-#include "Path.h"
+#include "klee/Core/Path.h"
 #include "klee/Module/KModule.h"
 
 #include "llvm/IR/BasicBlock.h"
@@ -24,6 +24,8 @@ KBlock *Path::getBlock(size_t index) const {
 }
 
 std::string Path::toString() const {
+  if (path.empty())
+    return "";
   unsigned stackCount = 0;
   std::string repr = "";
   for (size_t i = 0; i<path.size(); i++) {

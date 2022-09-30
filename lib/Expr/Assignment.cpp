@@ -26,8 +26,8 @@ void Assignment::dump() {
   }
 }
 
-ConstraintSet Assignment::createConstraintsFromAssignment() const {
-  ConstraintSet result;
+PathConstraints Assignment::createConstraintsFromAssignment() const {
+  PathConstraints result;
   for (const auto &binding : bindings) {
     const auto &array = binding.first;
     const auto &values = binding.second;

@@ -97,42 +97,60 @@ bool Composer::tryRebuild(const ProofObligation &old, ExecutionState &state,
                           ExprHashMap<ref<Expr>> &rebuildMap) {
   bool success = true;
   Composer composer(state);
-  for (auto &constraint : old.condition) {
-    auto loc = old.condition.getLocation(constraint);
-    ref<Expr> rebuiltConstraint;
-    success = composer.tryRebuild(constraint, rebuiltConstraint);
-    bool mayBeTrue = true;
-    std::vector<ref<Expr>> unsatCore;
-    time::Span timeout = executor->getSolverTimeout();
-    executor->getSolver()->setTimeout(timeout);
-    if (success) {
-      rebuildMap[rebuiltConstraint] = constraint;
-      success = executor->getSolver()->mayBeTrue(
-          composer.copy.constraints, rebuiltConstraint, mayBeTrue,
-          composer.copy.queryMetaData, true);
-      executor->getSolver()->popUnsatCore(unsatCore);
-      if (success && !mayBeTrue &&
-          // confclitCore needs for summarizing and should be non empty for
-          // that. It means that unsatCore sould be non empty or rebuilt
-          // constraint should be constant.
-          (unsatCore.size() || isa<ConstantExpr>(rebuiltConstraint))) {
-        Executor::makeConflictCore(composer.copy, unsatCore, rebuiltConstraint,
-                                   loc, conflictCore);
+  bool firstConstraint = true;
+
+  for (const auto &blockAndConstraints : old.condition.getConstraints()) {
+    auto block = blockAndConstraints.first;
+    if (block != nullptr) {
+      if (firstConstraint)
+        firstConstraint = false;
+      else {
+        composer.copy.constraints.append(block);
       }
     }
-    if (success && mayBeTrue) {
-      composer.copy.addConstraint(rebuiltConstraint, loc, &success);
-    } else {
-      success = false;
+    if (!success)
       break;
+    auto &constraints = blockAndConstraints.second;
+    for (const auto &locAndConstraint : constraints) {
+      auto loc = locAndConstraint.first;
+      auto &constraint = locAndConstraint.second;
+      ref<Expr> rebuiltConstraint;
+      success = composer.tryRebuild(constraint, rebuiltConstraint);
+      bool mayBeTrue = true;
+      std::vector<ref<Expr>> unsatCore;
+      time::Span timeout = executor->getSolverTimeout();
+      executor->getSolver()->setTimeout(timeout);
+      if (success) {
+        rebuildMap[rebuiltConstraint] = constraint;
+        success = executor->getSolver()->mayBeTrue(
+            composer.copy.constraints, rebuiltConstraint, mayBeTrue,
+            composer.copy.queryMetaData, true);
+        executor->getSolver()->popUnsatCore(unsatCore);
+        if (success && !mayBeTrue &&
+            // conflictCore needs for summarizing and should be non empty for
+            // that. It means that unsatCore should be non empty or rebuilt
+            // constraint should be constant.
+            (unsatCore.size() || isa<ConstantExpr>(rebuiltConstraint))) {
+          Executor::makeConflictCore(composer.copy, unsatCore, rebuiltConstraint,
+                                    loc, conflictCore);
+        }
+      }
+      if (success && mayBeTrue) {
+        composer.copy.addConstraint(rebuiltConstraint, loc, &success);
+      } else {
+        success = false;
+        break;
+      }
     }
   }
-  rebuilt.condition = composer.copy.constraintInfos;
-  std::vector<Symbolic> sourced;
-  executor->extractSourcedSymbolics(composer.copy, sourced);
-  rebuilt.sourcedSymbolics.insert(rebuilt.sourcedSymbolics.end(),
-                                  sourced.begin(), sourced.end());
-  rebuilt.path = concat(state.path, old.path);
+
+  if (success) {
+    rebuilt.condition = composer.copy.constraints;
+    std::vector<Symbolic> sourced;
+    executor->extractSourcedSymbolics(composer.copy, sourced);
+    rebuilt.sourcedSymbolics.insert(rebuilt.sourcedSymbolics.end(),
+                                    sourced.begin(), sourced.end());
+  }
   return success;
 }
 

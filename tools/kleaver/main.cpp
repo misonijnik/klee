@@ -132,8 +132,8 @@ static std::string escapedString(const char *start, unsigned length) {
     } else if (c == '\n') {
       s << "\\n";
     } else {
-      s << "\\x" 
-        << hexdigit(((unsigned char) c >> 4) & 0xF) 
+      s << "\\x"
+        << hexdigit(((unsigned char) c >> 4) & 0xF)
         << hexdigit((unsigned char) c & 0xF);
     }
   }
@@ -198,7 +198,7 @@ static bool EvaluateInputAST(const char *Filename,
   if (unsigned N = P->GetNumErrors()) {
     llvm::errs() << Filename << ": parse failure: " << N << " errors.\n";
     success = false;
-  }  
+  }
 
   if (!success)
     return false;
@@ -228,7 +228,7 @@ static bool EvaluateInputAST(const char *Filename,
       assert("FIXME: Support counterexample query commands!");
       if (QC->Values.empty() && QC->Objects.empty()) {
         bool result;
-        if (S->mustBeTrue(Query(ConstraintSet(QC->Constraints), QC->Query), result)) {
+        if (S->mustBeTrue(Query(PathConstraints(QC->Constraints), QC->Query), result)) {
           llvm::outs() << (result ? "VALID" : "INVALID");
         } else {
           llvm::outs() << "FAIL (reason: "
@@ -236,14 +236,14 @@ static bool EvaluateInputAST(const char *Filename,
                     << ")";
         }
       } else if (!QC->Values.empty()) {
-        assert(QC->Objects.empty() && 
+        assert(QC->Objects.empty() &&
                "FIXME: Support counterexamples for values and objects!");
         assert(QC->Values.size() == 1 &&
                "FIXME: Support counterexamples for multiple values!");
         assert(QC->Query->isFalse() &&
                "FIXME: Support counterexamples with non-trivial query!");
         ref<ConstantExpr> result;
-        if (S->getValue(Query(ConstraintSet(QC->Constraints), QC->Values[0]), result)) {
+        if (S->getValue(Query(PathConstraints(QC->Constraints), QC->Values[0]), result)) {
           llvm::outs() << "INVALID\n";
           llvm::outs() << "\tExpr 0:\t" << result;
         } else {
@@ -255,7 +255,7 @@ static bool EvaluateInputAST(const char *Filename,
         std::vector< std::vector<unsigned char> > result;
 
         if (S->getInitialValues(
-                Query(ConstraintSet(QC->Constraints), QC->Query), QC->Objects, result)) {
+                Query(PathConstraints(QC->Constraints), QC->Query), QC->Objects, result)) {
           llvm::outs() << "INVALID\n";
 
           for (unsigned i = 0, e = result.size(); i != e; ++i) {
@@ -277,7 +277,7 @@ static bool EvaluateInputAST(const char *Filename,
             llvm::outs() << " FAIL (reason: "
                       << SolverImpl::getOperationStatusString(retCode)
                       << ")";
-          }           
+          }
           else {
             llvm::outs() << "VALID (counterexample request ignored)";
           }
@@ -302,11 +302,11 @@ static bool EvaluateInputAST(const char *Filename,
       << "total queries = " << queries << '\n'
       << "total query constructs = "
       << *theStatisticManager->getStatisticByName("QueryConstructs") << '\n'
-      << "valid queries = " 
+      << "valid queries = "
       << *theStatisticManager->getStatisticByName("QueriesValid") << '\n'
-      << "invalid queries = " 
+      << "invalid queries = "
       << *theStatisticManager->getStatisticByName("QueriesInvalid") << '\n'
-      << "query cex = " 
+      << "query cex = "
       << *theStatisticManager->getStatisticByName("QueriesCEX") << '\n';
   }
 
@@ -361,7 +361,7 @@ static bool printInputAsSMTLIBv2(const char *Filename,
 			 * constraint in the constraint set is set to NULL and
 			 * will later cause a NULL pointer dereference.
 			 */
-                        ConstraintSet constraintM(QC->Constraints);
+                        PathConstraints constraintM(QC->Constraints);
                         Query query(constraintM, QC->Query);
                         printer.setQuery(query);
 
@@ -399,7 +399,7 @@ int main(int argc, char **argv) {
   llvm::cl::ParseCommandLineOptions(argc, argv);
 
   std::string ErrorStr;
-  
+
   auto MBResult = MemoryBuffer::getFileOrSTDIN(InputFile.c_str());
   if (!MBResult) {
     llvm::errs() << argv[0] << ": error: " << MBResult.getError().message()
@@ -407,7 +407,7 @@ int main(int argc, char **argv) {
     return 1;
   }
   std::unique_ptr<MemoryBuffer> &MB = *MBResult;
-  
+
   ExprBuilder *Builder = 0;
   switch (BuilderKind) {
   case DefaultBuilder:

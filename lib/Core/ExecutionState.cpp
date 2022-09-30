@@ -54,12 +54,12 @@ std::uint32_t ExecutionState::nextID = 1;
 /***/
 
 StackFrame::StackFrame(KInstIterator _caller, KFunction *_kf)
-  : caller(_caller), kf(_kf), callPathNode(0), 
+  : caller(_caller), kf(_kf), callPathNode(0),
     minDistToUncoveredOnReturn(0), varargs(0) {
   locals = new Cell[kf->numRegisters];
 }
 
-StackFrame::StackFrame(const StackFrame &s) 
+StackFrame::StackFrame(const StackFrame &s)
   : caller(s.caller),
     kf(s.kf),
     callPathNode(s.callPathNode),
@@ -71,7 +71,7 @@ StackFrame::StackFrame(const StackFrame &s)
     locals[i] = s.locals[i];
 }
 
-StackFrame::~StackFrame() { 
+StackFrame::~StackFrame() {
   delete[] locals;
 }
 
@@ -93,7 +93,7 @@ ExecutionState::ExecutionState(KFunction *kf) :
     stackBalance(0),
     incomingBBIndex(-1),
     depth(0),
-    constraints(constraintInfos),
+    constraints(kf->entryKBlock),
     ptreeNode(nullptr),
     steppedInstructions(0),
     steppedMemoryInstructions(0),
@@ -102,7 +102,6 @@ ExecutionState::ExecutionState(KFunction *kf) :
     forkDisabled(false),
     isolated(false),
     targets(),
-    path({kf->entryKBlock}),
     symbolicCounter(0),
     backwardStepsLeftCounter(0),
     failedBackwardStepsCounter(0) {
@@ -116,7 +115,7 @@ ExecutionState::ExecutionState(KFunction *kf, KBlock *kb) :
     stackBalance(0),
     incomingBBIndex(-1),
     depth(0),
-    constraints(constraintInfos),
+    constraints(kb),
     ptreeNode(nullptr),
     steppedInstructions(0),
     steppedMemoryInstructions(0),
@@ -125,7 +124,6 @@ ExecutionState::ExecutionState(KFunction *kf, KBlock *kb) :
     forkDisabled(false),
     isolated(false),
     targets(),
-    path({kb}),
     symbolicCounter(0),
     backwardStepsLeftCounter(0),
     failedBackwardStepsCounter(0) {
@@ -152,8 +150,7 @@ ExecutionState::ExecutionState(const ExecutionState& state):
     level(state.level),
     transitionLevel(state.transitionLevel),
     addressSpace(state.addressSpace),
-    constraintInfos(state.constraintInfos),
-    constraints(constraintInfos),
+    constraints(state.constraints),
     pathOS(state.pathOS),
     symPathOS(state.symPathOS),
     executionPath(state.executionPath),
@@ -171,7 +168,6 @@ ExecutionState::ExecutionState(const ExecutionState& state):
     forkDisabled(state.forkDisabled),
     isolated(state.isolated),
     targets(state.targets),
-    path(state.path),
     symbolicCounter(state.symbolicCounter),
     returnValue(state.returnValue),
     backwardStepsLeftCounter(0),
@@ -200,7 +196,7 @@ ExecutionState *ExecutionState::withKFunction(KFunction *kf) const {
   newState->initPC = kf->blockMap[&*kf->function->begin()]->instructions;
   newState->pc = newState->initPC;
   newState->prevPC = newState->pc;
-  newState->path = Path({kf->entryKBlock});
+  newState->constraints.setPath(kf->entryKBlock);
   return newState;
 }
 
@@ -213,7 +209,7 @@ ExecutionState *ExecutionState::withKBlock(KBlock *kb) const {
   newState->initPC = kb->instructions;
   newState->pc = newState->initPC;
   newState->prevPC = newState->pc;
-  newState->path = Path({kb});
+  newState->constraints.setPath(kb);
   return newState;
 }
 
@@ -229,7 +225,7 @@ ExecutionState *ExecutionState::withKInstruction(KInstruction *ki) const {
   }
   newState->pc = newState->initPC;
   newState->prevPC = newState->pc;
-  newState->path = Path({ki->parent});
+  newState->constraints.setPath(ki->parent);
   return newState;
 }
 
@@ -298,43 +294,9 @@ bool ExecutionState::merge(const ExecutionState &b) {
       return false;
   }
 
-  ExprHashSet aConstraints(constraints.begin(), constraints.end());
-  ExprHashSet bConstraints(b.constraints.begin(), 
-                           b.constraints.end());
-  ExprHashSet commonConstraints, aSuffix, bSuffix;
-  std::set_intersection(aConstraints.begin(), aConstraints.end(),
-                        bConstraints.begin(), bConstraints.end(),
-                        std::inserter(commonConstraints, commonConstraints.begin()));
-  std::set_difference(aConstraints.begin(), aConstraints.end(),
-                      commonConstraints.begin(), commonConstraints.end(),
-                      std::inserter(aSuffix, aSuffix.end()));
-  std::set_difference(bConstraints.begin(), bConstraints.end(),
-                      commonConstraints.begin(), commonConstraints.end(),
-                      std::inserter(bSuffix, bSuffix.end()));
-  if (DebugLogStateMerge) {
-    llvm::errs() << "\tconstraint prefix: [";
-    for (ExprHashSet::iterator it = commonConstraints.begin(),
-                                        ie = commonConstraints.end();
-         it != ie; ++it)
-      llvm::errs() << *it << ", ";
-    llvm::errs() << "]\n";
-    llvm::errs() << "\tA suffix: [";
-    for (ExprHashSet::iterator it = aSuffix.begin(),
-                                        ie = aSuffix.end();
-         it != ie; ++it)
-      llvm::errs() << *it << ", ";
-    llvm::errs() << "]\n";
-    llvm::errs() << "\tB suffix: [";
-    for (ExprHashSet::iterator it = bSuffix.begin(),
-                                        ie = bSuffix.end();
-         it != ie; ++it)
-      llvm::errs() << *it << ", ";
-    llvm::errs() << "]\n";
-  }
-
   // We cannot merge if addresses would resolve differently in the
   // states. This means:
-  // 
+  //
   // 1. Any objects created since the branch in either object must
   // have been free'd.
   //
@@ -346,7 +308,7 @@ bool ExecutionState::merge(const ExecutionState &b) {
     llvm::errs() << "A: " << addressSpace.objects << "\n";
     llvm::errs() << "B: " << b.addressSpace.objects << "\n";
   }
-    
+
   std::set<const MemoryObject*> mutated;
   MemoryMap::iterator ai = addressSpace.objects.begin();
   MemoryMap::iterator bi = b.addressSpace.objects.begin();
@@ -374,17 +336,11 @@ bool ExecutionState::merge(const ExecutionState &b) {
       llvm::errs() << "\t\tmappings differ\n";
     return false;
   }
-  
-  // merge stack
 
-  ref<Expr> inA = ConstantExpr::alloc(1, Expr::Bool);
-  ref<Expr> inB = ConstantExpr::alloc(1, Expr::Bool);
-  for (ExprHashSet::iterator it = aSuffix.begin(), 
-         ie = aSuffix.end(); it != ie; ++it)
-    inA = AndExpr::create(inA, *it);
-  for (ExprHashSet::iterator it = bSuffix.begin(), 
-         ie = bSuffix.end(); it != ie; ++it)
-    inB = AndExpr::create(inB, *it);
+  // merge constraint paths
+  auto inA = constraints.merge(b.constraints);
+
+  // merge stack
 
   // XXX should we have a preference as to which predicate to use?
   // it seems like it can make a difference, even though logically
@@ -407,12 +363,12 @@ bool ExecutionState::merge(const ExecutionState &b) {
     }
   }
 
-  for (std::set<const MemoryObject*>::iterator it = mutated.begin(), 
+  for (std::set<const MemoryObject*>::iterator it = mutated.begin(),
          ie = mutated.end(); it != ie; ++it) {
     const MemoryObject *mo = *it;
     const ObjectState *os = addressSpace.findObject(mo);
     const ObjectState *otherOS = b.addressSpace.findObject(mo);
-    assert(os && !os->readOnly && 
+    assert(os && !os->readOnly &&
            "objects mutated but not writable in merging state");
     assert(otherOS);
 
@@ -423,14 +379,6 @@ bool ExecutionState::merge(const ExecutionState &b) {
       wos->write(i, SelectExpr::create(inA, av, bv));
     }
   }
-
-  Constraints mergedConstraintInfos;
-  ConstraintManager m(mergedConstraintInfos);
-  for (const auto &constraint : commonConstraints)
-    m.addConstraint(constraint, constraintInfos.getLocation(constraint));
-  m.addConstraint(OrExpr::create(inA, inB), nullptr);
-
-  constraintInfos = mergedConstraintInfos;
 
   return true;
 }
@@ -470,7 +418,7 @@ void ExecutionState::dumpStack(llvm::raw_ostream &out) const {
 }
 
 void ExecutionState::addConstraint(ref<Expr> e, KInstruction *loc, bool *sat) {
-  ConstraintManager c(constraintInfos);
+  ConstraintManager c(constraints);
   c.addConstraint(e, loc, sat);
 }
 
@@ -526,7 +474,7 @@ bool ExecutionState::isIsolated() const {
   return isolated;
 }
 
-void ExecutionState::printCompareList(const ExecutionState &fst, const ExecutionState &snd, 
+void ExecutionState::printCompareList(const ExecutionState &fst, const ExecutionState &snd,
                                       llvm::raw_ostream &os) {
   os << divider(50) << divider(50) << divider(50);
   os << "STACK\n";
@@ -569,7 +517,7 @@ void ExecutionState::printCompareList(const ExecutionState &fst, const Execution
     else   onlyFirst.insert(obj.first);
   }
   for(const auto & obj : snd.addressSpace.objects) {
-    if(common.find(obj.first) == common.end()) 
+    if(common.find(obj.first) == common.end())
       onlySecond.insert(obj.first);
   }
   os << "Common objects : \n";

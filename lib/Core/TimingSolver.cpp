@@ -23,7 +23,7 @@ using namespace llvm;
 
 /***/
 
-bool TimingSolver::evaluate(const ConstraintSet &constraints, ref<Expr> expr,
+bool TimingSolver::evaluate(const PathConstraints &constraints, ref<Expr> expr,
                             Solver::Validity &result,
                             SolverQueryMetaData &metaData,
                             bool produceUnsatCore) {
@@ -46,7 +46,7 @@ bool TimingSolver::evaluate(const ConstraintSet &constraints, ref<Expr> expr,
   return success;
 }
 
-bool TimingSolver::mustBeTrue(const ConstraintSet &constraints, ref<Expr> expr,
+bool TimingSolver::mustBeTrue(const PathConstraints &constraints, ref<Expr> expr,
                               bool &result, SolverQueryMetaData &metaData,
                               bool produceUnsatCore) {
   // Fast path, to avoid timer and OS overhead.
@@ -68,14 +68,14 @@ bool TimingSolver::mustBeTrue(const ConstraintSet &constraints, ref<Expr> expr,
   return success;
 }
 
-bool TimingSolver::mustBeFalse(const ConstraintSet &constraints, ref<Expr> expr,
+bool TimingSolver::mustBeFalse(const PathConstraints &constraints, ref<Expr> expr,
                                bool &result, SolverQueryMetaData &metaData,
                                bool produceUnsatCore) {
   return mustBeTrue(constraints, Expr::createIsZero(expr), result, metaData,
                     produceUnsatCore);
 }
 
-bool TimingSolver::mayBeTrue(const ConstraintSet &constraints, ref<Expr> expr,
+bool TimingSolver::mayBeTrue(const PathConstraints &constraints, ref<Expr> expr,
                              bool &result, SolverQueryMetaData &metaData,
                              bool produceUnsatCore) {
   bool res;
@@ -85,7 +85,7 @@ bool TimingSolver::mayBeTrue(const ConstraintSet &constraints, ref<Expr> expr,
   return true;
 }
 
-bool TimingSolver::mayBeFalse(const ConstraintSet &constraints, ref<Expr> expr,
+bool TimingSolver::mayBeFalse(const PathConstraints &constraints, ref<Expr> expr,
                               bool &result, SolverQueryMetaData &metaData,
                               bool produceUnsatCore) {
   bool res;
@@ -95,7 +95,7 @@ bool TimingSolver::mayBeFalse(const ConstraintSet &constraints, ref<Expr> expr,
   return true;
 }
 
-bool TimingSolver::getValue(const ConstraintSet &constraints, ref<Expr> expr,
+bool TimingSolver::getValue(const PathConstraints &constraints, ref<Expr> expr,
                             ref<ConstantExpr> &result,
                             SolverQueryMetaData &metaData) {
   // Fast path, to avoid timer and OS overhead.
@@ -103,7 +103,7 @@ bool TimingSolver::getValue(const ConstraintSet &constraints, ref<Expr> expr,
     result = CE;
     return true;
   }
-  
+
   TimerStatIncrementer timer(stats::solverTime);
 
   if (simplifyExprs)
@@ -117,7 +117,7 @@ bool TimingSolver::getValue(const ConstraintSet &constraints, ref<Expr> expr,
 }
 
 bool TimingSolver::getInitialValues(
-    const ConstraintSet &constraints, const std::vector<const Array *> &objects,
+    const PathConstraints &constraints, const std::vector<const Array *> &objects,
     std::vector<std::vector<unsigned char>> &result,
     SolverQueryMetaData &metaData) {
   if (objects.empty())
@@ -134,7 +134,7 @@ bool TimingSolver::getInitialValues(
 }
 
 std::pair<ref<Expr>, ref<Expr>>
-TimingSolver::getRange(const ConstraintSet &constraints, ref<Expr> expr,
+TimingSolver::getRange(const PathConstraints &constraints, ref<Expr> expr,
                        SolverQueryMetaData &metaData) {
   TimerStatIncrementer timer(stats::solverTime);
   auto result = solver->getRange(Query(constraints, expr));

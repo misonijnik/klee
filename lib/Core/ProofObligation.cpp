@@ -41,7 +41,8 @@ ProofObligation *propagateToReturn(ProofObligation *pob,
                                    KBlock *returnBlock) {
   ProofObligation *ret = new ProofObligation(pob);
   ret->location = returnBlock;
-  ret->path.prepend(returnBlock);
+  ret->condition.remove_first();
+  ret->condition.prepend(returnBlock);
   ret->stack.push_back(callSite);
   return ret;
 }

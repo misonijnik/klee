@@ -898,3 +898,12 @@ KReturnBlock::KReturnBlock(KFunction *_kfunction, llvm::BasicBlock *block, KModu
                std::map<unsigned, KInstruction*> &reg2inst,
                KInstruction **instructionsKF)
   : KBlock::KBlock(_kfunction, block, km, registerMap, reg2inst, instructionsKF) {}
+
+KBlock::successor_iterator::successor_iterator(const KBlock *currentBlock) :
+  lastInstruction(currentBlock->getLastInstruction()->inst),
+  blockMap(currentBlock->parent->blockMap),
+  i(lastInstruction->getNumSuccessors()) {}
+
+KBlock::successor_iterator::successor_iterator(const KBlock *currentBlock, unsigned int ii) : successor_iterator(currentBlock) {
+  i = ii;
+}

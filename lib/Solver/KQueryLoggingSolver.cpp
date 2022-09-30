@@ -47,7 +47,7 @@ private :
                             evalArraysBegin, evalArraysEnd);
     }
 
-    virtual void printConstraints(const ConstraintSet &constraints) {
+    virtual void printConstraints(const PathConstraints &constraints) {
         printer->printConstraints(logBuffer, constraints);
     }
 
@@ -72,4 +72,3 @@ Solver *klee::createKQueryLoggingSolver(Solver *_solver, std::string path,
                                     time::Span minQueryTimeToLog, bool logTimedOut) {
   return new Solver(new KQueryLoggingSolver(_solver, path, minQueryTimeToLog, logTimedOut));
 }
-

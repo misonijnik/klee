@@ -79,7 +79,7 @@ private:
     return e->getWidth() != Expr::Bool;
   }
 
-  bool isVerySimple(const ref<Expr> &e) { 
+  bool isVerySimple(const ref<Expr> &e) {
     return isa<ConstantExpr>(e) || bindings.find(e)!=bindings.end();
   }
 
@@ -89,7 +89,7 @@ private:
 
 
   // document me!
-  bool isSimple(const ref<Expr> &e) { 
+  bool isSimple(const ref<Expr> &e) {
     if (isVerySimple(e)) {
       return true;
     } else if (const ReadExpr *re = dyn_cast<ReadExpr>(e)) {
@@ -110,7 +110,7 @@ private:
           return false;
       return true;
   }
-  
+
   void scanUpdate(const UpdateNode *un) {
     // FIXME: This needs to be non-recursive.
     if (un) {
@@ -182,7 +182,7 @@ public:
         updateBindings.insert(std::make_pair(un.get(), updateCounter++));
         openedList = nextShouldBreak = false;
      }
-    
+
       if (!openedList) {
         openedList = 1;
         PC << '[';
@@ -198,8 +198,8 @@ public:
       PC << "=";
       print(un->value, PC);
       //PC << ')';
-      
-      nextShouldBreak = !(isa<ConstantExpr>(un->index) && 
+
+      nextShouldBreak = !(isa<ConstantExpr>(un->index) &&
                           isa<ConstantExpr>(un->value));
     }
 
@@ -229,26 +229,26 @@ private:
     PC << e->getWidth();
   }
 
-  
+
   bool isReadExprAtOffset(ref<Expr> e, const ReadExpr *base, ref<Expr> offset) {
     const ReadExpr *re = dyn_cast<ReadExpr>(e.get());
-      
+
     // right now, all Reads are byte reads but some
     // transformations might change this
     if (!re || (re->getWidth() != Expr::Int8))
       return false;
-      
-    // Check if the index follows the stride. 
+
+    // Check if the index follows the stride.
     // FIXME: How aggressive should this be simplified. The
     // canonicalizing builder is probably the right choice, but this
     // is yet another area where we would really prefer it to be
     // global or else use static methods.
     return SubExpr::create(re->index, base->index) == offset;
   }
-  
-  
+
+
   /// hasOrderedReads: \arg e must be a ConcatExpr, \arg stride must
-  /// be 1 or -1.  
+  /// be 1 or -1.
   ///
   /// If all children of this Concat are reads or concats of reads
   /// with consecutive offsets according to the given \arg stride, it
@@ -258,34 +258,34 @@ private:
   const ReadExpr* hasOrderedReads(ref<Expr> e, int stride) {
     assert(e->getKind() == Expr::Concat);
     assert(stride == 1 || stride == -1);
-    
+
     const ReadExpr *base = dyn_cast<ReadExpr>(e->getKid(0));
-    
+
     // right now, all Reads are byte reads but some
     // transformations might change this
     if (!base || base->getWidth() != Expr::Int8)
       return NULL;
-    
+
     // Get stride expr in proper index width.
     Expr::Width idxWidth = base->index->getWidth();
     ref<Expr> strideExpr = ConstantExpr::alloc(stride, idxWidth);
     ref<Expr> offset = ConstantExpr::create(0, idxWidth);
-    
+
     e = e->getKid(1);
-    
+
     // concat chains are unbalanced to the right
     while (e->getKind() == Expr::Concat) {
       offset = AddExpr::create(offset, strideExpr);
       if (!isReadExprAtOffset(e->getKid(0), base, offset))
 	return NULL;
-      
+
       e = e->getKid(1);
     }
-    
+
     offset = AddExpr::create(offset, strideExpr);
     if (!isReadExprAtOffset(e, base, offset))
       return NULL;
-    
+
     if (stride == -1)
       return cast<ReadExpr>(e.get());
     else return base;
@@ -325,7 +325,7 @@ private:
 
   void printExpr(const Expr *ep, PrintContext &PC, unsigned indent, bool printConstWidth=false) {
     bool simple = hasSimpleKids(ep);
-    
+
     print(ep->getKid(0), PC);
     for (unsigned i=1; i<ep->getNumKids(); i++) {
       printSeparator(PC, simple, indent);
@@ -370,7 +370,7 @@ public:
     print(e, PC);
   }
 
-  void printConst(const ref<ConstantExpr> &e, PrintContext &PC, 
+  void printConst(const ref<ConstantExpr> &e, PrintContext &PC,
                   bool printWidth) {
     if (e->getWidth() == Expr::Bool)
       PC << (e->isTrue() ? "true" : "false");
@@ -443,7 +443,7 @@ public:
         } else if (e->getKind() == Expr::Concat || e->getKind() == Expr::SExt)
 	  printExpr(e.get(), PC, indent, true);
 	else
-          printExpr(e.get(), PC, indent);	
+          printExpr(e.get(), PC, indent);
         PC << ")";
       }
     }
@@ -465,7 +465,7 @@ ExprPPrinter *klee::ExprPPrinter::create(llvm::raw_ostream &os) {
 }
 
 void ExprPPrinter::printOne(llvm::raw_ostream &os,
-                            const char *message, 
+                            const char *message,
                             const ref<Expr> &e) {
   PPrinter p(os);
   p.scan(e);
@@ -509,7 +509,7 @@ void ExprPPrinter::printSingleArray(llvm::raw_ostream &os, const Array *A) {
 }
 
 void ExprPPrinter::printConstraints(llvm::raw_ostream &os,
-                                    const ConstraintSet &constraints) {
+                                    const PathConstraints &constraints) {
   printQuery(os, constraints, ConstantExpr::alloc(false, Expr::Bool));
 }
 
@@ -523,7 +523,7 @@ struct ArrayPtrsByName {
 }
 
 void ExprPPrinter::printQuery(llvm::raw_ostream &os,
-                              const ConstraintSet &constraints,
+                              const PathConstraints &constraints,
                               const ref<Expr> &q,
                               const ref<Expr> *evalExprsBegin,
                               const ref<Expr> *evalExprsEnd,
@@ -540,7 +540,7 @@ void ExprPPrinter::printQuery(llvm::raw_ostream &os,
     p.scan(*it);
 
   PrintContext PC(os);
-  
+
   // Print array declarations.
   if (printArrayDecls) {
     for (const Array * const* it = evalArraysBegin; it != evalArraysEnd; ++it)
@@ -570,7 +570,7 @@ void ExprPPrinter::printQuery(llvm::raw_ostream &os,
   }
 
   PC << "(query [";
-  
+
   // Ident at constraint list;
   unsigned indent = PC.pos;
   for (auto it = constraints.begin(), ie = constraints.end(); it != ie;) {
