@@ -133,7 +133,6 @@ cl::opt<bool> LazyInitialization(
      cl::init(true),
      cl::desc("Enable lazy initialization (default=true)"),
      cl::cat(ExecCat));
-
 } // namespace klee
 
 namespace {
@@ -157,6 +156,7 @@ cl::opt<bool> EmitAllErrors(
     cl::desc("Generate tests cases for all errors "
              "(default=false, i.e. one per (error,instruction) pair)"),
     cl::cat(TestGenCat));
+
 
 /* Constraint solving options */
 
@@ -312,12 +312,6 @@ cl::opt<unsigned long long> MaxInstructions(
     "max-instructions",
     cl::desc("Stop execution after this many instructions.  Set to 0 to disable (default=0)"),
     cl::init(0),
-    cl::cat(TerminationCat));
-
-cl::opt<unsigned long long> MaxCycles(
-    "max-cycles",
-    cl::desc("stop execution after visiting some basic block this amount of times (default=1)."),
-    cl::init(1),
     cl::cat(TerminationCat));
 
 cl::opt<unsigned>
@@ -3560,8 +3554,21 @@ void Executor::run(ExecutionState &initialState) {
 
   // main interpreter loop
   while (!states.empty() && !haltExecution) {
-    ExecutionState &state = searcher->selectState();
-    executeStep(state);
+    while (!searcher->empty() && !haltExecution) {
+      ExecutionState &state = searcher->selectState();
+      KInstruction *prevKI = state.prevPC;
+      KFunction *kf = prevKI->parent->parent;
+
+      if (prevKI->inst->isTerminator() &&
+          kmodule->mainFunctions.count(kf->function)) {
+        stateHistory->updateHistory(state);
+      }
+
+      executeStep(state);
+    }
+
+    if (searcher->empty())
+      haltExecution = true;
   }
 
   delete searcher;
@@ -3584,29 +3591,6 @@ void Executor::runWithTarget(ExecutionState &state, KFunction *kf,
   processTree = std::make_unique<PTree>(&state);
   targetedRun(state, target);
   processTree = nullptr;
-
-  if (statsTracker)
-    statsTracker->done();
-}
-
-void Executor::runGuided(ExecutionState &state, KFunction *kf) {
-  if (pathWriter)
-    state.pathOS = pathWriter->open();
-  if (symPathWriter)
-    state.symPathOS = symPathWriter->open();
-
-  if (statsTracker)
-    statsTracker->framePushed(state, 0);
-
-  processTree = std::make_unique<PTree>(&state);
-  guidedRun(state);
-  processTree = nullptr;
-
-  // hack to clear memory objects
-  delete memory;
-  memory = new MemoryManager(NULL);
-
-  clearGlobal();
 
   if (statsTracker)
     statsTracker->done();
@@ -3680,49 +3664,6 @@ void Executor::targetedRun(ExecutionState &initialState, KBlock *target) {
   haltExecution = false;
 }
 
-void Executor::guidedRun(ExecutionState &initialState) {
-  // Delay init till now so that ticks don't accrue during optimization and
-  // such.
-  timers.reset();
-
-  states.insert(&initialState);
-
-  if (usingSeeds) {
-    seed(initialState);
-  }
-
-  searcher =
-      new GuidedSearcher(constructUserSearcher(*this), *cfgDistance.get(),
-                         *stateHistory, pausedStates, MaxCycles - 1);
-
-  std::vector<ExecutionState *> newStates(states.begin(), states.end());
-  searcher->update(0, newStates, std::vector<ExecutionState *>());
-  // main interpreter loop
-  while (!states.empty() && !haltExecution) {
-    while (!searcher->empty() && !haltExecution) {
-      ExecutionState &state = searcher->selectState();
-      KInstruction *prevKI = state.prevPC;
-      KFunction *kf = prevKI->parent->parent;
-
-      if (prevKI->inst->isTerminator() &&
-          kmodule->mainFunctions.count(kf->function)) {
-        stateHistory->updateHistory(state);
-      }
-
-      executeStep(state);
-    }
-
-    if (searcher->empty())
-      haltExecution = true;
-  }
-
-  delete searcher;
-  searcher = nullptr;
-
-  doDumpStates();
-  haltExecution = false;
-}
-
 std::string Executor::getAddressInfo(ExecutionState &state, ref<Expr> address,
                                      const MemoryObject *mo) const {
   std::string Str;
@@ -3777,6 +3718,7 @@ std::string Executor::getAddressInfo(ExecutionState &state, ref<Expr> address,
 
   return info.str();
 }
+
 
 void Executor::terminateState(ExecutionState &state) {
   if (replayKTest && replayPosition!=replayKTest->numObjects) {
@@ -4867,14 +4809,6 @@ void Executor::runFunctionAsMain(Function *f,
 
   if (statsTracker)
     statsTracker->done();
-}
-
-void Executor::runMainAsGuided(Function *mainFn, int argc, char **argv,
-                               char **envp) {
-  ExecutionState *state = formState(mainFn, argc, argv, envp);
-  bindModuleConstants();
-  KFunction *kf = kmodule->functionMap[mainFn];
-  runGuided(*state, kf);
 }
 
 unsigned Executor::getPathStreamID(const ExecutionState &state) {

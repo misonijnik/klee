@@ -223,12 +223,10 @@ private:
 
   void executeInstruction(ExecutionState &state, KInstruction *ki);
   void targetedRun(ExecutionState &initialState, KBlock *target);
-  void guidedRun(ExecutionState &initialState);
 
   void seed(ExecutionState &initialState);
   void run(ExecutionState &initialState);
   void runWithTarget(ExecutionState &state, KFunction *kf, KBlock *target);
-  void runGuided(ExecutionState &state, KFunction *kf);
 
   // Given a concrete object in our [klee's] address space, add it to 
   // objects checked code can reference.
@@ -564,8 +562,6 @@ public:
   void runFunctionAsMain(llvm::Function *f, int argc, char **argv,
                          char **envp) override;
 
-  void runMainAsGuided(llvm::Function *f, int argc, char **argv,
-                              char **envp) override;
   /*** Runtime options ***/
 
   void setHaltExecution(bool value) override { haltExecution = value; }

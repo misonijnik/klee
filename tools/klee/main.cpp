@@ -118,11 +118,9 @@ namespace {
                 cl::cat(TestCaseCat));
 
   cl::opt<bool>
-  WriteStates("write-states",
-	      cl::init(false),
-	      cl::desc("Write state info for debug (default=false)"),
-	      cl::cat(TestCaseCat));
-
+      WriteStates("write-states", cl::init(false),
+                  cl::desc("Write state info for debug (default=false)"),
+                  cl::cat(TestCaseCat));
 
   /*** Startup options ***/
 
@@ -161,25 +159,7 @@ namespace {
   WarnAllExternals("warn-all-external-symbols",
                    cl::desc("Issue a warning on startup for all external symbols (default=false)."),
                    cl::cat(StartCat));
-
-  enum class ExecutionKind {
-    Basic, // Defualt symbolic execution
-    Guided,  // Use GuidedSearcher and guidedRun
-  };
-
-  cl::opt<ExecutionKind> ExecutionMode(
-      "execution-mode",
-      cl::values(clEnumValN(ExecutionKind::Basic, "basic",
-                            "Use basic klee symbolic execution"),
-                 clEnumValN(ExecutionKind::Guided, "guided",
-                            "Takes place in two steps. First, all acyclic "
-                            "paths are executed, "
-                            "then the execution is guided to sections of the "
-                            "program not yet covered. "
-                            "These steps are repeated until all blocks of the "
-                            "program are covered (default)")),
-      cl::init(ExecutionKind::Guided), cl::desc("Kind of execution mode"),
-      cl::cat(StartCat));
+  
 
   /*** Linking options ***/
 
@@ -1505,14 +1485,7 @@ int main(int argc, char **argv, char **envp) {
                    << " bytes)"
                    << " (" << ++i << "/" << kTestFiles.size() << ")\n";
       // XXX should put envp in .ktest ?
-      switch (ExecutionMode) {
-      case ExecutionKind::Basic:
-        interpreter->runFunctionAsMain(mainFn, out->numArgs, out->args, pEnvp);
-        break;
-      case ExecutionKind::Guided:
-        interpreter->runMainAsGuided(mainFn, out->numArgs, out->args, pEnvp);
-        break;
-      }
+      interpreter->runFunctionAsMain(mainFn, out->numArgs, out->args, pEnvp);
       if (interrupted) break;
     }
     interpreter->setReplayKTest(0);
@@ -1561,14 +1534,7 @@ int main(int argc, char **argv, char **envp) {
                    sys::StrError(errno).c_str());
       }
     }
-    switch (ExecutionMode) {
-    case ExecutionKind::Basic:
-      interpreter->runFunctionAsMain(mainFn, pArgc, pArgv, pEnvp);
-      break;
-    case ExecutionKind::Guided:
-      interpreter->runMainAsGuided(mainFn, pArgc, pArgv, pEnvp);
-      break;
-    }
+    interpreter->runFunctionAsMain(mainFn, pArgc, pArgv, pEnvp);
     while (!seeds.empty()) {
       kTest_free(seeds.back());
       seeds.pop_back();
