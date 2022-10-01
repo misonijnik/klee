@@ -186,7 +186,8 @@ StatsTracker::StatsTracker(Executor &_executor, std::string _objectFilename,
     totalBranches(0),
     totalInstructions(0),
     localInstructionCount(0),
-    updateMinDistToUncovered(_updateMinDistToUncovered) {
+    updateMinDistToUncovered(_updateMinDistToUncovered),
+    releaseStates(false) {
 
   const time::Span statsWriteInterval(StatsWriteInterval);
   if (StatsWriteAfterInstructions > 0 && statsWriteInterval)
@@ -201,7 +202,7 @@ StatsTracker::StatsTracker(Executor &_executor, std::string _objectFilename,
         "--istats-write-after-instructions cannot be enabled at the same "
         "time.");
 
-  const time::Span bCovCheckInterval{BCovCheckInterval};
+  time::Span bCovCheckInterval{BCovCheckInterval};
 
   KModule *km = executor.kmodule.get();
   if(CommitEvery > 0) {
@@ -303,16 +304,23 @@ StatsTracker::StatsTracker(Executor &_executor, std::string _objectFilename,
     }));
   }
 
-  covCheckAfterInstructions = stats::coveredInstructions + stats::uncoveredInstructions;
+  covCheckAfterInstructions = numBranches * (stats::coveredInstructions + stats::uncoveredInstructions);
 
   if (bCovCheckInterval) {
     executor.timers.add(std::make_unique<Timer>(bCovCheckInterval, [&] {
       if ((2 * fullBranches + partialBranches) > totalBranches) {
         totalBranches = 2 * fullBranches + partialBranches;
       } else {
-        klee_message("HaltTimer invoked due to absense of progress in branch "
-                     "coverage");
-        executor.setHaltExecution(true);
+        if (!releaseStates) {
+          klee_message("InhibitForking enabled due to absense of progress in "
+                       "branch coverage");
+          releaseStates = true;
+          executor.setInhibitForking(true);
+        } else {
+          klee_message("HaltTimer invoked due to absense of progress in branch "
+                       "coverage");
+          executor.setHaltExecution(true);
+        }
       }
     }));
   }
@@ -419,10 +427,17 @@ void StatsTracker::stepInstruction(ExecutionState &es) {
       totalInstructions = stats::coveredInstructions;
       localInstructionCount = 0;
     } else {
-      klee_message(
-          "InhibitForking enabled due to absense of progress in coverage");
-      UseCovCheck = false;
-      executor.setInhibitForking(true);
+      if (!releaseStates) {
+        klee_message(
+            "InhibitForking enabled due to absense of progress in coverage");
+        releaseStates = true;
+        localInstructionCount = 0;
+        executor.setInhibitForking(true);
+      } else {
+        klee_message(
+            "HaltTimer invoked due to absense of progress in coverage");
+        executor.setHaltExecution(true);
+      }
     }
   }
 }

@@ -56,6 +56,7 @@ namespace klee {
     CallPathManager callPathManager;
 
     bool updateMinDistToUncovered;
+    bool releaseStates;
 
   public:
     static bool useStatistics();
