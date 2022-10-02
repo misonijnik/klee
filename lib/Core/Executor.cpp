@@ -3578,24 +3578,6 @@ void Executor::run(ExecutionState &initialState) {
   haltExecution = false;
 }
 
-void Executor::runWithTarget(ExecutionState &state, KFunction *kf,
-                             KBlock *target) {
-  if (pathWriter)
-    state.pathOS = pathWriter->open();
-  if (symPathWriter)
-    state.symPathOS = symPathWriter->open();
-
-  if (statsTracker)
-    statsTracker->framePushed(state, 0);
-
-  processTree = std::make_unique<PTree>(&state);
-  targetedRun(state, target);
-  processTree = nullptr;
-
-  if (statsTracker)
-    statsTracker->done();
-}
-
 void Executor::executeStep(ExecutionState &state) {
   KInstruction *ki = state.pc;
   stepInstruction(state);
@@ -3611,57 +3593,6 @@ void Executor::executeStep(ExecutionState &state) {
     // update searchers when states were terminated early due to memory pressure
     updateStates(nullptr);
   }
-}
-
-void Executor::targetedRun(ExecutionState &initialState, KBlock *target) {
-  // Delay init till now so that ticks don't accrue during optimization and
-  // such.
-  timers.reset();
-
-  states.insert(&initialState);
-
-  std::unique_ptr<CodeGraphDistance> codeGraphDistance(new CodeGraphDistance());
-  TargetedSearcher *targetedSearcher = new TargetedSearcher(target, *codeGraphDistance.get());
-  searcher = targetedSearcher;
-
-  std::vector<ExecutionState *> newStates(states.begin(), states.end());
-  searcher->update(0, newStates, std::vector<ExecutionState *>());
-  // main interpreter loop
-  KInstruction *terminator =
-      target != nullptr ? target->instructions[target->numInstructions - 1]
-                        : nullptr;
-  while (!states.empty() && !haltExecution) {
-    if (!searcher->empty() && !haltExecution) {
-      ExecutionState &state = searcher->selectState();
-
-      KInstruction *ki = state.pc;
-
-      if (ki == terminator) {
-        terminateStateOnTerminator(state);
-        updateStates(&state);
-        continue;
-      }
-
-      executeStep(state);
-    }
-
-    if (targetedSearcher) {
-      newStates.clear();
-      newStates.push_back(targetedSearcher->result);
-      delete searcher;
-      targetedSearcher = nullptr;
-      searcher = constructUserSearcher(*this);
-      searcher->update(0, newStates, std::vector<ExecutionState *>());
-    } else {
-      break;
-    }
-  }
-
-  delete searcher;
-  searcher = nullptr;
-
-  doDumpStates();
-  haltExecution = false;
 }
 
 std::string Executor::getAddressInfo(ExecutionState &state, ref<Expr> address,
@@ -3800,14 +3731,7 @@ void Executor::terminateStateEarly(ExecutionState &state, const Twine &message,
         state, (message + "\n").str().c_str(),
         terminationTypeFileExtension(terminationType).c_str());
   }
-  terminateState(state);
-}
 
-void Executor::terminateStateOnTerminator(ExecutionState &state) {
-  if (shouldWriteTest(state) || (AlwaysOutputSeeds && seedMap.count(&state))) {
-    interpreterHandler->processTestCase(state, nullptr, nullptr);
-  }
-  stateHistory->updateHistory(state);
   terminateState(state);
 }
 
@@ -4485,7 +4409,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     } else if (LazyInitialization && isReadFromSymbolicArray(base) &&
                (isa<ReadExpr>(address) || isa<ConcatExpr>(address) ||
                 state.isGEPExpr(address))) {
-      ObjectPair p = lazyInitializeVariable(*unbound, base, target, size);
+      ObjectPair p = lazyInitializeObject(*unbound, base, target, size);
       assert(p.first && p.second);
 
       const MemoryObject *mo = p.first;
@@ -4536,15 +4460,7 @@ ObjectPair Executor::lazyInitialize(ExecutionState &state, bool isLocal,
   return op;
 }
 
-ObjectPair Executor::lazyInitializeAlloca(ExecutionState &state,
-                                           const MemoryObject *mo,
-                                           KInstruction *target, bool isLocal) {
-  ObjectPair op = lazyInitialize(state, isLocal, mo);
-  bindLocal(target, state, op.first->getBaseExpr());
-  return op;
-}
-
-ObjectPair Executor::lazyInitializeVariable(ExecutionState &state,
+ObjectPair Executor::lazyInitializeObject(ExecutionState &state,
                                              ref<Expr> address,
                                              KInstruction *target,
                                              uint64_t size) {
@@ -4558,7 +4474,10 @@ ObjectPair Executor::lazyInitializeVariable(ExecutionState &state,
   MemoryObject *mo =
       memory->allocate(size, false, /*isGlobal=*/false, allocSite,
                        /*allocationAlignment=*/8, address, timestamp);
-  return lazyInitialize(state, /*isLocal=*/false, mo);
+  executeMakeSymbolic(state, mo, "lazy_initialization", false);
+  ObjectPair op;
+  state.addressSpace.resolveOne(mo->getBaseConstantExpr().get(), op);
+  return op;
 }
 
 const Array *Executor::makeArray(ExecutionState &state, const uint64_t size,
@@ -4751,7 +4670,7 @@ void Executor::prepareSymbolicValue(ExecutionState &state, KInstruction *target)
         count = Expr::createZExtToPointerWidth(count);
         size = MulExpr::create(size, count);
       }
-      lazyInitializeVariable(state, result, target, elementSize);
+      lazyInitializeObject(state, result, target, elementSize);
   }
 }
 
@@ -4933,17 +4852,19 @@ void Executor::setInitializationGraph(const ExecutionState &state,
           klee_error("Offset resolution failure in setInitializationGraph");
         }
         ref<ConstantExpr> indexOffset;
-        success =
-            solver->getValue(state.constraints, pointer.second.second,
-                             indexOffset, state.queryMetaData);
+        success = solver->getValue(state.constraints, pointer.second.second,
+                                   indexOffset, state.queryMetaData);
         if (!success) {
-          klee_error("Index offset resolution failure in setInitializationGraph");
+          klee_error(
+              "Index offset resolution failure in setInitializationGraph");
         }
         Pointer o;
         o.offset = offset->getZExtValue();
         o.index = pointeeIndex;
         o.indexOffset = indexOffset->getZExtValue();
-        if (s[pointerIndex].count(o.offset) && s[pointerIndex][o.offset] != std::make_pair(o.index, o.indexOffset)) {
+        if (s[pointerIndex].count(o.offset) &&
+            s[pointerIndex][o.offset] !=
+                std::make_pair(o.index, o.indexOffset)) {
           assert(0 && "wft");
         }
         if (!s[pointerIndex].count(o.offset)) {

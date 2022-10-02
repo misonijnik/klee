@@ -222,11 +222,9 @@ private:
   void addHistoryResult(ExecutionState &state);
 
   void executeInstruction(ExecutionState &state, KInstruction *ki);
-  void targetedRun(ExecutionState &initialState, KBlock *target);
 
   void seed(ExecutionState &initialState);
   void run(ExecutionState &initialState);
-  void runWithTarget(ExecutionState &state, KFunction *kf, KBlock *target);
 
   // Given a concrete object in our [klee's] address space, add it to 
   // objects checked code can reference.
@@ -333,10 +331,7 @@ private:
   ObjectPair lazyInitialize(ExecutionState &state, bool isLocal,
                             const MemoryObject *mo);
 
-  ObjectPair lazyInitializeAlloca(ExecutionState &state, const MemoryObject *mo,
-                                  KInstruction *target, bool isLocal);
-
-  ObjectPair lazyInitializeVariable(ExecutionState &state, ref<Expr> address,
+  ObjectPair lazyInitializeObject(ExecutionState &state, ref<Expr> address,
                                     KInstruction *target, uint64_t size);
 
   void executeMakeSymbolic(ExecutionState &state, const MemoryObject *mo,
@@ -454,8 +449,6 @@ private:
                              StateTerminationType terminationType,
                              const llvm::Twine &longMessage = "",
                              const char *suffix = nullptr);
-
-  void terminateStateOnTerminator(ExecutionState &state);
 
   /// Call error handler and terminate state in case of execution errors
   /// (things that should not be possible, like illegal instruction or
