@@ -1259,7 +1259,7 @@ const Cell &Executor::eval(KInstruction *ki, unsigned index,
     unsigned index = vnumber;
     StackFrame &sf = state.stack.back();
     ref<Expr> reg = sf.locals[index].value;
-    if (isSymbolic && reg.isNull()) {
+    if (isSymbolic && !reg) {
       prepareSymbolicRegister(state, sf, index);
     }
     return sf.locals[index];

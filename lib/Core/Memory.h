@@ -120,7 +120,7 @@ public:
     this->name = name;
   }
 
-  bool isLazyInitialized() const { return !lazyInitializationSource.isNull(); }
+  bool isLazyInitialized() const { return bool(lazyInitializationSource); }
   ref<Expr> getLazyInitializationSource() const {
     return lazyInitializationSource;
   }
@@ -131,7 +131,7 @@ public:
     return ConstantExpr::create(address, Context::get().getPointerWidth());
   }
   ref<Expr> getBaseExpr() const {
-    if (lazyInitializationSource.isNull()) {
+    if (!lazyInitializationSource) {
       return getBaseConstantExpr();
     } else {
       return lazyInitializationSource;
