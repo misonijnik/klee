@@ -24,6 +24,7 @@
 #include <set>
 #include <vector>
 #include <map>
+#include <unordered_set>
 
 namespace llvm {
   class Type;
@@ -35,6 +36,7 @@ namespace klee {
 class Array;
 class ArrayCache;
 class ConstantExpr;
+class Expr;
 class ObjectState;
 class SymbolicSource;
 
@@ -91,6 +93,38 @@ Todo: Shouldn't bool \c Xor just be written as not equal?
 */
 
 class Expr {
+
+protected:
+  struct ExprHash {
+    unsigned operator()(Expr *const e) const { return e->hash(); }
+  };
+
+  struct ExprCmp {
+    bool operator()(Expr *const a, Expr *const b) const {
+      return a->compare(*b) == 0;
+    }
+  };
+
+  class ExprCacheSet {
+  public:
+    typedef std::unordered_set<Expr *, ExprHash, ExprCmp> CacheType;
+    CacheType cache;
+
+    ~ExprCacheSet() { for (auto &p : cache) { p->cached = false; } }
+  };
+
+  static std::unique_ptr<Expr::ExprCacheSet> cachedExpressions;
+  static ref<Expr> createCachedExpr(const ref<Expr> &e);
+  bool cached = false;
+  bool toBeCleared = false;
+
+public:
+  static void enableCache() {
+    cachedExpressions =
+        std::unique_ptr<Expr::ExprCacheSet>(new Expr::ExprCacheSet());
+  }
+  bool isCached() const { return cached; }
+
 public:
   static unsigned count;
   static const unsigned MAGIC_HASH_CONSTANT = 39;
@@ -209,7 +243,7 @@ protected:
 
 public:
   Expr() { Expr::count++; }
-  virtual ~Expr() { Expr::count--; } 
+  virtual ~Expr();
 
   virtual Kind getKind() const = 0;
   virtual Width getWidth() const = 0;
@@ -424,7 +458,7 @@ public:
   static ref<Expr> alloc(const ref<Expr> &src) {
     ref<Expr> r(new NotOptimizedExpr(src));
     r->computeHash();
-    return r;
+    return createCachedExpr(r);
   }
   
   static ref<Expr> create(ref<Expr> src);
@@ -594,7 +628,7 @@ public:
   static ref<Expr> alloc(const UpdateList &updates, const ref<Expr> &index) {
     ref<Expr> r(new ReadExpr(updates, index));
     r->computeHash();
-    return r;
+    return createCachedExpr(r);
   }
   
   static ref<Expr> create(const UpdateList &updates, ref<Expr> i);
@@ -639,7 +673,7 @@ public:
                          const ref<Expr> &f) {
     ref<Expr> r(new SelectExpr(c, t, f));
     r->computeHash();
-    return r;
+    return createCachedExpr(r);
   }
   
   static ref<Expr> create(ref<Expr> c, ref<Expr> t, ref<Expr> f);
@@ -702,7 +736,7 @@ public:
   static ref<Expr> alloc(const ref<Expr> &l, const ref<Expr> &r) {
     ref<Expr> c(new ConcatExpr(l, r));
     c->computeHash();
-    return c;
+    return createCachedExpr(c);
   }
   
   static ref<Expr> create(const ref<Expr> &l, const ref<Expr> &r);
@@ -769,7 +803,7 @@ public:
   static ref<Expr> alloc(const ref<Expr> &e, unsigned o, Width w) {
     ref<Expr> r(new ExtractExpr(e, o, w));
     r->computeHash();
-    return r;
+    return createCachedExpr(r);
   }
   
   /// Creates an ExtractExpr with the given bit offset and width
@@ -820,7 +854,7 @@ public:
   static ref<Expr> alloc(const ref<Expr> &e) {
     ref<Expr> r(new NotExpr(e));
     r->computeHash();
-    return r;
+    return createCachedExpr(r);
   }
   
   static ref<Expr> create(const ref<Expr> &e);
@@ -887,31 +921,30 @@ public:
   static bool classof(const CastExpr *) { return true; }
 };
 
-#define CAST_EXPR_CLASS(_class_kind)                             \
-class _class_kind ## Expr : public CastExpr {                    \
-public:                                                          \
-  static const Kind kind = _class_kind;                          \
-  static const unsigned numKids = 1;                             \
-public:                                                          \
-    _class_kind ## Expr(ref<Expr> e, Width w) : CastExpr(e,w) {} \
-    static ref<Expr> alloc(const ref<Expr> &e, Width w) {        \
-      ref<Expr> r(new _class_kind ## Expr(e, w));                \
-      r->computeHash();                                          \
-      return r;                                                  \
-    }                                                            \
-    static ref<Expr> create(const ref<Expr> &e, Width w);        \
-    Kind getKind() const { return _class_kind; }                 \
-    virtual ref<Expr> rebuild(ref<Expr> kids[]) const {          \
-      return create(kids[0], width);                             \
-    }                                                            \
-                                                                 \
-    static bool classof(const Expr *E) {                         \
-      return E->getKind() == Expr::_class_kind;                  \
-    }                                                            \
-    static bool classof(const  _class_kind ## Expr *) {          \
-      return true;                                               \
-    }                                                            \
-};                                                               \
+#define CAST_EXPR_CLASS(_class_kind)                                           \
+  class _class_kind##Expr : public CastExpr {                                  \
+  public:                                                                      \
+    static const Kind kind = _class_kind;                                      \
+    static const unsigned numKids = 1;                                         \
+                                                                               \
+  public:                                                                      \
+    _class_kind##Expr(ref<Expr> e, Width w) : CastExpr(e, w) {}                \
+    static ref<Expr> alloc(const ref<Expr> &e, Width w) {                      \
+      ref<Expr> r(new _class_kind##Expr(e, w));                                \
+      r->computeHash();                                                        \
+      return createCachedExpr(r);                                              \
+    }                                                                          \
+    static ref<Expr> create(const ref<Expr> &e, Width w);                      \
+    Kind getKind() const { return _class_kind; }                               \
+    virtual ref<Expr> rebuild(ref<Expr> kids[]) const {                        \
+      return create(kids[0], width);                                           \
+    }                                                                          \
+                                                                               \
+    static bool classof(const Expr *E) {                                       \
+      return E->getKind() == Expr::_class_kind;                                \
+    }                                                                          \
+    static bool classof(const _class_kind##Expr *) { return true; }            \
+  };
 
 CAST_EXPR_CLASS(SExt)
 CAST_EXPR_CLASS(ZExt)
@@ -930,7 +963,7 @@ CAST_EXPR_CLASS(ZExt)
     static ref<Expr> alloc(const ref<Expr> &l, const ref<Expr> &r) {           \
       ref<Expr> res(new _class_kind##Expr(l, r));                              \
       res->computeHash();                                                      \
-      return res;                                                              \
+      return createCachedExpr(res);                                            \
     }                                                                          \
     static ref<Expr> create(const ref<Expr> &l, const ref<Expr> &r);           \
     Width getWidth() const { return left->getWidth(); }                        \
@@ -979,7 +1012,7 @@ ARITHMETIC_EXPR_CLASS(AShr)
     static ref<Expr> alloc(const ref<Expr> &l, const ref<Expr> &r) {           \
       ref<Expr> res(new _class_kind##Expr(l, r));                              \
       res->computeHash();                                                      \
-      return res;                                                              \
+      return createCachedExpr(res);                                            \
     }                                                                          \
     static ref<Expr> create(const ref<Expr> &l, const ref<Expr> &r);           \
     Kind getKind() const { return _class_kind; }                               \
@@ -1084,7 +1117,7 @@ public:
   static ref<ConstantExpr> alloc(const llvm::APInt &v) {
     ref<ConstantExpr> r(new ConstantExpr(v));
     r->computeHash();
-    return r;
+    return createCachedExpr(r);
   }
 
   static ref<ConstantExpr> alloc(const llvm::APFloat &f) {
