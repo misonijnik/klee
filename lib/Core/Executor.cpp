@@ -57,8 +57,6 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/BasicBlock.h"
-#include "llvm/Support/Casting.h"
-#include <utility>
 #if LLVM_VERSION_CODE < LLVM_VERSION(8, 0)
 #include "llvm/IR/CallSite.h"
 #endif
@@ -70,6 +68,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
@@ -94,6 +93,7 @@ typedef unsigned TypeSize;
 #include <sstream>
 #include <string>
 #include <sys/mman.h>
+#include <utility>
 #include <vector>
 
 using namespace llvm;
@@ -4756,7 +4756,7 @@ void Executor::prepareSymbolicValue(ExecutionState &state, KInstruction *target)
 }
 
 void Executor::prepareSymbolicRegister(ExecutionState &state, StackFrame &sf, unsigned regNum) {
-  KInstruction *allocInst = sf.kf->reg2inst[regNum];
+  KInstruction *allocInst = sf.kf->registerToInstructionMap[regNum];
   prepareSymbolicValue(state, allocInst);
 }
 

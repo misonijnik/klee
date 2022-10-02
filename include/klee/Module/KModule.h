@@ -69,9 +69,9 @@ namespace klee {
     KBlock(const KBlock &) = delete;
     KBlock &operator=(const KBlock &) = delete;
 
-    void handleKInstruction(std::map<llvm::Instruction*, unsigned> &registerMap,
-                            llvm::Instruction *inst, KModule *km,
-                            KInstruction *ki);
+    void handleKInstruction(
+        std::map<llvm::Instruction *, unsigned> &instructionToRegisterMap,
+        llvm::Instruction *inst, KModule *km, KInstruction *ki);
     virtual KBlockType getKBlockType() const { return KBlockType::Base; };
     virtual ~KBlock() = default;
   };
@@ -94,7 +94,7 @@ namespace klee {
 
     unsigned numArgs, numRegisters;
 
-    std::map<unsigned, KInstruction *> reg2inst;
+    std::map<unsigned, KInstruction *> registerToInstructionMap;
     unsigned numInstructions;
     unsigned numBlocks;
     KInstruction **instructions;
