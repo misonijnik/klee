@@ -303,7 +303,6 @@ void KModule::optimiseAndPrepare(
   pm3.run(*module);
 }
 
-
 void KModule::manifest(InterpreterHandler *ih, bool forceSourceOutput) {
   if (OutputSource || forceSourceOutput) {
     std::unique_ptr<llvm::raw_fd_ostream> os(ih->openOutputFile("assembly.ll"));
