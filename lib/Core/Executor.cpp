@@ -36,7 +36,7 @@
 #include "klee/Expr/ExprSMTLIBPrinter.h"
 #include "klee/Expr/ExprUtil.h"
 #include "klee/Module/Cell.h"
-#include "klee/Module/CFGDistance.h"
+#include "klee/Module/CodeGraphDistance.h"
 #include "klee/Module/InstructionInfoTable.h"
 #include "klee/Module/KInstruction.h"
 #include "klee/Module/KModule.h"
@@ -450,7 +450,7 @@ Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
     : Interpreter(opts), interpreterHandler(ih), searcher(0),
       externalDispatcher(new ExternalDispatcher(ctx)), statsTracker(0),
       pathWriter(0), symPathWriter(0), specialFunctionHandler(0), timers{time::Span(TimerInterval)},
-      cfgDistance(new CFGDistance()), replayKTest(0), replayPath(0), usingSeeds(0),
+      codeGraphDistance(new CodeGraphDistance()), replayKTest(0), replayPath(0), usingSeeds(0),
       atMemoryLimit(false), inhibitForking(false), haltExecution(false),
       ivcEnabled(false), debugLogBuffer(debugBufferString) {
 
@@ -570,7 +570,7 @@ Executor::setModule(std::vector<std::unique_ptr<llvm::Module>> &modules,
   Context::initialize(TD->isLittleEndian(),
                       (Expr::Width)TD->getPointerSizeInBits());
 
-  stateHistory = new StateHistory(*kmodule.get(), *cfgDistance.get());
+  stateHistory = new StateHistory(*kmodule.get(), *codeGraphDistance.get());
 
   return kmodule->module.get();
 }
@@ -3620,8 +3620,8 @@ void Executor::targetedRun(ExecutionState &initialState, KBlock *target) {
 
   states.insert(&initialState);
 
-  std::unique_ptr<CFGDistance> cfgDistance(new CFGDistance());
-  TargetedSearcher *targetedSearcher = new TargetedSearcher(target, *cfgDistance.get());
+  std::unique_ptr<CodeGraphDistance> codeGraphDistance(new CodeGraphDistance());
+  TargetedSearcher *targetedSearcher = new TargetedSearcher(target, *codeGraphDistance.get());
   searcher = targetedSearcher;
 
   std::vector<ExecutionState *> newStates(states.begin(), states.end());

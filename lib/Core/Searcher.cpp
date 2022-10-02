@@ -20,7 +20,7 @@
 #include "klee/ADT/WeightedQueue.h"
 #include "klee/ADT/RNG.h"
 #include "klee/Statistics/Statistics.h"
-#include "klee/Module/CFGDistance.h"
+#include "klee/Module/CodeGraphDistance.h"
 #include "klee/Module/InstructionInfoTable.h"
 #include "klee/Module/KInstruction.h"
 #include "klee/Module/KModule.h"
@@ -159,19 +159,19 @@ static unsigned int ulog2(unsigned int val) {
   return ret;
 }
 
-TargetedSearcher::TargetedSearcher(KBlock *targetBB, CFGDistance &_distance)
+TargetedSearcher::TargetedSearcher(KBlock *targetBB, CodeGraphDistance &_distance)
     : states(std::make_unique<
              WeightedQueue<ExecutionState *, ExecutionStateIDCompare>>()),
-      target(targetBB), cfgDistance(_distance),
+      target(targetBB), codeGraphDistance(_distance),
       distanceToTargetFunction(
-          cfgDistance.getBackwardDistance(target->parent)) {}
+          codeGraphDistance.getBackwardDistance(target->parent)) {}
 
 ExecutionState &TargetedSearcher::selectState() { return *states->choose(0); }
 
 bool TargetedSearcher::distanceInCallGraph(KFunction *kf, KBlock *kb,
                                            unsigned int &distance) {
   distance = UINT_MAX;
-  const std::unordered_map<KBlock *, unsigned> &dist = cfgDistance.getDistance(kb);
+  const std::unordered_map<KBlock *, unsigned> &dist = codeGraphDistance.getDistance(kb);
 
   if (kf == target->parent && dist.count(target) != 0) {
     distance = 0;
@@ -197,7 +197,7 @@ TargetedSearcher::tryGetLocalWeight(ExecutionState *es, weight_type &weight,
   unsigned int intWeight = es->steppedMemoryInstructions;
   KFunction *currentKF = es->stack.back().kf;
   KBlock *currentKB = currentKF->blockMap[es->getPCBlock()];
-  const std::unordered_map<KBlock *, unsigned> &dist = cfgDistance.getDistance(currentKB);
+  const std::unordered_map<KBlock *, unsigned> &dist = codeGraphDistance.getDistance(currentKB);
   unsigned int localWeight = UINT_MAX;
   for (auto &end : localTargets) {
     if (dist.count(end) > 0) {
@@ -358,11 +358,11 @@ void TargetedSearcher::printName(llvm::raw_ostream &os) {
 }
 
 GuidedSearcher::GuidedSearcher(
-    Searcher *_baseSearcher, CFGDistance &cfgDistance,
+    Searcher *_baseSearcher, CodeGraphDistance &codeGraphDistance,
     StateHistory &stateHistory,
     std::set<ExecutionState *, ExecutionStateIDCompare> &pausedStates,
     std::size_t bound)
-    : baseSearcher(_baseSearcher), cfgDistance(cfgDistance),
+    : baseSearcher(_baseSearcher), codeGraphDistance(codeGraphDistance),
       stateHistory(stateHistory), pausedStates(pausedStates), bound(bound) {}
 
 ExecutionState &GuidedSearcher::selectState() {
@@ -474,7 +474,7 @@ void GuidedSearcher::printName(llvm::raw_ostream &os) {
 
 void GuidedSearcher::addTarget(KBlock *target) {
   targetedSearchers[target] =
-      std::make_unique<TargetedSearcher>(target, cfgDistance);
+      std::make_unique<TargetedSearcher>(target, codeGraphDistance);
 }
 
 ///
@@ -901,7 +901,7 @@ KBlock *StateHistory::calculateTargetByBlockHistory(ExecutionState &state) {
        sfi++, sfNum++) {
     kf = sfi->kf;
 
-    for (const auto &kbd : cfgDistance.getSortedDistance(kb)) {
+    for (const auto &kbd : codeGraphDistance.getSortedDistance(kb)) {
       KBlock *target = kbd.first;
       unsigned distance = kbd.second;
       if ((sfNum > 0 || distance > 0)) {
@@ -955,7 +955,7 @@ StateHistory::calculateTargetByTransitionHistory(ExecutionState &state) {
        sfi++, sfNum++) {
     kf = sfi->kf;
 
-    for (const auto &kbd : cfgDistance.getSortedDistance(kb)) {
+    for (const auto &kbd : codeGraphDistance.getSortedDistance(kb)) {
       KBlock *target = kbd.first;
       unsigned distance = kbd.second;
       if ((sfNum > 0 || distance > 0)) {

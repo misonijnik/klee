@@ -1,4 +1,4 @@
-//===-- CFGDistance.cpp ---------------------------------------------------===//
+//===-- CodeGraphDistance.cpp ---------------------------------------------------===//
 //
 //                     The KLEE Symbolic Virtual Machine
 //
@@ -7,7 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "klee/Module/CFGDistance.h"
+#include "klee/Module/CodeGraphDistance.h"
 #include "llvm/IR/CFG.h"
 
 #include <deque>
@@ -15,7 +15,7 @@
 
 using namespace klee;
 
-void CFGDistance::calculateDistance(KBlock *bb) {
+void CodeGraphDistance::calculateDistance(KBlock *bb) {
   auto blockMap = bb->parent->blockMap;
   std::unordered_map<KBlock *, unsigned int> &dist = blockDistance[bb];
   std::vector<std::pair<KBlock *, unsigned>> &sort = blockSortedDistance[bb];
@@ -36,7 +36,7 @@ void CFGDistance::calculateDistance(KBlock *bb) {
   }
 }
 
-void CFGDistance::calculateBackwardDistance(KBlock *bb) {
+void CodeGraphDistance::calculateBackwardDistance(KBlock *bb) {
   auto blockMap = bb->parent->blockMap;
   std::unordered_map<KBlock *, unsigned int> &bdist = blockBackwardDistance[bb];
   std::vector<std::pair<KBlock *, unsigned>> &bsort =
@@ -58,7 +58,7 @@ void CFGDistance::calculateBackwardDistance(KBlock *bb) {
   }
 }
 
-void CFGDistance::calculateDistance(KFunction *kf) {
+void CodeGraphDistance::calculateDistance(KFunction *kf) {
   auto functionMap = kf->parent->functionMap;
   std::unordered_map<KFunction *, unsigned int> &dist = functionDistance[kf];
   std::vector<std::pair<KFunction *, unsigned>> &sort =
@@ -85,7 +85,7 @@ void CFGDistance::calculateDistance(KFunction *kf) {
   }
 }
 
-void CFGDistance::calculateBackwardDistance(KFunction *kf) {
+void CodeGraphDistance::calculateBackwardDistance(KFunction *kf) {
   auto functionMap = kf->parent->functionMap;
   auto callMap = kf->parent->callMap;
   std::unordered_map<KFunction *, unsigned int> &bdist = functionBackwardDistance[kf];
@@ -112,55 +112,55 @@ void CFGDistance::calculateBackwardDistance(KFunction *kf) {
   }
 }
 
-const std::unordered_map<KBlock *, unsigned> &CFGDistance::getDistance(KBlock *kb) {
+const std::unordered_map<KBlock *, unsigned> &CodeGraphDistance::getDistance(KBlock *kb) {
   if (blockDistance.count(kb) == 0)
     calculateDistance(kb);
   return blockDistance[kb];
 }
 
 const std::unordered_map<KBlock *, unsigned> &
-CFGDistance::getBackwardDistance(KBlock *kb) {
+CodeGraphDistance::getBackwardDistance(KBlock *kb) {
   if (blockBackwardDistance.count(kb) == 0)
     calculateBackwardDistance(kb);
   return blockBackwardDistance[kb];
 }
 
 const std::vector<std::pair<KBlock *, unsigned int>> &
-CFGDistance::getSortedDistance(KBlock *kb) {
+CodeGraphDistance::getSortedDistance(KBlock *kb) {
   if (blockDistance.count(kb) == 0)
     calculateDistance(kb);
   return blockSortedDistance[kb];
 }
 
 const std::vector<std::pair<KBlock *, unsigned int>> &
-CFGDistance::getSortedBackwardDistance(KBlock *kb) {
+CodeGraphDistance::getSortedBackwardDistance(KBlock *kb) {
   if (blockBackwardDistance.count(kb) == 0)
     calculateBackwardDistance(kb);
   return blockSortedBackwardDistance[kb];
 }
 
-const std::unordered_map<KFunction *, unsigned> &CFGDistance::getDistance(KFunction *kf) {
+const std::unordered_map<KFunction *, unsigned> &CodeGraphDistance::getDistance(KFunction *kf) {
   if (functionDistance.count(kf) == 0)
     calculateDistance(kf);
   return functionDistance[kf];
 }
 
 const std::unordered_map<KFunction *, unsigned> &
-CFGDistance::getBackwardDistance(KFunction *kf) {
+CodeGraphDistance::getBackwardDistance(KFunction *kf) {
   if (functionBackwardDistance.count(kf) == 0)
     calculateBackwardDistance(kf);
   return functionBackwardDistance[kf];
 }
 
 const std::vector<std::pair<KFunction *, unsigned int>> &
-CFGDistance::getSortedDistance(KFunction *kf) {
+CodeGraphDistance::getSortedDistance(KFunction *kf) {
   if (functionDistance.count(kf) == 0)
     calculateDistance(kf);
   return functionSortedDistance[kf];
 }
 
 const std::vector<std::pair<KFunction *, unsigned int>> &
-CFGDistance::getSortedBackwardDistance(KFunction *kf) {
+CodeGraphDistance::getSortedBackwardDistance(KFunction *kf) {
   if (functionBackwardDistance.count(kf) == 0)
     calculateBackwardDistance(kf);
   return functionSortedBackwardDistance[kf];

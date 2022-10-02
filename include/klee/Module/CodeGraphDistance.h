@@ -1,4 +1,4 @@
-//===-- CFGDistance.h -------------------------------------------*- C++ -*-===//
+//===-- CodeGraphDistance.h -------------------------------------------*- C++ -*-===//
 //
 //                     The KLEE Symbolic Virtual Machine
 //
@@ -7,8 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef KLEE_CFGDISTANCE_H
-#define KLEE_CFGDISTANCE_H
+#ifndef KLEE_CODEGRAPHGDISTANCE_H
+#define KLEE_CODEGRAPHGDISTANCE_H
 
 #include "klee/Module/KModule.h"
 
@@ -16,7 +16,7 @@
 
 namespace klee {
 
-class CFGDistance {
+class CodeGraphDistance {
 
   using blockDistanceMap = std::unordered_map<KBlock *, std::unordered_map<KBlock *, unsigned>>;
   using blockDistanceList =
@@ -63,4 +63,4 @@ public:
 
 } // namespace klee
 
-#endif /* KLEE_CFGDISTANCE_H */
+#endif /* KLEE_CODEGRAPHGDISTANCE_H */

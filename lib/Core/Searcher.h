@@ -32,7 +32,7 @@ namespace llvm {
 }
 
 namespace klee {
-  class CFGDistance;
+  class CodeGraphDistance;
   template<class T, class Comparator> class DiscretePDF;
   template<class T, class Comparator> class WeightedQueue;
   class ExecutionState;
@@ -141,8 +141,8 @@ namespace klee {
     KBlock *calculateTargetByTransitionHistory(ExecutionState &state);
     KBlock *calculateTargetByBlockHistory(ExecutionState &state);
 
-    StateHistory(const KModule &module, CFGDistance &cfgDistance)
-        : module(module), cfgDistance(cfgDistance) {}
+    StateHistory(const KModule &module, CodeGraphDistance &codeGraphDistance)
+        : module(module), codeGraphDistance(codeGraphDistance) {}
 
     void updateHistory(ExecutionState &state) {
       results[state.getInitPCBlock()].history[state.getPrevPCBlock()].insert(
@@ -151,7 +151,7 @@ namespace klee {
 
   private:
     const KModule &module;
-    CFGDistance &cfgDistance;
+    CodeGraphDistance &codeGraphDistance;
     ExecutionResult results;
   };
 
@@ -170,7 +170,7 @@ namespace klee {
     std::unique_ptr<WeightedQueue<ExecutionState *, ExecutionStateIDCompare>>
         states;
     KBlock *target;
-    CFGDistance &cfgDistance;
+    CodeGraphDistance &codeGraphDistance;
     const std::unordered_map<KFunction *, unsigned int> &distanceToTargetFunction;
 
     bool distanceInCallGraph(KFunction *kf, KBlock *kb, unsigned int &distance);
@@ -183,7 +183,7 @@ namespace klee {
 
   public:
     ExecutionState *result = nullptr;
-    TargetedSearcher(KBlock *targetBB, CFGDistance &distance);
+    TargetedSearcher(KBlock *targetBB, CodeGraphDistance &distance);
     ~TargetedSearcher() override = default;
     ExecutionState &selectState() override;
     void update(ExecutionState *current,
@@ -198,7 +198,7 @@ namespace klee {
   private:
     std::unique_ptr<Searcher> baseSearcher;
     std::map<KBlock *, std::unique_ptr<TargetedSearcher>> targetedSearchers;
-    CFGDistance &cfgDistance;
+    CodeGraphDistance &codeGraphDistance;
     StateHistory &stateHistory;
     std::set<ExecutionState *, ExecutionStateIDCompare> &pausedStates;
     std::size_t bound;
@@ -207,7 +207,7 @@ namespace klee {
 
   public:
     GuidedSearcher(
-        Searcher *baseSearcher, CFGDistance &cfgDistance,
+        Searcher *baseSearcher, CodeGraphDistance &codeGraphDistance,
         StateHistory &stateHistory,
         std::set<ExecutionState *, ExecutionStateIDCompare> &pausedStates,
         std::size_t bound);
