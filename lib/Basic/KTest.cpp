@@ -13,7 +13,7 @@
 #include <string.h>
 #include <stdio.h>
 
-#define KTEST_VERSION 3
+#define KTEST_VERSION 4
 #define KTEST_MAGIC_SIZE 5
 #define KTEST_MAGIC "KTEST"
 
@@ -94,7 +94,7 @@ int kTest_isKTestFile(const char *path) {
 KTest *kTest_fromFile(const char *path) {
   FILE *f = fopen(path, "rb");
   KTest *res = 0;
-  unsigned i, version;
+  unsigned i, j, version;
 
   if (!f) 
     goto error;
@@ -144,6 +144,22 @@ KTest *kTest_fromFile(const char *path) {
     o->bytes = (unsigned char*) malloc(o->numBytes);
     if (fread(o->bytes, o->numBytes, 1, f)!=1)
       goto error;
+    if (version >= 4) {
+      if (!read_uint32(f, &o->numPointers))
+        goto error;
+      o->pointers = (Pointer *)calloc(o->numPointers, sizeof(*o->pointers));
+      if (!o->pointers)
+        goto error;
+      for (j = 0; j < o->numPointers; j++) {
+        Pointer *p = &o->pointers[j];
+        if (!read_uint32(f, &p->offset))
+          goto error;
+        if (!read_uint32(f, &p->index))
+          goto error;
+        if (!read_uint32(f, &p->indexOffset))
+          goto error;
+      }
+    }
   }
 
   fclose(f);
@@ -164,6 +180,8 @@ KTest *kTest_fromFile(const char *path) {
           free(bo->name);
         if (bo->bytes)
           free(bo->bytes);
+        if (bo->pointers)
+          free(bo->pointers);
       }
       free(res->objects);
     }
@@ -175,9 +193,9 @@ KTest *kTest_fromFile(const char *path) {
   return 0;
 }
 
-int kTest_toFile(KTest *bo, const char *path) {
+int kTest_toFile(const KTest *bo, const char *path) {
   FILE *f = fopen(path, "wb");
-  unsigned i;
+  unsigned i, j;
 
   if (!f) 
     goto error;
@@ -208,6 +226,17 @@ int kTest_toFile(KTest *bo, const char *path) {
       goto error;
     if (fwrite(o->bytes, o->numBytes, 1, f)!=1)
       goto error;
+    if (!write_uint32(f, o->numPointers))
+      goto error;
+    for (j=0; j<o->numPointers; j++) {
+      Pointer *p = &o->pointers[j];
+      if (!write_uint32(f, p->offset))
+        goto error;
+      if (!write_uint32(f, p->index))
+        goto error;
+      if (!write_uint32(f, p->indexOffset))
+        goto error;
+    }
   }
 
   fclose(f);
@@ -234,6 +263,7 @@ void kTest_free(KTest *bo) {
   for (i=0; i<bo->numObjects; i++) {
     free(bo->objects[i].name);
     free(bo->objects[i].bytes);
+    free(bo->objects[i].pointers);
   }
   free(bo->objects);
   free(bo);

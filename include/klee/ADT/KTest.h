@@ -14,11 +14,20 @@
 extern "C" {
 #endif
 
+  typedef struct Pointer Pointer;
+  struct Pointer {
+    unsigned offset;
+    unsigned index;
+    unsigned indexOffset;
+  };
+
   typedef struct KTestObject KTestObject;
   struct KTestObject {
     char *name;
     unsigned numBytes;
     unsigned char *bytes;
+    unsigned numPointers;
+    Pointer *pointers;
   };
   
   typedef struct KTest KTest;
