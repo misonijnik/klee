@@ -100,6 +100,8 @@ class Executor : public Interpreter {
 public:
   typedef std::pair<ExecutionState*,ExecutionState*> StatePair;
 
+  enum MemoryOperation { Read, Write };
+
   /// The random number generator.
   RNG theRNG;
 
@@ -312,13 +314,18 @@ private:
   // do address resolution / object binding / out of bounds checking
   // and perform the operation
   void executeMemoryOperation(ExecutionState &state,
-                              bool isWrite,
+                              MemoryOperation operation,
                               ref<Expr> address,
                               ref<Expr> value /* undef if read */,
                               KInstruction *target /* undef if write */);
 
+  ObjectPair lazyInitialize(ExecutionState &state, bool isLocal,
+                            const MemoryObject *mo);
+
+  ObjectPair lazyInitializeObject(ExecutionState &state, ref<Expr> address,
+                                    KInstruction *target, uint64_t size);
   void executeMakeSymbolic(ExecutionState &state, const MemoryObject *mo,
-                           const std::string &name);
+                           const std::string &name, bool isLocal);
 
   /// Create a new state where each input condition has been added as
   /// a constraint and return the results. The input state is included
@@ -347,8 +354,8 @@ private:
   // Used for testing.
   ref<Expr> replaceReadWithSymbolic(ExecutionState &state, ref<Expr> e);
 
-  const Cell& eval(KInstruction *ki, unsigned index, 
-                   ExecutionState &state) const;
+  const Cell &eval(KInstruction *ki, unsigned index, ExecutionState &state,
+                   bool isSymbolic = true);
 
   Cell& getArgumentCell(ExecutionState &state,
                         KFunction *kf,
@@ -400,7 +407,8 @@ private:
   void executeGetValue(ExecutionState &state, ref<Expr> e, KInstruction *target);
 
   /// Get textual information regarding a memory address.
-  std::string getAddressInfo(ExecutionState &state, ref<Expr> address) const;
+  std::string getAddressInfo(ExecutionState &state, ref<Expr> address,
+                             const MemoryObject *mo = nullptr) const;
 
   // Determines the \param lastInstruction of the \param state which is not KLEE
   // internal and returns its InstructionInfo
@@ -512,6 +520,21 @@ public:
     usingSeeds = seeds;
   }
 
+  ExecutionState *formState(llvm::Function *f, int argc, char **argv,
+                            char **envp);
+
+  void clearGlobal();
+
+  void prepareSymbolicValue(ExecutionState &state, KInstruction *targetW);
+
+  void prepareSymbolicRegister(ExecutionState &state, StackFrame &sf,
+                               unsigned index);
+
+  void prepareSymbolicArgs(ExecutionState &state, KFunction *kf);
+
+  ref<Expr> makeSymbolicValue(llvm::Value *value, ExecutionState &state,
+                              uint64_t size, Expr::Width width,
+                              const std::string &name);
   void runFunctionAsMain(llvm::Function *f, int argc, char **argv,
                          char **envp) override;
 
@@ -550,6 +573,8 @@ public:
 
   MergingSearcher *getMergingSearcher() const { return mergingSearcher; };
   void setMergingSearcher(MergingSearcher *ms) { mergingSearcher = ms; };
+  const Array *makeArray(ExecutionState &state, const uint64_t size,
+                         const std::string &name);
 };
   
 } // End klee namespace
