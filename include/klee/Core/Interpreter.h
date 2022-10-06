@@ -109,7 +109,8 @@ public:
   /// inserted, and modified for interpretation.
   virtual llvm::Module *
   setModule(std::vector<std::unique_ptr<llvm::Module>> &modules,
-            const ModuleOptions &opts) = 0;
+            const ModuleOptions &opts,
+            const std::vector<llvm::Function *> &mainFunctions) = 0;
 
   // supply a tree stream writer which the interpreter will use
   // to record the concrete path (as a stream of '0' and '1' bytes).
@@ -156,10 +157,13 @@ public:
                                 LogType logFormat = STP) = 0;
 
   virtual bool getSymbolicSolution(const ExecutionState &state,
-                                   std::vector<
-                                   std::pair<std::string,
-                                   std::vector<unsigned char> > >
-                                   &res) = 0;
+                                   KTest &res) = 0;
+
+  virtual void setInitializationGraph(const ExecutionState &state,
+                                      KTest &tc) = 0;
+
+  virtual void logState(const ExecutionState &state, int id,
+                        std::unique_ptr<llvm::raw_fd_ostream> &f) = 0;
 
   virtual void getCoveredLines(const ExecutionState &state,
                                std::map<const std::string*, std::set<unsigned> > &res) = 0;
