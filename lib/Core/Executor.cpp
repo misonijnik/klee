@@ -4774,11 +4774,90 @@ void Executor::getConstraintLog(const ExecutionState &state, std::string &res,
   }
 }
 
+void Executor::setInitializationGraph(const ExecutionState &state,
+                                      KTest &ktest) {
+  std::map<size_t, std::vector<Pointer>> pointers;
+  std::map<size_t, std::map<unsigned, std::pair<unsigned, unsigned>>> s;
+
+  for (const auto &pointer : state.pointers) {
+
+    if (!isa<ReadExpr>(pointer.first) && !isa<ConcatExpr>(pointer.first)) {
+      continue;
+    }
+
+    ref<Expr> update_check;
+    if (auto e = dyn_cast<ConcatExpr>(pointer.first)) {
+      update_check = e->getLeft();
+    } else {
+      update_check = e;
+    }
+
+    if (auto e = dyn_cast<ReadExpr>(update_check)) {
+      if (e->updates.getSize() != 0) {
+        continue;
+      }
+    }
+
+    std::pair<ref<const MemoryObject>, ref<Expr>> pointerResolution;
+    auto resolved = state.getBase(pointer.first, pointerResolution);
+
+    if (resolved) {
+      // The objects have to be symbolic
+      bool pointerFound = false, pointeeFound = false;
+      size_t pointerIndex = 0, pointeeIndex = 0;
+      for (size_t i = 0; i < state.symbolics.size(); i++) {
+        if (state.symbolics[i].first == pointerResolution.first) {
+          pointerIndex = i;
+          pointerFound = true;
+        }
+        if (state.symbolics[i].first == pointer.second.first) {
+          pointeeIndex = i;
+          pointeeFound = true;
+        }
+      }
+      if (pointerFound && pointeeFound) {
+        ref<ConstantExpr> offset;
+        bool success =
+            solver->getValue(state.constraints, pointerResolution.second,
+                             offset, state.queryMetaData);
+        if (!success) {
+          klee_error("Offset resolution failure in setInitializationGraph");
+        }
+        ref<ConstantExpr> indexOffset;
+        success = solver->getValue(state.constraints, pointer.second.second,
+                                   indexOffset, state.queryMetaData);
+        if (!success) {
+          klee_error(
+              "Index offset resolution failure in setInitializationGraph");
+        }
+        Pointer o;
+        o.offset = offset->getZExtValue();
+        o.index = pointeeIndex;
+        o.indexOffset = indexOffset->getZExtValue();
+        if (s[pointerIndex].count(o.offset) &&
+            s[pointerIndex][o.offset] !=
+                std::make_pair(o.index, o.indexOffset)) {
+          assert(0 && "wft");
+        }
+        if (!s[pointerIndex].count(o.offset)) {
+          pointers[pointerIndex].push_back(o);
+          s[pointerIndex][o.offset] = std::make_pair(o.index, o.indexOffset);
+        }
+      }
+    }
+  }
+  for (auto i : pointers) {
+    ktest.objects[i.first].numPointers = i.second.size();
+    ktest.objects[i.first].pointers = new Pointer[i.second.size()];
+    for (size_t j = 0; j < i.second.size(); j++) {
+      ktest.objects[i.first].pointers[j] = i.second[j];
+    }
+  }
+  return;
+}
+
 bool Executor::getSymbolicSolution(const ExecutionState &state,
-                                   std::vector< 
-                                   std::pair<std::string,
-                                   std::vector<unsigned char> > >
-                                   &res) {
+                                   KTest &res) {
   solver->setTimeout(coreSolverTimeout);
 
   ConstraintSet extendedConstraints(state.constraints);
@@ -4819,9 +4898,21 @@ bool Executor::getSymbolicSolution(const ExecutionState &state,
                              ConstantExpr::alloc(0, Expr::Bool));
     return false;
   }
-  
-  for (unsigned i = 0; i != state.symbolics.size(); ++i)
-    res.push_back(std::make_pair(state.symbolics[i].first->name, values[i]));
+
+  res.objects = new KTestObject[state.symbolics.size()];
+  res.numObjects = state.symbolics.size();
+
+  for (unsigned i = 0; i != state.symbolics.size(); ++i) {
+    auto mo = state.symbolics[i].first;
+    KTestObject *o = &res.objects[i];
+    o->name = const_cast<char*>(mo->name.c_str());
+    o->numBytes = values[i].size();
+    o->bytes = new unsigned char[o->numBytes];
+    std::copy(values[i].begin(), values[i].end(), o->bytes);
+    o->numPointers = 0;
+    o->pointers = nullptr;
+  }
+
   return true;
 }
 
