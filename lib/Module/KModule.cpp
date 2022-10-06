@@ -106,6 +106,11 @@ namespace {
                              cl::desc("Allow optimization of functions that "
                                       "contain KLEE calls (default=true)"),
                              cl::init(true), cl::cat(ModuleCat));
+
+  cl::opt<bool>
+      SplitCalls("split-calls",
+                 cl::desc("Split each call in own basic block (default=true)"),
+                 cl::init(true), cl::cat(klee::ModuleCat));
 }
 
 /***/
@@ -292,6 +297,9 @@ void KModule::optimiseAndPrepare(
   pm3.add(createScalarizerPass());
   pm3.add(new PhiCleanerPass());
   pm3.add(new FunctionAliasPass());
+  if (SplitCalls) {
+    pm3.add(new CallSplitter());
+  }
   pm3.run(*module);
 }
 
