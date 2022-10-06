@@ -24,9 +24,14 @@ namespace llvm {
   class BasicBlock;
   class Constant;
   class Function;
+  class Value;
   class Instruction;
   class Module;
   class DataLayout;
+
+  /// Compute the true target of a function call, resolving LLVM aliases
+  /// and bitcasts.
+  Function* getTargetFunction(Value *calledVal);
 }
 
 namespace klee {

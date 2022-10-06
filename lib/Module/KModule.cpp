@@ -375,6 +375,34 @@ void KModule::checkModule() {
   }
 }
 
+Function *llvm::getTargetFunction(Value *calledVal) {
+  SmallPtrSet<const GlobalValue *, 3> Visited;
+
+  Constant *c = dyn_cast<Constant>(calledVal);
+  if (!c)
+    return 0;
+
+  while (true) {
+    if (GlobalValue *gv = dyn_cast<GlobalValue>(c)) {
+      if (!Visited.insert(gv).second)
+        return 0;
+
+      if (Function *f = dyn_cast<Function>(gv))
+        return f;
+      else if (GlobalAlias *ga = dyn_cast<GlobalAlias>(gv))
+        c = ga->getAliasee();
+      else
+        return 0;
+    } else if (llvm::ConstantExpr *ce = dyn_cast<llvm::ConstantExpr>(c)) {
+      if (ce->getOpcode() == Instruction::BitCast)
+        c = ce->getOperand(0);
+      else
+        return 0;
+    } else
+      return 0;
+  }
+}
+
 KConstant* KModule::getKConstant(const Constant *c) {
   auto it = constantMap.find(c);
   if (it != constantMap.end())

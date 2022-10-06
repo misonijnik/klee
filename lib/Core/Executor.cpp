@@ -2012,36 +2012,6 @@ void Executor::transferToBasicBlock(BasicBlock *dst, BasicBlock *src,
   }
 }
 
-/// Compute the true target of a function call, resolving LLVM aliases
-/// and bitcasts.
-Function* Executor::getTargetFunction(Value *calledVal, ExecutionState &state) {
-  SmallPtrSet<const GlobalValue*, 3> Visited;
-
-  Constant *c = dyn_cast<Constant>(calledVal);
-  if (!c)
-    return 0;
-
-  while (true) {
-    if (GlobalValue *gv = dyn_cast<GlobalValue>(c)) {
-      if (!Visited.insert(gv).second)
-        return 0;
-
-      if (Function *f = dyn_cast<Function>(gv))
-        return f;
-      else if (GlobalAlias *ga = dyn_cast<GlobalAlias>(gv))
-        c = ga->getAliasee();
-      else
-        return 0;
-    } else if (llvm::ConstantExpr *ce = dyn_cast<llvm::ConstantExpr>(c)) {
-      if (ce->getOpcode()==Instruction::BitCast)
-        c = ce->getOperand(0);
-      else
-        return 0;
-    } else
-      return 0;
-  }
-}
-
 void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
   Instruction *i = ki->inst;
   switch (i->getOpcode()) {
@@ -2390,7 +2360,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
 #endif
 
     unsigned numArgs = cs.arg_size();
-    Function *f = getTargetFunction(fp, state);
+    Function *f = getTargetFunction(fp);
 
     if (isa<InlineAsm>(fp)) {
       terminateStateOnExecError(state, "inline assembly is unsupported");
