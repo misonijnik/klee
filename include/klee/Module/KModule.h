@@ -19,6 +19,7 @@
 #include <memory>
 #include <set>
 #include <vector>
+#include <unordered_set>
 
 namespace llvm {
   class BasicBlock;
@@ -42,23 +43,73 @@ namespace klee {
   class InstructionInfoTable;
   struct KInstruction;
   class KModule;
+  struct KFunction;
   template<class T> class ref;
 
-  struct KFunction {
-    llvm::Function *function;
+  enum KBlockType {
+    Base,
+    Call,
+  };
 
-    unsigned numArgs, numRegisters;
+  struct KBlock {
+    KFunction *parent;
+    llvm::BasicBlock *basicBlock;
 
     unsigned numInstructions;
     KInstruction **instructions;
-
-    std::map<llvm::BasicBlock*, unsigned> basicBlockEntry;
 
     /// Whether instructions in this function should count as
     /// "coverable" for statistics and search heuristics.
     bool trackCoverage;
 
   public:
+    explicit KBlock(KFunction *, llvm::BasicBlock *, KModule *,
+                    std::map<llvm::Instruction *, unsigned> &,
+                    std::map<unsigned, KInstruction *> &, KInstruction **);
+    KBlock(const KBlock &) = delete;
+    KBlock &operator=(const KBlock &) = delete;
+
+    void handleKInstruction(
+        std::map<llvm::Instruction *, unsigned> &instructionToRegisterMap,
+        llvm::Instruction *inst, KModule *km, KInstruction *ki);
+    virtual KBlockType getKBlockType() const { return KBlockType::Base; };
+    virtual ~KBlock() = default;
+  };
+
+  struct KCallBlock : KBlock {
+    KInstruction *kcallInstruction;
+    llvm::Function *calledFunction;
+
+  public:
+    explicit KCallBlock(KFunction *, llvm::BasicBlock *, KModule *,
+                        std::map<llvm::Instruction *, unsigned> &,
+                        std::map<unsigned, KInstruction *> &, llvm::Function *,
+                        KInstruction **);
+    KBlockType getKBlockType() const override { return KBlockType::Call; };
+  };
+
+  struct KFunction {
+    KModule *parent;
+    llvm::Function *function;
+
+    unsigned numArgs, numRegisters;
+
+    std::map<unsigned, KInstruction *> registerToInstructionMap;
+    unsigned numInstructions;
+    unsigned numBlocks;
+    KInstruction **instructions;
+
+    std::map<llvm::Instruction *, KInstruction *> instructionMap;
+    std::vector<std::unique_ptr<KBlock>> blocks;
+    std::map<llvm::BasicBlock *, KBlock *> blockMap;
+    KBlock *entryKBlock;
+    std::vector<KBlock *> finalKBlocks;
+    std::vector<KCallBlock *> kCallBlocks;
+
+    /// Whether instructions in this function should count as
+    /// "coverable" for statistics and search heuristics.
+    bool trackCoverage;
+
     explicit KFunction(llvm::Function*, KModule *);
     KFunction(const KFunction &) = delete;
     KFunction &operator=(const KFunction &) = delete;
@@ -93,10 +144,12 @@ namespace klee {
     // Our shadow versions of LLVM structures.
     std::vector<std::unique_ptr<KFunction>> functions;
     std::map<llvm::Function*, KFunction*> functionMap;
+    std::map<llvm::Function *, std::set<llvm::Function *>> callMap;
 
     // Functions which escape (may be called indirectly)
     // XXX change to KFunction
     std::set<llvm::Function*> escapingFunctions;
+    std::unordered_set<llvm::Function *> mainFunctions;
 
     std::unique_ptr<InstructionInfoTable> infos;
 
@@ -109,11 +162,8 @@ namespace klee {
     // Functions which are part of KLEE runtime
     std::set<const llvm::Function*> internalFunctions;
 
-  private:
-    // Mark function with functionName as part of the KLEE runtime
     void addInternalFunction(const char* functionName);
 
-  public:
     KModule() = default;
 
     /// Optimise and prepare module such that KLEE can execute it
@@ -152,6 +202,8 @@ namespace klee {
     /// Run passes that check if module is valid LLVM IR and if invariants
     /// expected by KLEE's Executor hold.
     void checkModule();
+
+    KBlock *getKBlock(llvm::BasicBlock *bb);
   };
 } // End klee namespace
 
