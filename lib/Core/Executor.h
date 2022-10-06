@@ -60,9 +60,11 @@ namespace llvm {
 namespace klee {  
   class Array;
   struct Cell;
+  class CodeGraphDistance;
   class ExecutionState;
   class ExternalDispatcher;
   class Expr;
+  template<class T> class ExprHashMap;
   class InstructionInfoTable;
   struct KFunction;
   struct KInstruction;
@@ -76,6 +78,7 @@ namespace klee {
   class SeedInfo;
   class SpecialFunctionHandler;
   struct StackFrame;
+  class StateHistory;
   class StatsTracker;
   class TimingSolver;
   class TreeStreamWriter;
@@ -114,11 +117,14 @@ private:
   TimingSolver *solver;
   MemoryManager *memory;
   std::set<ExecutionState*, ExecutionStateIDCompare> states;
+  std::set<ExecutionState *, ExecutionStateIDCompare> pausedStates;
   StatsTracker *statsTracker;
   TreeStreamWriter *pathWriter, *symPathWriter;
   SpecialFunctionHandler *specialFunctionHandler;
   TimerGroup timers;
   std::unique_ptr<PTree> processTree;
+  std::unique_ptr<CodeGraphDistance> codeGraphDistance;
+  StateHistory *stateHistory;
 
   /// Used to track states that have been added during the current
   /// instructions step. 
@@ -213,8 +219,11 @@ private:
   /// Return the typeid corresponding to a certain `type_info`
   ref<ConstantExpr> getEhTypeidFor(ref<Expr> type_info);
 
+  void addHistoryResult(ExecutionState &state);
+
   void executeInstruction(ExecutionState &state, KInstruction *ki);
 
+  void seed(ExecutionState &initialState);
   void run(ExecutionState &initialState);
 
   // Given a concrete object in our [klee's] address space, add it to 
@@ -418,6 +427,12 @@ private:
   /// Remove state from queue and delete state
   void terminateState(ExecutionState &state);
 
+  // pause state
+  void pauseState(ExecutionState &state);
+
+  // unpause state
+  void unpauseState(ExecutionState &state);
+
   /// Call exit handler and terminate state normally
   /// (end of execution path)
   void terminateStateOnExit(ExecutionState &state);
@@ -575,6 +590,7 @@ public:
   void setMergingSearcher(MergingSearcher *ms) { mergingSearcher = ms; };
   const Array *makeArray(ExecutionState &state, const uint64_t size,
                          const std::string &name);
+  void executeStep(ExecutionState &state);
 };
   
 } // End klee namespace

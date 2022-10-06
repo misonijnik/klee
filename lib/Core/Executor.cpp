@@ -36,6 +36,7 @@
 #include "klee/Expr/ExprSMTLIBPrinter.h"
 #include "klee/Expr/ExprUtil.h"
 #include "klee/Module/Cell.h"
+#include "klee/Module/CodeGraphDistance.h"
 #include "klee/Module/InstructionInfoTable.h"
 #include "klee/Module/KInstruction.h"
 #include "klee/Module/KModule.h"
@@ -67,6 +68,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
@@ -91,6 +93,7 @@ typedef unsigned TypeSize;
 #include <sstream>
 #include <string>
 #include <sys/mman.h>
+#include <utility>
 #include <vector>
 
 using namespace llvm;
@@ -447,7 +450,7 @@ Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
     : Interpreter(opts), interpreterHandler(ih), searcher(0),
       externalDispatcher(new ExternalDispatcher(ctx)), statsTracker(0),
       pathWriter(0), symPathWriter(0), specialFunctionHandler(0), timers{time::Span(TimerInterval)},
-      replayKTest(0), replayPath(0), usingSeeds(0),
+      codeGraphDistance(new CodeGraphDistance()), replayKTest(0), replayPath(0), usingSeeds(0),
       atMemoryLimit(false), inhibitForking(false), haltExecution(false),
       ivcEnabled(false), debugLogBuffer(debugBufferString) {
 
@@ -567,6 +570,8 @@ Executor::setModule(std::vector<std::unique_ptr<llvm::Module>> &modules,
   Context::initialize(TD->isLittleEndian(),
                       (Expr::Width)TD->getPointerSizeInBits());
 
+  stateHistory = new StateHistory(*kmodule.get(), *codeGraphDistance.get());
+
   return kmodule->module.get();
 }
 
@@ -576,6 +581,7 @@ Executor::~Executor() {
   delete specialFunctionHandler;
   delete statsTracker;
   delete solver;
+  delete stateHistory;
 }
 
 /***/
@@ -1421,6 +1427,9 @@ void Executor::stepInstruction(ExecutionState &state) {
 
   ++stats::instructions;
   ++state.steppedInstructions;
+  if (isa<LoadInst>(state.pc->inst) || isa<StoreInst>(state.pc->inst)) {
+    ++state.steppedMemoryInstructions;
+  }
   state.prevPC = state.pc;
   ++state.pc;
 
@@ -1613,6 +1622,7 @@ void Executor::unwindToNextLandingpad(ExecutionState &state) {
 
         state.pushFrame(state.prevPC, kf);
         state.pc = kf->instructions;
+        state.increaseLevel();
         bindArgument(kf, 0, state, sui->exceptionObject);
         bindArgument(kf, 1, state, clauses_mo->getSizeExpr());
         bindArgument(kf, 2, state, clauses_mo->getBaseExpr());
@@ -1874,7 +1884,8 @@ void Executor::executeCall(ExecutionState &state, KInstruction *ki, Function *f,
     KFunction *kf = kmodule->functionMap[f];
 
     state.pushFrame(state.prevPC, kf);
-    state.pc = kf->instructions;
+    transferToBasicBlock(&*kf->function->begin(), state.getPrevPCBlock(),
+                         state);
 
     if (statsTracker)
       statsTracker->framePushed(state, &state.stack[state.stack.size() - 2]);
@@ -2019,8 +2030,8 @@ void Executor::transferToBasicBlock(BasicBlock *dst, BasicBlock *src,
   
   // XXX this lookup has to go ?
   KFunction *kf = state.stack.back().kf;
-  unsigned entry = kf->basicBlockEntry[dst];
-  state.pc = &kf->instructions[entry];
+  state.pc = kf->blockMap[dst]->instructions;
+  state.increaseLevel();
   if (state.pc->inst->getOpcode() == Instruction::PHI) {
     PHINode *first = static_cast<PHINode*>(state.pc->inst);
     state.incomingBBIndex = first->getBasicBlockIndex(src);
@@ -2044,6 +2055,8 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     
     if (state.stack.size() <= 1) {
       assert(!caller && "caller set on initial stack frame");
+      state.pc = state.prevPC;
+      state.increaseLevel();
       terminateStateOnExit(state);
     } else {
       state.popFrame();
@@ -2055,6 +2068,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
         transferToBasicBlock(ii->getNormalDest(), caller->getParent(), state);
       } else {
         state.pc = kcaller;
+        state.increaseLevel();
         ++state.pc;
       }
 
@@ -3451,80 +3465,86 @@ void Executor::doDumpStates() {
   }
 
   klee_message("halting execution, dumping remaining states");
+  for (const auto &state : pausedStates)
+    terminateStateEarly(*state, "", StateTerminationType::Paused);
+  updateStates(nullptr);
   for (const auto &state : states)
     terminateStateEarly(*state, "Execution halting.", StateTerminationType::Interrupted);
   updateStates(nullptr);
 }
 
-void Executor::run(ExecutionState &initialState) {
-  bindModuleConstants();
+void Executor::seed(ExecutionState &initialState) {
+  std::vector<SeedInfo> &v = seedMap[&initialState];
 
+  for (std::vector<KTest *>::const_iterator it = usingSeeds->begin(),
+                                            ie = usingSeeds->end();
+       it != ie; ++it)
+    v.push_back(SeedInfo(*it));
+
+  int lastNumSeeds = usingSeeds->size() + 10;
+  time::Point lastTime, startTime = lastTime = time::getWallTime();
+  ExecutionState *lastState = 0;
+  while (!seedMap.empty()) {
+    if (haltExecution) {
+      doDumpStates();
+      return;
+    }
+
+    std::map<ExecutionState*, std::vector<SeedInfo> >::iterator it =
+        seedMap.upper_bound(lastState);
+    if (it == seedMap.end())
+      it = seedMap.begin();
+    lastState = it->first;
+    ExecutionState &state = *lastState;
+    KInstruction *ki = state.pc;
+    stepInstruction(state);
+
+    executeInstruction(state, ki);
+    timers.invoke();
+    if (::dumpStates) dumpStates();
+    if (::dumpPTree) dumpPTree();
+    updateStates(&state);
+
+    if ((stats::instructions % 1000) == 0) {
+      int numSeeds = 0, numStates = 0;
+      for (std::map<ExecutionState *, std::vector<SeedInfo>>::iterator
+               it = seedMap.begin(),
+               ie = seedMap.end();
+           it != ie; ++it) {
+        numSeeds += it->second.size();
+        numStates++;
+      }
+      const auto time = time::getWallTime();
+      const time::Span seedTime(SeedTime);
+      if (seedTime && time > startTime + seedTime) {
+        klee_warning("seed time expired, %d seeds remain over %d states",
+                     numSeeds, numStates);
+        break;
+      } else if (numSeeds <= lastNumSeeds - 10 ||
+                 time - lastTime >= time::seconds(10)) {
+        lastTime = time;
+        lastNumSeeds = numSeeds;
+        klee_message("%d seeds remaining over: %d states", numSeeds, numStates);
+      }
+    }
+  }
+
+  klee_message("seeding done (%d states remain)", (int)states.size());
+
+  if (OnlySeed) {
+    doDumpStates();
+    return;
+  }
+}
+
+void Executor::run(ExecutionState &initialState) {
   // Delay init till now so that ticks don't accrue during optimization and such.
   timers.reset();
 
   states.insert(&initialState);
 
   if (usingSeeds) {
-    std::vector<SeedInfo> &v = seedMap[&initialState];
-    
-    for (std::vector<KTest*>::const_iterator it = usingSeeds->begin(), 
-           ie = usingSeeds->end(); it != ie; ++it)
-      v.push_back(SeedInfo(*it));
-
-    int lastNumSeeds = usingSeeds->size()+10;
-    time::Point lastTime, startTime = lastTime = time::getWallTime();
-    ExecutionState *lastState = 0;
-    while (!seedMap.empty()) {
-      if (haltExecution) {
-        doDumpStates();
-        return;
-      }
-
-      std::map<ExecutionState*, std::vector<SeedInfo> >::iterator it = 
-        seedMap.upper_bound(lastState);
-      if (it == seedMap.end())
-        it = seedMap.begin();
-      lastState = it->first;
-      ExecutionState &state = *lastState;
-      KInstruction *ki = state.pc;
-      stepInstruction(state);
-
-      executeInstruction(state, ki);
-      timers.invoke();
-      if (::dumpStates) dumpStates();
-      if (::dumpPTree) dumpPTree();
-      updateStates(&state);
-
-      if ((stats::instructions % 1000) == 0) {
-        int numSeeds = 0, numStates = 0;
-        for (std::map<ExecutionState*, std::vector<SeedInfo> >::iterator
-               it = seedMap.begin(), ie = seedMap.end();
-             it != ie; ++it) {
-          numSeeds += it->second.size();
-          numStates++;
-        }
-        const auto time = time::getWallTime();
-        const time::Span seedTime(SeedTime);
-        if (seedTime && time > startTime + seedTime) {
-          klee_warning("seed time expired, %d seeds remain over %d states",
-                       numSeeds, numStates);
-          break;
-        } else if (numSeeds<=lastNumSeeds-10 ||
-                   time - lastTime >= time::seconds(10)) {
-          lastTime = time;
-          lastNumSeeds = numSeeds;          
-          klee_message("%d seeds remaining over: %d states", 
-                       numSeeds, numStates);
-        }
-      }
-    }
-
-    klee_message("seeding done (%d states remain)", (int) states.size());
-
-    if (OnlySeed) {
-      doDumpStates();
-      return;
-    }
+    seed(initialState);
   }
 
   searcher = constructUserSearcher(*this);
@@ -3534,31 +3554,49 @@ void Executor::run(ExecutionState &initialState) {
 
   // main interpreter loop
   while (!states.empty() && !haltExecution) {
-    ExecutionState &state = searcher->selectState();
-    KInstruction *ki = state.pc;
-    stepInstruction(state);
+    while (!searcher->empty() && !haltExecution) {
+      ExecutionState &state = searcher->selectState();
+      KInstruction *prevKI = state.prevPC;
+      KFunction *kf = prevKI->parent->parent;
 
-    executeInstruction(state, ki);
-    timers.invoke();
-    if (::dumpStates) dumpStates();
-    if (::dumpPTree) dumpPTree();
+      if (prevKI->inst->isTerminator() &&
+          kmodule->mainFunctions.count(kf->function)) {
+        stateHistory->updateHistory(state);
+      }
 
-    updateStates(&state);
-
-    if (!checkMemoryUsage()) {
-      // update searchers when states were terminated early due to memory pressure
-      updateStates(nullptr);
+      executeStep(state);
     }
+
+    if (searcher->empty())
+      haltExecution = true;
   }
 
   delete searcher;
   searcher = nullptr;
 
   doDumpStates();
+  haltExecution = false;
 }
 
-std::string Executor::getAddressInfo(ExecutionState &state, 
-                                     ref<Expr> address) const{
+void Executor::executeStep(ExecutionState &state) {
+  KInstruction *ki = state.pc;
+  stepInstruction(state);
+
+  executeInstruction(state, ki);
+  timers.invoke();
+  if (::dumpStates) dumpStates();
+  if (::dumpPTree) dumpPTree();
+
+  updateStates(&state);
+
+  if (!checkMemoryUsage()) {
+    // update searchers when states were terminated early due to memory pressure
+    updateStates(nullptr);
+  }
+}
+
+std::string Executor::getAddressInfo(ExecutionState &state, ref<Expr> address,
+                                     const MemoryObject *mo) const {
   std::string Str;
   llvm::raw_string_ostream info(Str);
   info << "\taddress: " << address << "\n";
@@ -3619,6 +3657,14 @@ void Executor::terminateState(ExecutionState &state) {
                       "replay did not consume all objects in test input.");
   }
 
+  std::vector<ExecutionState *>::iterator itr =
+      std::find(removedStates.begin(), removedStates.end(), &state);
+
+  if (itr != removedStates.end()) {
+      klee_warning("remove state twice");
+      return;
+  }
+
   interpreterHandler->incPathsExplored();
 
   std::vector<ExecutionState *>::iterator it =
@@ -3655,6 +3701,16 @@ static std::string terminationTypeFileExtension(StateTerminationType type) {
   return ret;
 };
 
+void Executor::pauseState(ExecutionState &state) {
+  pausedStates.insert(&state);
+  searcher->update(nullptr, {}, {&state});
+}
+
+void Executor::unpauseState(ExecutionState &state) {
+  pausedStates.erase(&state);
+  searcher->update(nullptr, {&state}, {});
+}
+
 void Executor::terminateStateOnExit(ExecutionState &state) {
   if (shouldWriteTest(state) || (AlwaysOutputSeeds && seedMap.count(&state)))
     interpreterHandler->processTestCase(
@@ -3662,6 +3718,7 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
         terminationTypeFileExtension(StateTerminationType::Exit).c_str());
 
   interpreterHandler->incPathsCompleted();
+  stateHistory->updateHistory(state);
   terminateState(state);
 }
 
@@ -3772,6 +3829,7 @@ void Executor::terminateStateOnError(ExecutionState &state,
     interpreterHandler->processTestCase(state, msg.str().c_str(), file_suffix);
   }
 
+  stateHistory->updateHistory(state);
   terminateState(state);
 
   if (shouldExitOn(terminationType))

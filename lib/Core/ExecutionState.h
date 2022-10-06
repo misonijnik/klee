@@ -17,20 +17,26 @@
 #include "klee/ADT/TreeStream.h"
 #include "klee/Expr/Constraints.h"
 #include "klee/Expr/Expr.h"
+#include "klee/Expr/ExprHashMap.h"
 #include "klee/Module/KInstIterator.h"
 #include "klee/Solver/Solver.h"
 #include "klee/System/Time.h"
 
+#include "llvm/IR/Function.h"
+
 #include <map>
 #include <memory>
 #include <set>
+#include <utility>
 #include <vector>
 
 namespace klee {
 class Array;
 class CallPathNode;
 struct Cell;
+template<class T> class ExprHashMap;
 struct KFunction;
+struct KBlock;
 struct KInstruction;
 class MemoryObject;
 class PTreeNode;
@@ -143,6 +149,17 @@ struct CleanupPhaseUnwindingInformation : public UnwindingInformation {
   }
 };
 
+typedef std::pair<llvm::BasicBlock *, llvm::BasicBlock *> Transition;
+
+struct TransitionHash {
+  std::size_t operator()(const Transition &p) const {
+    return reinterpret_cast<size_t>(p.first) * 31 +
+           reinterpret_cast<size_t>(p.second);
+  }
+};
+
+typedef std::pair<ref<const MemoryObject>, const Array *> Symbolic;
+
 /// @brief ExecutionState representing a path under exploration
 class ExecutionState {
 #ifdef KLEE_UNITTEST
@@ -158,6 +175,9 @@ public:
 
   // Execution - Control Flow specific
 
+  /// @brief Pointer to initial instruction
+  KInstIterator initPC;
+
   /// @brief Pointer to instruction to be executed after the current
   /// instruction
   KInstIterator pc;
@@ -170,12 +190,17 @@ public:
 
   /// @brief Remember from which Basic Block control flow arrived
   /// (i.e. to select the right phi values)
-  std::uint32_t incomingBBIndex;
+  std::int32_t incomingBBIndex;
 
   // Overall state of the state - Data specific
 
   /// @brief Exploration depth, i.e., number of times KLEE branched for this state
   std::uint32_t depth = 0;
+
+  /// @brief Exploration level, i.e., number of times KLEE cycled for this state
+  std::unordered_multiset<llvm::BasicBlock *> multilevel;
+  std::unordered_set<llvm::BasicBlock *> level;
+  std::unordered_set<Transition, TransitionHash> transitionLevel;
 
   /// @brief Address space used by this state (e.g. Global and Heap)
   AddressSpace addressSpace;
@@ -206,7 +231,10 @@ public:
   /// @brief Ordered list of symbolics: used to generate test cases.
   //
   // FIXME: Move to a shared list structure (not critical).
-  std::vector<std::pair<ref<const MemoryObject>, const Array *>> symbolics;
+  std::vector<Symbolic> symbolics;
+
+  /// @brief map from memory accesses to accessed objects and access offsets.
+  ExprHashMap<std::pair<const MemoryObject *, ref<Expr>>> pointers;
 
   /// @brief A set of boolean expressions
   /// the user has requested be true of a counterexample.
@@ -220,6 +248,10 @@ public:
 
   /// @brief The numbers of times this state has run through Executor::stepInstruction
   std::uint64_t steppedInstructions = 0;
+
+  /// @brief The numbers of times this state has run through
+  /// Executor::stepInstruction with executeMemoryOperation
+  std::uint64_t steppedMemoryInstructions = 0;
 
   /// @brief Counts how many instructions were executed since the last new
   /// instruction was covered.
@@ -240,10 +272,16 @@ public:
   /// @brief Disables forking for this state. Set by user code
   bool forkDisabled = false;
 
+  /// @brief The target basic block that the state must achieve
+  KBlock *target = nullptr;
+
+  ExprHashMap<std::pair<ref<Expr>, unsigned>> gepExprBases;
+  ExprHashMap<ref<Expr>> gepExprOffsets;
+
 public:
 #ifdef KLEE_UNITTEST
   // provide this function only in the context of unittests
-  ExecutionState() = default;
+  ExecutionState() {}
 #endif
   // only to create the initial state
   explicit ExecutionState(KFunction *kf);
@@ -257,11 +295,23 @@ public:
   ~ExecutionState();
 
   ExecutionState *branch();
+  ExecutionState *withKFunction(KFunction *kf);
+  ExecutionState *copy();
+
+  bool inSymbolics(const MemoryObject* mo) const;
 
   void pushFrame(KInstIterator caller, KFunction *kf);
   void popFrame();
 
   void addSymbolic(const MemoryObject *mo, const Array *array);
+
+  ref<const MemoryObject> findMemoryObject(const Array *array) const;
+
+  bool getBase(ref<Expr> expr,
+               std::pair<ref<const MemoryObject>, ref<Expr>> &resolution) const;
+
+  void removePointers(const MemoryObject *mo);
+  void addPointer(ref<Expr> address, ref<Expr> base, const MemoryObject *mo);
 
   void addConstraint(ref<Expr> e);
   void addCexPreference(const ref<Expr> &cond);
@@ -271,6 +321,11 @@ public:
 
   std::uint32_t getID() const { return id; };
   void setID() { id = nextID++; };
+  llvm::BasicBlock *getInitPCBlock();
+  llvm::BasicBlock *getPrevPCBlock();
+  llvm::BasicBlock *getPCBlock();
+  void increaseLevel();
+  bool isGEPExpr(ref<Expr> expr) const;
 };
 
 struct ExecutionStateIDCompare {

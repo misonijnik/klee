@@ -13,6 +13,7 @@
 #include "ExecutionState.h"
 #include "PTree.h"
 #include "klee/ADT/RNG.h"
+#include "klee/Module/KModule.h"
 #include "klee/System/Time.h"
 
 #include "llvm/Support/CommandLine.h"
@@ -31,7 +32,9 @@ namespace llvm {
 }
 
 namespace klee {
+  class CodeGraphDistance;
   template<class T, class Comparator> class DiscretePDF;
+  template<class T, class Comparator> class WeightedQueue;
   class ExecutionState;
   class Executor;
 
@@ -112,6 +115,103 @@ namespace klee {
 
   public:
     explicit RandomSearcher(RNG &rng);
+    ExecutionState &selectState() override;
+    void update(ExecutionState *current,
+                const std::vector<ExecutionState *> &addedStates,
+                const std::vector<ExecutionState *> &removedStates) override;
+    bool empty() override;
+    void printName(llvm::raw_ostream &os) override;
+  };
+
+  class StateHistory {
+    typedef std::map<llvm::BasicBlock *, std::unordered_set<llvm::BasicBlock *>>
+        VisitedBlock;
+    typedef std::map<llvm::BasicBlock *,
+                     std::unordered_set<Transition, TransitionHash>>
+        VisitedTransition;
+
+    struct ExecutionBlockResult {
+      VisitedBlock history;
+      VisitedTransition transitionHistory;
+    };
+
+    typedef std::map<llvm::BasicBlock *, ExecutionBlockResult> ExecutionResult;
+
+  public:
+    KBlock *calculateTargetByTransitionHistory(ExecutionState &state);
+    KBlock *calculateTargetByBlockHistory(ExecutionState &state);
+
+    StateHistory(const KModule &module, CodeGraphDistance &codeGraphDistance)
+        : module(module), codeGraphDistance(codeGraphDistance) {}
+
+    void updateHistory(ExecutionState &state) {
+      results[state.getInitPCBlock()].history[state.getPrevPCBlock()].insert(
+        state.level.begin(), state.level.end());
+    }
+
+  private:
+    const KModule &module;
+    CodeGraphDistance &codeGraphDistance;
+    ExecutionResult results;
+  };
+
+  /// TargetedSearcher picks a state /*COMMENT*/.
+  class TargetedSearcher final : public Searcher {
+  public:
+    enum WeightResult : std::uint8_t {
+      Continue,
+      Done,
+      Miss,
+    };
+
+  private:
+    typedef unsigned weight_type;
+
+    std::unique_ptr<WeightedQueue<ExecutionState *, ExecutionStateIDCompare>>
+        states;
+    KBlock *target;
+    CodeGraphDistance &codeGraphDistance;
+    const std::unordered_map<KFunction *, unsigned int> &distanceToTargetFunction;
+
+    bool distanceInCallGraph(KFunction *kf, KBlock *kb, unsigned int &distance);
+    WeightResult tryGetLocalWeight(ExecutionState *es, weight_type &weight,
+                                   const std::vector<KBlock *> &localTargets);
+    WeightResult tryGetPreTargetWeight(ExecutionState *es, weight_type &weight);
+    WeightResult tryGetTargetWeight(ExecutionState *es, weight_type &weight);
+    WeightResult tryGetPostTargetWeight(ExecutionState *es, weight_type &weight);
+    WeightResult tryGetWeight(ExecutionState *es, weight_type &weight);
+
+  public:
+    ExecutionState *result = nullptr;
+    TargetedSearcher(KBlock *targetBB, CodeGraphDistance &distance);
+    ~TargetedSearcher() override = default;
+    ExecutionState &selectState() override;
+    void update(ExecutionState *current,
+                const std::vector<ExecutionState *> &addedStates,
+                const std::vector<ExecutionState *> &removedStates) override;
+    bool empty() override;
+    void printName(llvm::raw_ostream &os) override;
+  };
+
+  class GuidedSearcher final : public Searcher {
+
+  private:
+    std::unique_ptr<Searcher> baseSearcher;
+    std::map<KBlock *, std::unique_ptr<TargetedSearcher>> targetedSearchers;
+    CodeGraphDistance &codeGraphDistance;
+    StateHistory &stateHistory;
+    std::set<ExecutionState *, ExecutionStateIDCompare> &pausedStates;
+    std::size_t bound;
+    unsigned index{1};
+    void addTarget(KBlock *target);
+
+  public:
+    GuidedSearcher(
+        Searcher *baseSearcher, CodeGraphDistance &codeGraphDistance,
+        StateHistory &stateHistory,
+        std::set<ExecutionState *, ExecutionStateIDCompare> &pausedStates,
+        std::size_t bound);
+    ~GuidedSearcher() override = default;
     ExecutionState &selectState() override;
     void update(ExecutionState *current,
                 const std::vector<ExecutionState *> &addedStates,

@@ -78,7 +78,7 @@ StackFrame::~StackFrame() {
 /***/
 
 ExecutionState::ExecutionState(KFunction *kf)
-    : pc(kf->instructions), prevPC(pc) {
+    : initPC(kf->instructions), pc(initPC), prevPC(pc), incomingBBIndex(-1) {
   pushFrame(nullptr, kf);
   setID();
 }
@@ -92,11 +92,14 @@ ExecutionState::~ExecutionState() {
 }
 
 ExecutionState::ExecutionState(const ExecutionState& state):
+    initPC(state.initPC),
     pc(state.pc),
     prevPC(state.prevPC),
     stack(state.stack),
     incomingBBIndex(state.incomingBBIndex),
     depth(state.depth),
+    multilevel(state.multilevel),
+    level(state.level),
     addressSpace(state.addressSpace),
     constraints(state.constraints),
     pathOS(state.pathOS),
@@ -108,12 +111,16 @@ ExecutionState::ExecutionState(const ExecutionState& state):
     arrayNames(state.arrayNames),
     openMergeStack(state.openMergeStack),
     steppedInstructions(state.steppedInstructions),
+    steppedMemoryInstructions(state.steppedMemoryInstructions),
     instsSinceCovNew(state.instsSinceCovNew),
     unwindingInformation(state.unwindingInformation
                              ? state.unwindingInformation->clone()
                              : nullptr),
     coveredNew(state.coveredNew),
-    forkDisabled(state.forkDisabled) {
+    forkDisabled(state.forkDisabled),
+    target(state.target),
+    gepExprBases(state.gepExprBases),
+    gepExprOffsets(state.gepExprOffsets) {
   for (const auto &cur_mergehandler: openMergeStack)
     cur_mergehandler->addOpenState(this);
 }
@@ -127,6 +134,31 @@ ExecutionState *ExecutionState::branch() {
   falseState->coveredLines.clear();
 
   return falseState;
+}
+
+ExecutionState *ExecutionState::withKFunction(KFunction *kf) {
+  ExecutionState *newState = new ExecutionState(*this);
+  newState->setID();
+  newState->pushFrame(nullptr, kf);
+  newState->initPC = kf->blockMap[&*kf->function->begin()]->instructions;
+  newState->pc = newState->initPC;
+  newState->prevPC = newState->pc;
+  return newState;
+}
+
+ExecutionState *ExecutionState::copy() {
+  ExecutionState *newState = new ExecutionState(*this);
+  newState->setID();
+  return newState;
+}
+
+bool ExecutionState::inSymbolics(const MemoryObject *mo) const {
+  for (auto i : symbolics) {
+    if (mo == i.first.get()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void ExecutionState::pushFrame(KInstIterator caller, KFunction *kf) {
@@ -437,4 +469,32 @@ void ExecutionState::addConstraint(ref<Expr> e) {
 
 void ExecutionState::addCexPreference(const ref<Expr> &cond) {
   cexPreferences = cexPreferences.insert(cond);
+}
+
+BasicBlock *ExecutionState::getInitPCBlock() {
+  return initPC->inst->getParent();
+}
+
+BasicBlock *ExecutionState::getPrevPCBlock() {
+  return prevPC->inst->getParent();
+}
+
+BasicBlock *ExecutionState::getPCBlock() { return pc->inst->getParent(); }
+
+void ExecutionState::increaseLevel() {
+  llvm::BasicBlock *srcbb = getPrevPCBlock();
+  llvm::BasicBlock *dstbb = getPCBlock();
+  KFunction *kf = prevPC->parent->parent;
+  KModule *kmodule = kf->parent;
+
+  if (prevPC->inst->isTerminator() &&
+      kmodule->mainFunctions.count(kf->function)) {
+    multilevel.insert(srcbb);
+    level.insert(srcbb);
+  }
+  transitionLevel.insert(std::make_pair(srcbb, dstbb));
+}
+
+bool ExecutionState::isGEPExpr(ref<Expr> expr) const {
+  return UseGEPOptimization && gepExprBases.find(expr) != gepExprBases.end();
 }
