@@ -129,7 +129,7 @@ cl::opt<std::string> MaxTime(
     cl::cat(TerminationCat));
 
 cl::opt<bool> LazyInitialization(
-    "use-lazy-init",
+    "use-lazy-initialization",
      cl::init(true),
      cl::desc("Enable lazy initialization (default=true)"),
      cl::cat(ExecCat));
