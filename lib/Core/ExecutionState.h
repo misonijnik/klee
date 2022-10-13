@@ -234,7 +234,7 @@ public:
   std::vector<Symbolic> symbolics;
 
   /// @brief map from memory accesses to accessed objects and access offsets.
-  ExprHashMap<std::pair<const MemoryObject *, ref<Expr>>> pointers;
+  ExprHashMap<std::pair<const MemoryObject *, ref<Expr>>> resolvedPointers;
 
   /// @brief A set of boolean expressions
   /// the user has requested be true of a counterexample.
@@ -310,8 +310,8 @@ public:
   bool getBase(ref<Expr> expr,
                std::pair<ref<const MemoryObject>, ref<Expr>> &resolution) const;
 
-  void removePointers(const MemoryObject *mo);
-  void addPointer(ref<Expr> address, ref<Expr> base, const MemoryObject *mo);
+  void removePointerResolutions(const MemoryObject *mo);
+  void addPointerResolution(ref<Expr> address, ref<Expr> base, const MemoryObject *mo);
 
   void addConstraint(ref<Expr> e);
   void addCexPreference(const ref<Expr> &cond);

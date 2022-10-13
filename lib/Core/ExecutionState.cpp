@@ -106,7 +106,7 @@ ExecutionState::ExecutionState(const ExecutionState& state):
     symPathOS(state.symPathOS),
     coveredLines(state.coveredLines),
     symbolics(state.symbolics),
-    pointers(state.pointers),
+    resolvedPointers(state.resolvedPointers),
     cexPreferences(state.cexPreferences),
     arrayNames(state.arrayNames),
     openMergeStack(state.openMergeStack),
@@ -168,7 +168,7 @@ void ExecutionState::pushFrame(KInstIterator caller, KFunction *kf) {
 void ExecutionState::popFrame() {
   const StackFrame &sf = stack.back();
   for (const auto * memoryObject : sf.allocas) {
-    removePointers(memoryObject);
+    removePointerResolutions(memoryObject);
     addressSpace.unbindObject(memoryObject);
   }
   stack.pop_back();
@@ -230,10 +230,11 @@ bool ExecutionState::getBase(ref<Expr> expr,
   }
 }
 
-void ExecutionState::removePointers(const MemoryObject *mo) {
-  for (auto i = pointers.begin(), last = pointers.end(); i != last;) {
+void ExecutionState::removePointerResolutions(const MemoryObject *mo) {
+  for (auto i = resolvedPointers.begin(), last = resolvedPointers.end();
+       i != last;) {
     if (i->second.first == mo) {
-      i = pointers.erase(i);
+      i = resolvedPointers.erase(i);
     } else {
       ++i;
     }
@@ -241,12 +242,13 @@ void ExecutionState::removePointers(const MemoryObject *mo) {
 }
 
 // base address mo and ignore non pure reads in setinitializationgraph
-void ExecutionState::addPointer(ref<Expr> address, ref<Expr> base, const MemoryObject *mo) {
+void ExecutionState::addPointerResolution(ref<Expr> address, ref<Expr> base,
+                                          const MemoryObject *mo) {
   if (!isa<ConstantExpr>(address)) {
-    pointers[address] = std::make_pair(mo, mo->getOffsetExpr(address));
+    resolvedPointers[address] = std::make_pair(mo, mo->getOffsetExpr(address));
   }
   if (base != address && !isa<ConstantExpr>(base)) {
-    pointers[base] = std::make_pair(mo, mo->getOffsetExpr(base));
+    resolvedPointers[base] = std::make_pair(mo, mo->getOffsetExpr(base));
   }
 }
 

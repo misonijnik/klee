@@ -2083,7 +2083,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
                       "search phase unwinding");
 
         // unbind the MO we used to pass the serialized landingpad
-        state.removePointers(sui->serializedLandingpad);
+        state.removePointerResolutions(sui->serializedLandingpad);
         state.addressSpace.unbindObject(sui->serializedLandingpad);
         sui->serializedLandingpad = nullptr;
 
@@ -4062,7 +4062,7 @@ void Executor::executeAlloc(ExecutionState &state,
         unsigned count = std::min(reallocFrom->size, os->size);
         for (unsigned i=0; i<count; i++)
           os->write(i, reallocFrom->read8(i));
-        state.removePointers(reallocFrom->getObject());
+        state.removePointerResolutions(reallocFrom->getObject());
         state.addressSpace.unbindObject(reallocFrom->getObject());
       }
     }
@@ -4178,7 +4178,7 @@ void Executor::executeFree(ExecutionState &state,
                               StateTerminationType::Free,
                               getAddressInfo(*it->second, address));
       } else {
-        it->second->removePointers(mo);
+        it->second->removePointerResolutions(mo);
         it->second->addressSpace.unbindObject(mo);
         if (target)
           bindLocal(target, *it->second, Expr::createPointer(0));
@@ -4254,9 +4254,9 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   ObjectPair op;
   bool success;
 
-  if (state.pointers.count(address)) {
+  if (state.resolvedPointers.count(address)) {
     success = true;
-    const MemoryObject* mo = state.pointers[address].first;
+    const MemoryObject* mo = state.resolvedPointers[address].first;
     op = std::make_pair(mo, state.addressSpace.findObject(mo));
   } else {
     solver->setTimeout(coreSolverTimeout);
@@ -4294,7 +4294,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     if (inBounds) {
       ref<Expr> result;
       const ObjectState *os = op.second;
-      state.addPointer(base, address, mo);
+      state.addPointerResolution(base, address, mo);
       switch (operation) {
       case Write:
         if (os->readOnly) {
@@ -4345,7 +4345,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
 
     // bound can be 0 on failure or overlapped
     if (bound) {
-      bound->addPointer(base, address, mo);
+      bound->addPointerResolution(base, address, mo);
       switch (operation) {
       case Write: {
         if (os->readOnly) {
@@ -4428,7 +4428,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
                               getAddressInfo(*unbound, address, mo));
       } else {
         addConstraint(*unbound, inBounds);
-        unbound->addPointer(base, address, mo);
+        unbound->addPointerResolution(base, address, mo);
         switch (operation) {
         case Write: {
           ObjectState *wos =
@@ -4807,7 +4807,7 @@ void Executor::setInitializationGraph(const ExecutionState &state,
   std::map<size_t, std::vector<Pointer>> pointers;
   std::map<size_t, std::map<unsigned, std::pair<unsigned, unsigned>>> s;
 
-  for (const auto &pointer : state.pointers) {
+  for (const auto &pointer : state.resolvedPointers) {
 
     if (!isa<ReadExpr>(pointer.first) && !isa<ConcatExpr>(pointer.first)) {
       continue;
