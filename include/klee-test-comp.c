@@ -12,7 +12,7 @@
 #include <stddef.h>
 #include <assert.h>
 #include <stdlib.h>
-#include "klee.h"
+#include "klee/klee.h"
 #else
 void klee_make_symbolic(void *addr, unsigned int nbytes, const char *name);
 void klee_assume(_Bool condition);
