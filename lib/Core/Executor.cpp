@@ -4359,8 +4359,6 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   // XXX there is some query wasteage here. who cares?
   ExecutionState *unbound = &state;
 
-  ref<Expr> actualAddresses = nullptr;
-
   for (ResolutionList::iterator i = rl.begin(), ie = rl.end(); i != ie; ++i) {
     const MemoryObject *mo = i->first;
     const ObjectState *os = i->second;
@@ -4372,21 +4370,35 @@ void Executor::executeMemoryOperation(ExecutionState &state,
           AndExpr::create(inBounds, mo->getBoundsCheckPointer(base, size));
     }
 
-    ref<Expr> actualObjectAddressEquality =
-        EqExpr::create(mo->getBaseExpr(), mo->getSourceExpr());
+    Solver::Validity validity;
 
-    StatePair branches = fork(*unbound, inBounds, true, BranchType::MemOp);
-    ExecutionState *bound = branches.first;
+    solver->setTimeout(coreSolverTimeout);
+    bool success = solver->evaluate(unbound->evaluateConstraintsWithSymcretes(),
+                                    unbound->evaluateWithSymcretes(inBounds),
+                                    validity, unbound->queryMetaData);
+    solver->setTimeout(time::Span());
+    if (!success) {
+      // FIXME:
+      terminateStateOnSolverError(state, "Query timed out (resolve)");
+      return;
+    }
 
-    // bound can be 0 on failure or overlapped
+    // unbound = &state;
+    ExecutionState *bound = nullptr;
+    if (validity != Solver::Validity::False) {
+      bound = unbound->branch();
+      addedStates.push_back(bound);
+      processTree->attach(unbound->ptreeNode, bound, unbound, BranchType::MemOp);
+      addConstraint(*bound, inBounds);
+    }
+
+    if (validity == Solver::Validity::True) {
+      terminateStateEarly(*unbound, "", StateTerminationType::SilentExit);
+      unbound = nullptr;
+    }
+
     if (bound) {
       bound->addPointerResolution(base, address, mo);
-      if (actualAddresses.isNull()) {
-        actualAddresses = actualObjectAddressEquality;
-      } else {
-        actualAddresses =
-            AndExpr::create(actualAddresses, actualObjectAddressEquality);
-      }
 
       switch (operation) {
       case Write: {
@@ -4405,30 +4417,6 @@ void Executor::executeMemoryOperation(ExecutionState &state,
         bindLocal(target, *bound, result);
         break;
       }
-      }
-    }
-
-    unbound = branches.second;
-
-    if (unbound && isReadFromSymbolicArray(state.evaluateWithSymcretes(base))) {
-      if (base == mo->getBaseExpr()) {
-        terminateStateOnError(*unbound, "memory error: out of bound pointer",
-                              StateTerminationType::Ptr,
-                              getAddressInfo(*unbound, address, mo));
-        unbound = nullptr;
-      } else {
-        ref<Expr> baseInObject = mo->getBoundsCheckPointer(base, 1);
-        if (unbound->isGEPExpr(address)) {
-          baseInObject = OrExpr::create(baseInObject,
-                                        mo->getBoundsCheckPointer(base, size));
-        }
-        branches = fork(*unbound, baseInObject, true, BranchType::MemOp);
-        bound = branches.first;
-        if (bound) {
-          // the resolved object size was unsuitable, base cannot resolve to this object
-          terminateStateEarly(*bound, "", StateTerminationType::SilentExit);
-        }
-        unbound = branches.second;
       }
     }
 
@@ -4451,22 +4439,22 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   // FIXME: do this check, but not this way!
   // Check if we need to make LI
   // actualAddresses: AND_i getbaseExpr_i <- expr<address_i | LISource_i>
-  if (!actualAddresses.isNull() && unbound) {
-    solver->setTimeout(coreSolverTimeout);
-    bool needLasyInstantiation = false;
-    actualAddresses = ConstraintManager::simplifyExpr(unbound->constraints, actualAddresses);
-    bool success =
-        solver->mayBeTrue(unbound->constraints, actualAddresses,
-                          needLasyInstantiation, unbound->queryMetaData);
-    solver->setTimeout(time::Span());
-    if (!success) {
-      terminateStateOnSolverError(*unbound, "Query timed out (resolve).");
-      unbound = nullptr;
-    } else if (!needLasyInstantiation) {
-      terminateStateEarly(*unbound, "", StateTerminationType::SilentExit);
-      unbound = nullptr;
-    }
-  }
+  // if (!actualAddresses.isNull() && unbound) {
+  //   solver->setTimeout(coreSolverTimeout);
+  //   bool needLasyInstantiation = false;
+  //   actualAddresses = ConstraintManager::simplifyExpr(unbound->constraints, actualAddresses);
+  //   bool success =
+  //       solver->mayBeTrue(unbound->constraints, actualAddresses,
+  //                         needLasyInstantiation, unbound->queryMetaData);
+  //   solver->setTimeout(time::Span());
+  //   if (!success) {
+  //     terminateStateOnSolverError(*unbound, "Query timed out (resolve).");
+  //     unbound = nullptr;
+  //   } else if (!needLasyInstantiation) {
+  //     terminateStateEarly(*unbound, "", StateTerminationType::SilentExit);
+  //     unbound = nullptr;
+  //   }
+  // }
 
   // XXX should we distinguish out of bounds and overlapped cases?
   if (unbound) {
@@ -4548,16 +4536,19 @@ ObjectPair Executor::lazyInitializeObject(ExecutionState &state,
                        /*allocationAlignment=*/8, address, timestamp);
   assert(mo);
 
-  ref<Expr> checkPointerExpr = EqExpr::create(address, mo->getBaseExpr());
+  ref<Expr> checkPointerExpr = EqExpr::create(address, mo->getBaseConstantExpr());
   bool isAddressNeq;
 
+  /// FIXME:
   /// Check that the constructed model does not contradict itself 
   solver->setTimeout(coreSolverTimeout);
+  time::Point start = time::getWallTime();
   bool success =
       solver->mustBeFalse(state.evaluateConstraintsWithSymcretes(),
                           state.evaluateWithSymcretes(checkPointerExpr),
                           isAddressNeq, state.queryMetaData);
   solver->setTimeout(time::Span());
+  // llvm::errs() << time::getWallTime() - start << "\n";
 
   if (!success) {
     terminateStateOnSolverError(state, "Query timed out.");
