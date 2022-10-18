@@ -318,8 +318,15 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
         continue;
       }
 
-      if (timeout && timeout < timer.delta())
+      if (timeout && timeout < timer.delta()) {
+        // llvm::errs() << timer.delta() << "\n";
+        // llvm::errs() << "1) TIMED OUT!\n";
+        // llvm::errs() << "RL SIZE IS: " << rl.size() << "\n";
+        // llvm::errs() << "OBJECTS: " << objects.size() << "\n";
+
+        // state.evaluateWithSymcretes(p)->dump();
         return true;
+      }
 
       auto op = std::make_pair<>(mo, oi->second.get());
 
@@ -346,8 +353,14 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
         continue;
       }
 
-      if (timeout && timeout < timer.delta())
+      if (timeout && timeout < timer.delta()) {
+        // llvm::errs() << timer.delta() << "\n";
+        // llvm::errs() << "2) TIMED OUT!\n";
+        // llvm::errs() << "RL SIZE IS: " << rl.size() << "\n";
+        // llvm::errs() << "OBJECTS: " << objects.size() << "\n";
+        // state.evaluateWithSymcretes(p)->dump();
         return true;
+      }
 
       bool mustBeTrue;
       if (!solver->mustBeTrue(state.evaluateConstraintsWithSymcretes(),
