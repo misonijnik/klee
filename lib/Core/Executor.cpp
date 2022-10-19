@@ -4339,6 +4339,11 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     const ObjectState *os = i->second;
 
     ref<Expr> inBounds = mo->getBoundsCheckPointer(address, bytes);
+    if (unbound->isGEPExpr(address)) {
+      inBounds = AndExpr::create(inBounds, mo->getBoundsCheckPointer(base, 1));
+      inBounds =
+          AndExpr::create(inBounds, mo->getBoundsCheckPointer(base, size));
+    }
 
     StatePair branches = fork(*unbound, inBounds, true, BranchType::MemOp);
     ExecutionState *bound = branches.first;
@@ -4376,6 +4381,10 @@ void Executor::executeMemoryOperation(ExecutionState &state,
         unbound = nullptr;
       } else {
         ref<Expr> baseInObject = mo->getBoundsCheckPointer(base, 1);
+        if (unbound->isGEPExpr(address)) {
+          baseInObject = OrExpr::create(baseInObject,
+                                        mo->getBoundsCheckPointer(base, size));
+        }
         branches = fork(*unbound, baseInObject, true, BranchType::MemOp);
         bound = branches.first;
         if (bound) {
