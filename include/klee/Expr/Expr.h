@@ -560,9 +560,6 @@ public:
   /// the array size.
   const std::vector<ref<ConstantExpr>> constantValues;
 
-  /// a binding to a symbolic object
-  const MemoryObject *binding = nullptr;
-
 private:
   unsigned hashValue;
 

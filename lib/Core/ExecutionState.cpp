@@ -208,6 +208,17 @@ void ExecutionState::addSymbolic(const MemoryObject *mo, const Array *array) {
   symbolics.emplace_back(ref<const MemoryObject>(mo), array);
 }
 
+ref<const MemoryObject>
+ExecutionState::findMemoryObject(const Array *array) const {
+  for (unsigned i = 0; i != symbolics.size(); ++i) {
+    const auto &symbolic = symbolics[i];
+    if (array == symbolic.second) {
+      return symbolic.first;
+    }
+  }
+  return nullptr;
+}
+
 bool ExecutionState::isSymcrete(const Array *array) {
   return symcretes.bindings.count(array);
 }

@@ -160,7 +160,7 @@ private:
 public:
   using stack_ty = std::vector<StackFrame>;
 
-  std::map<ref<Expr>, std::pair<const MemoryObject *, ref<Expr>>> pointers;
+  std::map<ref<Expr>, std::pair<ref<const MemoryObject>, ref<Expr>>> pointers;
 
   // Execution - Control Flow specific
 
@@ -300,6 +300,8 @@ public:
   void popFrame();
 
   void addSymbolic(const MemoryObject *mo, const Array *array);
+
+  ref<const MemoryObject> findMemoryObject(const Array *array) const;
 
   bool isSymcrete(const Array *array);
 
