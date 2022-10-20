@@ -139,3 +139,6 @@ template void klee::findSymbolicObjects<A>(A, A, std::vector<const Array*> &);
 
 typedef std::set< ref<Expr> >::iterator B;
 template void klee::findSymbolicObjects<B>(B, B, std::vector<const Array*> &);
+
+typedef ExprHashSet::iterator C;
+template void klee::findSymbolicObjects<C>(C, C, std::vector<const Array*> &);
