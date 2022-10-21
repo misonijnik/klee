@@ -1562,6 +1562,7 @@ MemoryObject *Executor::serializeLandingpad(ExecutionState &state,
   MemoryObject *mo =
       memory->allocate(serialized.size(), true, false, nullptr, 1);
   assert(mo);
+  ObjectState *os = bindObjectInState(state, mo, false);
   for (unsigned i = 0; i < serialized.size(); i++) {
     os->write8(i, serialized[i]);
   }
@@ -4386,13 +4387,6 @@ void Executor::executeMemoryOperation(ExecutionState &state,
         actualAddresses =
             AndExpr::create(actualAddresses, actualObjectAddressEquality);
       }
-
-      /* FIXME: Notice, that here we are creating a new instance of object
-      for every memory operation in order to handle type changes. This might
-      waste too much memory as we do now always modify something. To fix this
-      we can ask memory if we will make anything, and create a copy if
-      required. */
-      ObjectState *wos = bound->addressSpace.getWriteable(mo, os);
 
       switch (operation) {
       case Write: {

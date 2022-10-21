@@ -57,7 +57,7 @@ public:
   /// "Virtual" memory address 
   const Array *concreteAddress = nullptr;
 
-  ref<Expr> lazyInstantiatedSource;
+  ref<Expr> lazyInitializationSource;
 
   /// size in bytes
   unsigned size;
@@ -145,14 +145,14 @@ public:
     return ConstantExpr::create(address, Context::get().getPointerWidth());
   }
   ref<Expr> getBaseExpr() const {
-    return isLazyInstantiated()
+    return isLazyInitialized()
                ? Expr::createTempRead(concreteAddress,
                                       Context::get().getPointerWidth())
                : ref<Expr>(cast<Expr>(getBaseConstantExpr()));
   }
 
   ref<Expr> getSourceExpr() const {
-    if (lazyInstantiatedSource.isNull())
+    if (!isLazyInitialized()) {
       return getBaseConstantExpr();
     } else {
       return lazyInitializationSource;
