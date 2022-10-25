@@ -398,7 +398,7 @@ void TargetedSearcher::removeReached() {
 
 GuidedSearcher::GuidedSearcher(
     Searcher *baseSearcher, CodeGraphDistance &codeGraphDistance,
-    StateHistory &stateHistory,
+    TargetCalculator &stateHistory,
     std::set<ExecutionState *, ExecutionStateIDCompare> &pausedStates,
     std::size_t bound, bool stopAfterReachingTarget)
     : baseSearcher(baseSearcher), codeGraphDistance(codeGraphDistance),
@@ -484,7 +484,7 @@ void GuidedSearcher::innerUpdate(
     KInstruction *prevKI = state->prevPC;
     if (prevKI->inst->isTerminator() &&
         state->multilevel.count(state->getPCBlock()) > bound) {
-      Target target(stateHistory.calculateTargetByBlockHistory(*state));
+      Target target(stateHistory.calculateByBlockHistory(*state));
       if (target) {
         state->targets.insert(target);
         targets.insert(target);
@@ -983,115 +983,4 @@ void InterleavedSearcher::printName(llvm::raw_ostream &os) {
   for (const auto &searcher : searchers)
     searcher->printName(os);
   os << "</InterleavedSearcher>\n";
-}
-
-KBlock *StateHistory::calculateTargetByBlockHistory(ExecutionState &state) {
-  BasicBlock *initialBlock = state.getInitPCBlock();
-  VisitedBlock &history = results[initialBlock].history;
-  BasicBlock *bb = state.getPCBlock();
-  KFunction *kf = module.functionMap.at(bb->getParent());
-  KBlock *kb = kf->blockMap[bb];
-
-  KBlock *nearestBlock = nullptr;
-  unsigned int minDistance = UINT_MAX;
-  unsigned int sfNum = 0;
-  bool newCov = false;
-
-  for (auto sfi = state.stack.rbegin(), sfe = state.stack.rend(); sfi != sfe;
-       sfi++, sfNum++) {
-    kf = sfi->kf;
-
-    for (const auto &kbd : codeGraphDistance.getSortedDistance(kb)) {
-      KBlock *target = kbd.first;
-      unsigned distance = kbd.second;
-      if ((sfNum > 0 || distance > 0)) {
-        if (distance >= minDistance)
-          break;
-        if (history[target->basicBlock].size() != 0) {
-          std::vector<BasicBlock *> diff;
-          if (!newCov) {
-            std::set<BasicBlock *> left(state.level.begin(), state.level.end());
-            std::set<BasicBlock *> right(history[target->basicBlock].begin(),
-                                         history[target->basicBlock].end());
-            std::set_difference(left.begin(), left.end(), right.begin(),
-                                right.end(), std::inserter(diff, diff.begin()));
-          }
-          if (diff.empty()) {
-            continue;
-          }
-        } else {
-          newCov = true;
-        }
-        nearestBlock = target;
-        minDistance = distance;
-      }
-    }
-
-    if (nearestBlock) {
-      return nearestBlock;
-    }
-
-    if (sfi->caller) {
-      kb = sfi->caller->parent;
-    }
-  }
-  return nearestBlock;
-}
-
-KBlock *
-StateHistory::calculateTargetByTransitionHistory(ExecutionState &state) {
-  BasicBlock *initialBlock = state.getInitPCBlock();
-  VisitedBlock &history = results[initialBlock].history;
-  VisitedTransition &transitionHistory =
-      results[initialBlock].transitionHistory;
-  BasicBlock *bb = state.getPCBlock();
-  KFunction *kf = module.functionMap.at(bb->getParent());
-  KBlock *kb = kf->blockMap[bb];
-  KBlock *nearestBlock = nullptr;
-  unsigned int minDistance = UINT_MAX;
-  unsigned int sfNum = 0;
-  bool newCov = false;
-  for (auto sfi = state.stack.rbegin(), sfe = state.stack.rend(); sfi != sfe;
-       sfi++, sfNum++) {
-    kf = sfi->kf;
-
-    for (const auto &kbd : codeGraphDistance.getSortedDistance(kb)) {
-      KBlock *target = kbd.first;
-      unsigned distance = kbd.second;
-      if ((sfNum > 0 || distance > 0)) {
-        if (distance >= minDistance)
-          break;
-        if (history[target->basicBlock].size() != 0) {
-          std::vector<Transition> diff;
-          if (!newCov) {
-            std::set<Transition> left(state.transitionLevel.begin(),
-                                      state.transitionLevel.end());
-            std::set<Transition> right(
-                transitionHistory[target->basicBlock].begin(),
-                transitionHistory[target->basicBlock].end());
-            std::set_difference(left.begin(), left.end(), right.begin(),
-                                right.end(), std::inserter(diff, diff.begin()));
-          }
-
-          if (diff.empty()) {
-            continue;
-          }
-        } else {
-          newCov = true;
-        }
-        nearestBlock = target;
-        minDistance = distance;
-      }
-    }
-
-    if (nearestBlock) {
-      return nearestBlock;
-    }
-
-    if (sfi->caller) {
-      kb = sfi->caller->parent;
-    }
-  }
-
-  return nearestBlock;
 }

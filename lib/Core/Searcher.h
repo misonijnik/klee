@@ -123,38 +123,6 @@ namespace klee {
     void printName(llvm::raw_ostream &os) override;
   };
 
-  class StateHistory {
-    typedef std::map<llvm::BasicBlock *, std::unordered_set<llvm::BasicBlock *>>
-        VisitedBlock;
-    typedef std::map<llvm::BasicBlock *,
-                     std::unordered_set<Transition, TransitionHash>>
-        VisitedTransition;
-
-    struct ExecutionBlockResult {
-      VisitedBlock history;
-      VisitedTransition transitionHistory;
-    };
-
-    typedef std::map<llvm::BasicBlock *, ExecutionBlockResult> ExecutionResult;
-
-  public:
-    KBlock *calculateTargetByTransitionHistory(ExecutionState &state);
-    KBlock *calculateTargetByBlockHistory(ExecutionState &state);
-
-    StateHistory(const KModule &module, CodeGraphDistance &codeGraphDistance)
-        : module(module), codeGraphDistance(codeGraphDistance) {}
-
-    void updateHistory(ExecutionState &state) {
-      results[state.getInitPCBlock()].history[state.getPrevPCBlock()].insert(
-        state.level.begin(), state.level.end());
-    }
-
-  private:
-    const KModule &module;
-    CodeGraphDistance &codeGraphDistance;
-    ExecutionResult results;
-  };
-
   /// TargetedSearcher picks a state /*COMMENT*/.
   class TargetedSearcher final : public Searcher {
   public:
@@ -202,7 +170,7 @@ namespace klee {
     std::unique_ptr<Searcher> baseSearcher;
     std::map<Target, std::unique_ptr<TargetedSearcher>> targetedSearchers;
     CodeGraphDistance &codeGraphDistance;
-    StateHistory &stateHistory;
+    TargetCalculator &stateHistory;
     std::set<ExecutionState *, ExecutionStateIDCompare> &pausedStates;
     std::size_t bound;
     unsigned index{1};
@@ -219,7 +187,7 @@ namespace klee {
   public:
     GuidedSearcher(
         Searcher *baseSearcher, CodeGraphDistance &codeGraphDistance,
-        StateHistory &stateHistory,
+        TargetCalculator &stateHistory,
         std::set<ExecutionState *, ExecutionStateIDCompare> &pausedStates,
         std::size_t bound,
         bool stopAfterReachingTarget = true);

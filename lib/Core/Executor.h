@@ -78,7 +78,7 @@ namespace klee {
   class SeedInfo;
   class SpecialFunctionHandler;
   struct StackFrame;
-  class StateHistory;
+  class TargetCalculator;
   class StatsTracker;
   class TimingSolver;
   class TreeStreamWriter;
@@ -124,7 +124,7 @@ private:
   TimerGroup timers;
   std::unique_ptr<PTree> processTree;
   std::unique_ptr<CodeGraphDistance> codeGraphDistance;
-  StateHistory *stateHistory;
+  TargetCalculator *targetCalculator;
 
   /// Used to track states that have been added during the current
   /// instructions step. 

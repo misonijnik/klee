@@ -81,8 +81,6 @@ namespace klee {
         llvm::Instruction *inst, KModule *km, KInstruction *ki);
     KInstruction * getFirstInstruction() const noexcept { return instructions[0]; }
     KInstruction * getLastInstruction() const noexcept { return instructions[numInstructions - 1]; }
-    std::string getAssemblyLocation() const;
-    std::string getLabel() const;
   };
 
   struct KCallBlock : KBlock {

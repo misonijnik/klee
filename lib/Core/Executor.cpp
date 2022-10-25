@@ -570,7 +570,7 @@ Executor::setModule(std::vector<std::unique_ptr<llvm::Module>> &modules,
   Context::initialize(TD->isLittleEndian(),
                       (Expr::Width)TD->getPointerSizeInBits());
 
-  stateHistory = new StateHistory(*kmodule.get(), *codeGraphDistance.get());
+  targetCalculator = new TargetCalculator(*kmodule.get(), *codeGraphDistance.get());
 
   return kmodule->module.get();
 }
@@ -581,7 +581,7 @@ Executor::~Executor() {
   delete specialFunctionHandler;
   delete statsTracker;
   delete solver;
-  delete stateHistory;
+  delete targetCalculator;
 }
 
 /***/
@@ -3561,7 +3561,7 @@ void Executor::run(ExecutionState &initialState) {
 
       if (prevKI->inst->isTerminator() &&
           kmodule->mainFunctions.count(kf->function)) {
-        stateHistory->updateHistory(state);
+        targetCalculator->update(state);
       }
 
       executeStep(state);
@@ -3718,7 +3718,7 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
         terminationTypeFileExtension(StateTerminationType::Exit).c_str());
 
   interpreterHandler->incPathsCompleted();
-  stateHistory->updateHistory(state);
+  targetCalculator->update(state);
   terminateState(state);
 }
 
@@ -3829,7 +3829,7 @@ void Executor::terminateStateOnError(ExecutionState &state,
     interpreterHandler->processTestCase(state, msg.str().c_str(), file_suffix);
   }
 
-  stateHistory->updateHistory(state);
+  targetCalculator->update(state);
   terminateState(state);
 
   if (shouldExitOn(terminationType))
