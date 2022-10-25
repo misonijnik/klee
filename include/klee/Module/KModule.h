@@ -44,11 +44,13 @@ namespace klee {
   struct KInstruction;
   class KModule;
   struct KFunction;
+  struct KCallBlock;
   template<class T> class ref;
 
   enum KBlockType {
     Base,
     Call,
+    Return
   };
 
   struct KBlock {
@@ -63,17 +65,24 @@ namespace klee {
     bool trackCoverage;
 
   public:
-    explicit KBlock(KFunction *, llvm::BasicBlock *, KModule *,
-                    std::map<llvm::Instruction *, unsigned> &,
-                    std::map<unsigned, KInstruction *> &, KInstruction **);
+    KBlock(KFunction *, llvm::BasicBlock *, KModule *,
+           std::map<llvm::Instruction *, unsigned> &,
+           std::map<unsigned, KInstruction *> &,
+           KInstruction **);
     KBlock(const KBlock &) = delete;
     KBlock &operator=(const KBlock &) = delete;
+    virtual ~KBlock() = default;
+
+    virtual KBlockType getKBlockType() const { return KBlockType::Base; }
+    static bool classof(const KBlock *) { return true; }
 
     void handleKInstruction(
         std::map<llvm::Instruction *, unsigned> &instructionToRegisterMap,
         llvm::Instruction *inst, KModule *km, KInstruction *ki);
-    virtual KBlockType getKBlockType() const { return KBlockType::Base; };
-    virtual ~KBlock() = default;
+    KInstruction * getFirstInstruction() const noexcept { return instructions[0]; }
+    KInstruction * getLastInstruction() const noexcept { return instructions[numInstructions - 1]; }
+    std::string getAssemblyLocation() const;
+    std::string getLabel() const;
   };
 
   struct KCallBlock : KBlock {
@@ -81,11 +90,30 @@ namespace klee {
     llvm::Function *calledFunction;
 
   public:
-    explicit KCallBlock(KFunction *, llvm::BasicBlock *, KModule *,
-                        std::map<llvm::Instruction *, unsigned> &,
-                        std::map<unsigned, KInstruction *> &, llvm::Function *,
-                        KInstruction **);
+    KCallBlock(KFunction *, llvm::BasicBlock *, KModule *,
+               std::map<llvm::Instruction *, unsigned> &,
+               std::map<unsigned, KInstruction *> &, llvm::Function *,
+               KInstruction **);
+    static bool classof(const KCallBlock *) { return true; }
+    static bool classof(const KBlock *E) {
+      return E->getKBlockType() == KBlockType::Call;
+    }
     KBlockType getKBlockType() const override { return KBlockType::Call; };
+    bool intrinsic() const;
+    bool internal() const;
+    KFunction *getKFunction() const;
+  };
+
+  struct KReturnBlock : KBlock {
+  public:
+    KReturnBlock(KFunction *, llvm::BasicBlock *, KModule *,
+                 std::map<llvm::Instruction *, unsigned> &,
+                 std::map<unsigned, KInstruction *> &, KInstruction **);
+    static bool classof(const KReturnBlock *) { return true; }
+    static bool classof(const KBlock *E) {
+      return E->getKBlockType() == KBlockType::Return;
+    }
+    KBlockType getKBlockType() const override { return KBlockType::Return; };
   };
 
   struct KFunction {
@@ -103,7 +131,7 @@ namespace klee {
     std::vector<std::unique_ptr<KBlock>> blocks;
     std::map<llvm::BasicBlock *, KBlock *> blockMap;
     KBlock *entryKBlock;
-    std::vector<KBlock *> finalKBlocks;
+    std::vector<KBlock *> returnKBlocks;
     std::vector<KCallBlock *> kCallBlocks;
 
     /// Whether instructions in this function should count as

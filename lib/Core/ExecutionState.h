@@ -12,6 +12,7 @@
 
 #include "AddressSpace.h"
 #include "MergeHandler.h"
+#include "Target.h"
 
 #include "klee/ADT/ImmutableSet.h"
 #include "klee/ADT/TreeStream.h"
@@ -41,6 +42,7 @@ struct KInstruction;
 class MemoryObject;
 class PTreeNode;
 struct InstructionInfo;
+struct Target;
 
 llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const MemoryMap &mm);
 
@@ -272,8 +274,8 @@ public:
   /// @brief Disables forking for this state. Set by user code
   bool forkDisabled = false;
 
-  /// @brief The target basic block that the state must achieve
-  KBlock *target = nullptr;
+  /// @brief The targets that the state must achieve
+  std::set<Target> targets;
 
   ExprHashMap<std::pair<ref<Expr>, unsigned>> gepExprBases;
   ExprHashMap<ref<Expr>> gepExprOffsets;
@@ -321,9 +323,9 @@ public:
 
   std::uint32_t getID() const { return id; };
   void setID() { id = nextID++; };
-  llvm::BasicBlock *getInitPCBlock();
-  llvm::BasicBlock *getPrevPCBlock();
-  llvm::BasicBlock *getPCBlock();
+  llvm::BasicBlock *getInitPCBlock() const;
+  llvm::BasicBlock *getPrevPCBlock() const;
+  llvm::BasicBlock *getPCBlock() const;
   void increaseLevel();
   bool isGEPExpr(ref<Expr> expr) const;
 };

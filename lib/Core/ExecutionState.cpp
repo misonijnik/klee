@@ -118,7 +118,7 @@ ExecutionState::ExecutionState(const ExecutionState& state):
                              : nullptr),
     coveredNew(state.coveredNew),
     forkDisabled(state.forkDisabled),
-    target(state.target),
+    targets(state.targets),
     gepExprBases(state.gepExprBases),
     gepExprOffsets(state.gepExprOffsets) {
   for (const auto &cur_mergehandler: openMergeStack)
@@ -473,15 +473,15 @@ void ExecutionState::addCexPreference(const ref<Expr> &cond) {
   cexPreferences = cexPreferences.insert(cond);
 }
 
-BasicBlock *ExecutionState::getInitPCBlock() {
+BasicBlock *ExecutionState::getInitPCBlock() const {
   return initPC->inst->getParent();
 }
 
-BasicBlock *ExecutionState::getPrevPCBlock() {
+BasicBlock *ExecutionState::getPrevPCBlock() const {
   return prevPC->inst->getParent();
 }
 
-BasicBlock *ExecutionState::getPCBlock() { return pc->inst->getParent(); }
+BasicBlock *ExecutionState::getPCBlock() const { return pc->inst->getParent(); }
 
 void ExecutionState::increaseLevel() {
   llvm::BasicBlock *srcbb = getPrevPCBlock();
