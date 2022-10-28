@@ -223,47 +223,6 @@ void KModule::addInternalFunction(const char* functionName){
   internalFunctions.insert(internalFunction);
 }
 
-void KModule::calculateBackwardDistance(KFunction *kf) {
-  std::map<KFunction *, unsigned int> &bdist = backwardDistance[kf];
-  std::deque<KFunction *> nodes;
-  nodes.push_back(kf);
-  bdist[kf] = 0;
-  while (!nodes.empty()) {
-    KFunction *currKF = nodes.front();
-    for (auto &cf : callMap[currKF->function]) {
-      if (cf->isDeclaration())
-        continue;
-      KFunction *callKF = functionMap[cf];
-      if (bdist.find(callKF) == bdist.end()) {
-        bdist[callKF] = bdist[currKF] + 1;
-        nodes.push_back(callKF);
-      }
-    }
-    nodes.pop_front();
-  }
-}
-
-void KModule::calculateDistance(KFunction *kf) {
-  std::map<KFunction *, unsigned int> &dist = distance[kf];
-  std::deque<KFunction *> nodes;
-  nodes.push_back(kf);
-  dist[kf] = 0;
-  while (!nodes.empty()) {
-    KFunction *currKF = nodes.front();
-    for (auto &callBlock : currKF->kCallBlocks) {
-      if (!callBlock->calledFunction ||
-          callBlock->calledFunction->isDeclaration())
-        continue;
-      KFunction *callKF = functionMap[callBlock->calledFunction];
-      if (dist.find(callKF) == dist.end()) {
-        dist[callKF] = dist[currKF] + 1;
-        nodes.push_back(callKF);
-      }
-    }
-    nodes.pop_front();
-  }
-}
-
 bool KModule::link(std::vector<std::unique_ptr<llvm::Module>> &modules,
                    const std::string &entryPoint) {
   auto numRemainingModules = modules.size();
@@ -473,19 +432,6 @@ KBlock *KModule::getKBlock(llvm::BasicBlock *bb) {
   return functionMap[bb->getParent()]->blockMap[bb];
 }
 
-std::map<KFunction *, unsigned int> &
-KModule::getBackwardDistance(KFunction *kf) {
-  if (backwardDistance.find(kf) == backwardDistance.end())
-    calculateBackwardDistance(kf);
-  return backwardDistance[kf];
-}
-
-std::map<KFunction *, unsigned int> &KModule::getDistance(KFunction *kf) {
-  if (distance.find(kf) == distance.end())
-    calculateDistance(kf);
-  return distance[kf];
-}
-
 Function *llvm::getTargetFunction(Value *calledVal) {
   SmallPtrSet<const GlobalValue *, 3> Visited;
 
@@ -623,14 +569,14 @@ KFunction::KFunction(llvm::Function *_function,
                                 bbie = function->end();
        bbit != bbie; ++bbit) {
     KBlock *kb;
-    Instruction *it = &*(*bbit).begin();
-    if (it->getOpcode() == Instruction::Call ||
-        it->getOpcode() == Instruction::Invoke) {
+    Instruction *fit = &bbit->front();
+    Instruction *lit = &bbit->back();
+    if (isa<CallInst>(fit) || isa<InvokeInst>(fit)) {
 #if LLVM_VERSION_CODE >= LLVM_VERSION(8, 0)
-      const CallBase &cs = cast<CallBase>(*it);
+      const CallBase &cs = cast<CallBase>(*fit);
       Value *fp = cs.getCalledOperand();
 #else
-      CallSite cs(it);
+      CallSite cs(fit);
       Value *fp = cs.getCalledValue();
 #endif
       Function *f = getTargetFunction(fp);
@@ -638,16 +584,19 @@ KFunction::KFunction(llvm::Function *_function,
                                        reg2inst, f, &instructions[n]);
       kCallBlocks.push_back(ckb);
       kb = ckb;
-    } else
+    } else if (isa<ReturnInst>(lit)) {
+      kb = new KReturnBlock(this, &*bbit, parent, registerMap,
+                            reg2inst, &instructions[n]);
+      returnKBlocks.push_back(kb);
+    } else {
       kb = new KBlock(this, &*bbit, parent, registerMap, reg2inst,
                       &instructions[n]);
+    }
     for (unsigned i = 0; i < kb->numInstructions; i++, n++) {
       instructionMap[instructions[n]->inst] = instructions[n];
     }
     blockMap[&*bbit] = kb;
     blocks.push_back(std::unique_ptr<KBlock>(kb));
-    if (isa<ReturnInst>(kb->instructions[kb->numInstructions - 1]->inst))
-      finalKBlocks.push_back(kb);
   }
 
   if (numBlocks > 0) {
@@ -660,52 +609,6 @@ KFunction::~KFunction() {
   for (unsigned i = 0; i < numInstructions; ++i)
     delete instructions[i];
   delete[] instructions;
-}
-
-void KFunction::calculateDistance(KBlock *bb) {
-  std::map<KBlock *, unsigned int> &dist = distance[bb];
-  std::deque<KBlock *> nodes;
-  nodes.push_back(bb);
-  dist[bb] = 0;
-  while (!nodes.empty()) {
-    KBlock *currBB = nodes.front();
-    for (auto const &succ : successors(currBB->basicBlock)) {
-      if (dist.find(blockMap[succ]) == dist.end()) {
-        dist[blockMap[succ]] = dist[currBB] + 1;
-        nodes.push_back(blockMap[succ]);
-      }
-    }
-    nodes.pop_front();
-  }
-}
-
-void KFunction::calculateBackwardDistance(KBlock *bb) {
-  std::map<KBlock *, unsigned int> &bdist = backwardDistance[bb];
-  std::deque<KBlock *> nodes;
-  nodes.push_back(bb);
-  bdist[bb] = 0;
-  while (!nodes.empty()) {
-    KBlock *currBB = nodes.front();
-    for (auto const &pred : predecessors(currBB->basicBlock)) {
-      if (bdist.find(blockMap[pred]) == bdist.end()) {
-        bdist[blockMap[pred]] = bdist[currBB] + 1;
-        nodes.push_back(blockMap[pred]);
-      }
-    }
-    nodes.pop_front();
-  }
-}
-
-std::map<KBlock *, unsigned int> &KFunction::getDistance(KBlock *kb) {
-  if (distance.find(kb) == distance.end())
-    calculateDistance(kb);
-  return distance[kb];
-}
-
-std::map<KBlock *, unsigned int> &KFunction::getBackwardDistance(KBlock *kb) {
-  if (backwardDistance.find(kb) == backwardDistance.end())
-    calculateBackwardDistance(kb);
-  return backwardDistance[kb];
 }
 
 KBlock::KBlock(KFunction *_kfunction, llvm::BasicBlock *block, KModule *km,
@@ -750,3 +653,34 @@ KCallBlock::KCallBlock(KFunction *_kfunction, llvm::BasicBlock *block,
                      instructionsKF),
       kcallInstruction(this->instructions[0]), calledFunction(_calledFunction) {
 }
+
+bool KCallBlock::intrinsic() const {
+  return calledFunction->getIntrinsicID() != llvm::Intrinsic::not_intrinsic;
+}
+
+bool KCallBlock::internal() const {
+  return parent->parent->functionMap[calledFunction] != nullptr;
+}
+
+KFunction *KCallBlock::getKFunction() const {
+  return parent->parent->functionMap[calledFunction];
+}
+
+std::string KBlock::getAssemblyLocation() const {
+  std::string repr = "KBlock ";
+  std::string label;
+  llvm::raw_string_ostream label_stream(label);
+  basicBlock->printAsOperand(label_stream);
+  repr += label_stream.str().substr(6);
+  repr += " in function ";
+  repr += parent->function->getName();
+  return repr;
+}
+
+KReturnBlock::KReturnBlock(
+    KFunction *kfunction, llvm::BasicBlock *block, KModule *km,
+    std::map<Instruction *, unsigned> &instructionToRegisterMap,
+    std::map<unsigned, KInstruction *> &registerToInstructionMap,
+    KInstruction **instructionsKF)
+    : KBlock::KBlock(kfunction, block, km, instructionToRegisterMap,
+                     registerToInstructionMap, instructionsKF) {}

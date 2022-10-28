@@ -12,11 +12,13 @@
 
 #include "AddressSpace.h"
 #include "MergeHandler.h"
+#include "Target.h"
 
 #include "klee/ADT/ImmutableSet.h"
 #include "klee/ADT/TreeStream.h"
 #include "klee/Expr/Constraints.h"
 #include "klee/Expr/Expr.h"
+#include "klee/Expr/ExprHashMap.h"
 #include "klee/Module/KInstIterator.h"
 #include "klee/Solver/Solver.h"
 #include "klee/System/Time.h"
@@ -38,6 +40,7 @@ struct KInstruction;
 class MemoryObject;
 class PTreeNode;
 struct InstructionInfo;
+struct Target;
 
 llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const MemoryMap &mm);
 
@@ -146,6 +149,9 @@ struct CleanupPhaseUnwindingInformation : public UnwindingInformation {
   }
 };
 
+typedef std::pair<ref<const MemoryObject>, const Array *> Symbolic;
+typedef std::pair<llvm::BasicBlock *, llvm::BasicBlock *> Transition;
+
 /// @brief ExecutionState representing a path under exploration
 class ExecutionState {
 #ifdef KLEE_UNITTEST
@@ -188,6 +194,7 @@ public:
   /// @brief Exploration level, i.e., number of times KLEE cycled for this state
   std::unordered_multiset<llvm::BasicBlock *> multilevel;
   std::unordered_set<llvm::BasicBlock *> level;
+  std::unordered_set<Transition, TransitionHash> transitionLevel;
 
   /// @brief Address space used by this state (e.g. Global and Heap)
   AddressSpace addressSpace;
@@ -218,7 +225,7 @@ public:
   /// @brief Ordered list of symbolics: used to generate test cases.
   //
   // FIXME: Move to a shared list structure (not critical).
-  std::vector<std::pair<ref<const MemoryObject>, const Array *>> symbolics;
+  std::vector<Symbolic> symbolics;
 
   /// @brief A set of boolean expressions
   /// the user has requested be true of a counterexample.
@@ -259,8 +266,8 @@ public:
   /// @brief Disables forking for this state. Set by user code
   bool forkDisabled = false;
 
-  /// @brief The target basic block that the state must achieve
-  KBlock *target = nullptr;
+  /// @brief The targets that the state must achieve
+  std::set<Target> targets;
 
 public:
 #ifdef KLEE_UNITTEST
@@ -299,10 +306,10 @@ public:
 
   std::uint32_t getID() const { return id; };
   void setID() { id = nextID++; };
-  llvm::BasicBlock *getInitPCBlock();
-  llvm::BasicBlock *getPrevPCBlock();
-  llvm::BasicBlock *getPCBlock();
-  void addLevel(llvm::BasicBlock *bb);
+  llvm::BasicBlock *getInitPCBlock() const;
+  llvm::BasicBlock *getPrevPCBlock() const;
+  llvm::BasicBlock *getPCBlock() const;
+  void increaseLevel();
 };
 
 struct ExecutionStateIDCompare {

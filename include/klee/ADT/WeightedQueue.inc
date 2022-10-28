@@ -39,8 +39,20 @@ void WeightedQueue<T, Comparator>::remove(T item) {
 
 template <class T, class Comparator>
 void WeightedQueue<T, Comparator>::update(T item, weight_type weight) {
-  remove(item);
-  insert(item, weight);
+  assert(valueToWeight.count(item) != 0);
+  weight_type oldWeight = valueToWeight[item];
+  if (oldWeight != weight) {
+    valueToWeight[item] = weight;
+    std::deque<T> *weightQueue = &weightToQueue.at(oldWeight);
+    auto itr = std::find(weightQueue->begin(), weightQueue->end(), item);
+    assert(itr != weightQueue->end());
+    weightQueue->erase(itr);
+    if (weightQueue->empty()) {
+      weightQueue = nullptr;
+      weightToQueue.erase(oldWeight);
+    }
+    weightToQueue[weight].push_back(item);
+  }
 }
 
 template <class T, class Comparator>

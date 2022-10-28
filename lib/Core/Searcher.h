@@ -22,6 +22,7 @@
 #include <queue>
 #include <set>
 #include <vector>
+#include <unordered_map>
 
 namespace llvm {
   class BasicBlock;
@@ -32,6 +33,7 @@ namespace llvm {
 
 namespace klee {
   template<class T, class Comparator> class DiscretePDF;
+  template<class T, class Comparator> class WeightedQueue;
   class ExecutionState;
   class Executor;
 
@@ -130,46 +132,73 @@ namespace klee {
     };
 
   private:
-    std::unique_ptr<DiscretePDF<ExecutionState *, ExecutionStateIDCompare>>
+    typedef unsigned weight_type;
+
+    std::unique_ptr<WeightedQueue<ExecutionState *, ExecutionStateIDCompare>>
         states;
-    KBlock *target;
-    std::map<KFunction *, unsigned int> &distanceToTargetFunction;
+    Target target;
+    CodeGraphDistance &codeGraphDistance;
+    const std::unordered_map<KFunction *, unsigned int> &distanceToTargetFunction;
+    std::vector<ExecutionState *> reachedOnLastUpdate;
 
     bool distanceInCallGraph(KFunction *kf, KBlock *kb, unsigned int &distance);
-    WeightResult tryGetLocalWeight(ExecutionState *es, double &weight,
+    WeightResult tryGetLocalWeight(ExecutionState *es, weight_type &weight,
                                    const std::vector<KBlock *> &localTargets);
-    WeightResult tryGetPreTargetWeight(ExecutionState *es, double &weight);
-    WeightResult tryGetTargetWeight(ExecutionState *es, double &weight);
-    WeightResult tryGetPostTargetWeight(ExecutionState *es, double &weight);
-    WeightResult tryGetWeight(ExecutionState *es, double &weight);
+    WeightResult tryGetPreTargetWeight(ExecutionState *es, weight_type &weight);
+    WeightResult tryGetTargetWeight(ExecutionState *es, weight_type &weight);
+    WeightResult tryGetPostTargetWeight(ExecutionState *es, weight_type &weight);
+    WeightResult tryGetWeight(ExecutionState *es, weight_type &weight);
 
   public:
-    ExecutionState *result = nullptr;
-    TargetedSearcher(KBlock *targetBB);
-    ~TargetedSearcher() override = default;
+    TargetedSearcher(Target target, CodeGraphDistance &distance);
+    ~TargetedSearcher() override;
+
     ExecutionState &selectState() override;
     void update(ExecutionState *current,
                 const std::vector<ExecutionState *> &addedStates,
                 const std::vector<ExecutionState *> &removedStates) override;
     bool empty() override;
     void printName(llvm::raw_ostream &os) override;
+    std::vector<ExecutionState *> reached();
+    void removeReached();
   };
 
   class GuidedSearcher final : public Searcher {
 
   private:
     std::unique_ptr<Searcher> baseSearcher;
-    std::map<KBlock *, std::unique_ptr<TargetedSearcher>> targetedSearchers;
+    std::map<Target, std::unique_ptr<TargetedSearcher>> targetedSearchers;
+    CodeGraphDistance &codeGraphDistance;
+    TargetCalculator &stateHistory;
+    std::set<ExecutionState *, ExecutionStateIDCompare> &pausedStates;
+    std::size_t bound;
     unsigned index{1};
-    void addTarget(KBlock *target);
+    void addTarget(Target target);
+    void innerUpdate(ExecutionState *current,
+                     const std::vector<ExecutionState *> &addedStates,
+                     const std::vector<ExecutionState *> &removedStates);
+
+    void clearReached();
+    void collectReached(
+        std::map<Target, std::unordered_set<ExecutionState *>> &reachedStates);
 
   public:
-    GuidedSearcher(Searcher *baseSearcher);
+    GuidedSearcher(
+        Searcher *baseSearcher, CodeGraphDistance &codeGraphDistance,
+        TargetCalculator &stateHistory,
+        std::set<ExecutionState *, ExecutionStateIDCompare> &pausedStates,
+        std::size_t bound);
     ~GuidedSearcher() override = default;
     ExecutionState &selectState() override;
     void update(ExecutionState *current,
                 const std::vector<ExecutionState *> &addedStates,
                 const std::vector<ExecutionState *> &removedStates) override;
+    void update(
+        ExecutionState *current,
+        const std::vector<ExecutionState *> &addedStates,
+        const std::vector<ExecutionState *> &removedStates,
+        std::map<Target, std::unordered_set<ExecutionState *>> &reachedStates);
+
     bool empty() override;
     void printName(llvm::raw_ostream &os) override;
   };

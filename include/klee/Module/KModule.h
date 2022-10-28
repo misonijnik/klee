@@ -47,11 +47,13 @@ namespace klee {
   struct KInstruction;
   class KModule;
   struct KFunction;
+  struct KCallBlock;
   template<class T> class ref;
 
   enum KBlockType {
     Base,
     Call,
+    Return
   };
 
   struct KBlock {
@@ -66,17 +68,20 @@ namespace klee {
     bool trackCoverage;
 
   public:
-    explicit KBlock(KFunction *, llvm::BasicBlock *, KModule *,
-                    std::map<llvm::Instruction *, unsigned> &,
-                    std::map<unsigned, KInstruction *> &, KInstruction **);
+    KBlock(KFunction *, llvm::BasicBlock *, KModule *,
+           std::map<llvm::Instruction *, unsigned> &,
+           std::map<unsigned, KInstruction *> &, KInstruction **);
     KBlock(const KBlock &) = delete;
     KBlock &operator=(const KBlock &) = delete;
 
-    unsigned getArgRegister(unsigned index) const { return index; }
     void
     handleKInstruction(std::map<llvm::Instruction *, unsigned> &registerMap,
                        llvm::Instruction *inst, KModule *km, KInstruction *ki);
     virtual KBlockType getKBlockType() const { return KBlockType::Base; };
+    KInstruction *getFirstInstruction() const noexcept { return instructions[0]; }
+    KInstruction *getLastInstruction() const noexcept { return instructions[numInstructions - 1]; }
+    std::string getAssemblyLocation() const;
+    static bool classof(const KBlock *) { return true; }
     virtual ~KBlock() = default;
   };
 
@@ -85,11 +90,30 @@ namespace klee {
     llvm::Function *calledFunction;
 
   public:
-    explicit KCallBlock(KFunction *, llvm::BasicBlock *, KModule *,
-                        std::map<llvm::Instruction *, unsigned> &,
-                        std::map<unsigned, KInstruction *> &, llvm::Function *,
-                        KInstruction **);
+    KCallBlock(KFunction *, llvm::BasicBlock *, KModule *,
+               std::map<llvm::Instruction *, unsigned> &,
+               std::map<unsigned, KInstruction *> &, llvm::Function *,
+               KInstruction **);
     KBlockType getKBlockType() const override { return KBlockType::Call; };
+    static bool classof(const KCallBlock *) { return true; }
+    static bool classof(const KBlock *E) {
+      return E->getKBlockType() == KBlockType::Call;
+    }
+    bool intrinsic() const;
+    bool internal() const;
+    KFunction *getKFunction() const;
+  };
+
+  struct KReturnBlock : KBlock {
+  public:
+    KReturnBlock(KFunction *, llvm::BasicBlock *, KModule *,
+                 std::map<llvm::Instruction *, unsigned> &,
+                 std::map<unsigned, KInstruction *> &, KInstruction **);
+    static bool classof(const KReturnBlock *) { return true; }
+    static bool classof(const KBlock *E) {
+      return E->getKBlockType() == KBlockType::Return;
+    }
+    KBlockType getKBlockType() const override { return KBlockType::Return; };
   };
 
   struct KFunction : public KCallable {
@@ -107,19 +131,12 @@ namespace klee {
     std::vector<std::unique_ptr<KBlock>> blocks;
     std::map<llvm::BasicBlock *, KBlock *> blockMap;
     KBlock *entryKBlock;
-    std::vector<KBlock *> finalKBlocks;
+    std::vector<KBlock *> returnKBlocks;
     std::vector<KCallBlock *> kCallBlocks;
 
     /// Whether instructions in this function should count as
     /// "coverable" for statistics and search heuristics.
     bool trackCoverage;
-
-  private:
-    std::map<KBlock *, std::map<KBlock *, unsigned int>> distance;
-    std::map<KBlock *, std::map<KBlock *, unsigned int>> backwardDistance;
-    // BFS algorithm
-    void calculateDistance(KBlock *bb);
-    void calculateBackwardDistance(KBlock *bb);
 
   public:
     explicit KFunction(llvm::Function*, KModule *);
@@ -141,9 +158,6 @@ namespace klee {
     static bool classof(const KCallable *callable) {
       return callable->getKind() == CK_Function;
     }
-
-    std::map<KBlock *, unsigned int> &getDistance(KBlock *kb);
-    std::map<KBlock *, unsigned int> &getBackwardDistance(KBlock *kb);
   };
 
 
@@ -190,18 +204,11 @@ namespace klee {
     std::set<const llvm::Function*> internalFunctions;
 
   private:
-    std::map<KFunction *, std::map<KFunction *, unsigned int>> distance;
-    std::map<KFunction *, std::map<KFunction *, unsigned int>> backwardDistance;
-
     // Mark function with functionName as part of the KLEE runtime
     void addInternalFunction(const char* functionName);
     // Replace std functions with KLEE intrinsics
     void replaceFunction(const std::unique_ptr<llvm::Module> &m, const char *original,
                            const char *replacement);
-
-    // BFS algorithm
-    void calculateDistance(KFunction *kf);
-    void calculateBackwardDistance(KFunction *kf);
 
   public:
     KModule() = default;
@@ -244,8 +251,6 @@ namespace klee {
     void checkModule();
 
     KBlock *getKBlock(llvm::BasicBlock *bb);
-    std::map<KFunction *, unsigned int> &getBackwardDistance(KFunction *kf);
-    std::map<KFunction *, unsigned int> &getDistance(KFunction *kf);
   };
 } // End klee namespace
 

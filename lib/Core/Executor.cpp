@@ -41,6 +41,7 @@
 #include "klee/Expr/ExprSMTLIBPrinter.h"
 #include "klee/Expr/ExprUtil.h"
 #include "klee/Module/Cell.h"
+#include "klee/Module/CodeGraphDistance.h"
 #include "klee/Module/InstructionInfoTable.h"
 #include "klee/Module/KCallable.h"
 #include "klee/Module/KInstruction.h"
@@ -75,6 +76,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
@@ -353,12 +355,6 @@ cl::opt<unsigned long long> MaxInstructions(
     cl::init(0),
     cl::cat(TerminationCat));
 
-cl::opt<unsigned long long> MaxCycles(
-    "max-cycles",
-    cl::desc("stop execution after visiting some basic block this amount of times (default=1)."),
-    cl::init(1),
-    cl::cat(TerminationCat));
-
 cl::opt<unsigned>
     MaxForks("max-forks",
              cl::desc("Only fork this many times.  Set to -1 to disable (default=-1)"),
@@ -519,7 +515,7 @@ Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
     : Interpreter(opts), interpreterHandler(ih), searcher(0),
       externalDispatcher(new ExternalDispatcher(ctx)), statsTracker(0),
       pathWriter(0), symPathWriter(0), specialFunctionHandler(0), timers{time::Span(TimerInterval)},
-      replayKTest(0), replayPath(0), usingSeeds(0),
+      codeGraphDistance(new CodeGraphDistance()), replayKTest(0), replayPath(0), usingSeeds(0),
       atMemoryLimit(false), inhibitForking(false), haltExecution(false),
       ivcEnabled(false), debugLogBuffer(debugBufferString) {
 
@@ -641,6 +637,8 @@ Executor::setModule(std::vector<std::unique_ptr<llvm::Module>> &modules,
   Context::initialize(TD->isLittleEndian(),
                       (Expr::Width)TD->getPointerSizeInBits());
 
+  targetCalculator = new TargetCalculator(*kmodule.get(), *codeGraphDistance.get());
+
   return kmodule->module.get();
 }
 
@@ -651,14 +649,10 @@ Executor::~Executor() {
   delete specialFunctionHandler;
   delete statsTracker;
   delete solver;
+  delete targetCalculator;
 }
 
 /***/
-
-void Executor::addHistoryResult(ExecutionState &state) {
-  results[state.getInitPCBlock()].history[state.getPrevPCBlock()].insert(
-      state.level.begin(), state.level.end());
-}
 
 void Executor::initializeGlobalObject(ExecutionState &state, ObjectState *os,
                                       const Constant *c, 
@@ -1720,9 +1714,9 @@ void Executor::unwindToNextLandingpad(ExecutionState &state) {
             kmodule->module->getFunction("_klee_eh_cxx_personality");
         KFunction *kf = kmodule->functionMap[personality_fn];
 
-        state.addLevel(state.getPrevPCBlock());
         state.pushFrame(state.prevPC, kf);
         state.pc = kf->instructions;
+        state.increaseLevel();
         bindArgument(kf, 0, state, sui->exceptionObject);
         bindArgument(kf, 1, state, clauses_mo->getSizeExpr());
         bindArgument(kf, 2, state, clauses_mo->getBaseExpr());
@@ -2213,9 +2207,8 @@ void Executor::transferToBasicBlock(BasicBlock *dst, BasicBlock *src,
   
   // XXX this lookup has to go ?
   KFunction *kf = state.stack.back().kf;
-  if (state.prevPC->inst->isTerminator())
-    state.addLevel(state.getPrevPCBlock());
   state.pc = kf->blockMap[dst]->instructions;
+  state.increaseLevel();
   if (state.pc->inst->getOpcode() == Instruction::PHI) {
     PHINode *first = static_cast<PHINode*>(state.pc->inst);
     state.incomingBBIndex = first->getBasicBlockIndex(src);
@@ -2239,7 +2232,8 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
 
     if (state.stack.size() <= 1) {
       assert(!caller && "caller set on initial stack frame");
-      state.addLevel(state.getPrevPCBlock());
+      state.pc = state.prevPC;
+      state.increaseLevel();
       terminateStateOnExit(state);
     } else {
       state.popFrame();
@@ -2250,8 +2244,8 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       if (InvokeInst *ii = dyn_cast<InvokeInst>(caller)) {
         transferToBasicBlock(ii->getNormalDest(), caller->getParent(), state);
       } else {
-        state.addLevel(state.getPrevPCBlock());
         state.pc = kcaller;
+        state.increaseLevel();
         ++state.pc;
       }
 
@@ -3903,8 +3897,21 @@ void Executor::run(ExecutionState &initialState) {
 
   // main interpreter loop
   while (!states.empty() && !haltExecution) {
-    ExecutionState &state = searcher->selectState();
-    executeStep(state);
+    while (!searcher->empty() && !haltExecution) {
+      ExecutionState &state = searcher->selectState();
+      KInstruction *prevKI = state.prevPC;
+      KFunction *kf = prevKI->parent->parent;
+
+      if (prevKI->inst->isTerminator() &&
+          kmodule->mainFunctions.count(kf->function)) {
+        targetCalculator->update(state);
+      }
+
+      executeStep(state);
+    }
+
+    if (searcher->empty())
+      haltExecution = true;
   }
 
   delete searcher;
@@ -3942,7 +3949,7 @@ void Executor::runGuided(ExecutionState &state, KFunction *kf) {
     statsTracker->framePushed(state, 0);
 
   processTree = std::make_unique<PTree>(&state);
-  guidedRun(state);
+  run(state);
   processTree = nullptr;
 
   // hack to clear memory objects
@@ -3986,23 +3993,6 @@ void Executor::executeStep(ExecutionState &state) {
   }
 }
 
-bool Executor::tryBoundedExecuteStep(ExecutionState &state, unsigned bound) {
-  KInstruction *prevKI = state.prevPC;
-  KFunction *kf = prevKI->parent->parent;
-
-  if (prevKI->inst->isTerminator() &&
-      kmodule->mainFunctions.count(kf->function)) {
-    addHistoryResult(state);
-    if (state.multilevel.count(state.getPCBlock()) > bound) {
-      pauseState(state);
-      return false;
-    }
-  }
-
-  executeStep(state);
-  return true;
-}
-
 void Executor::targetedRun(ExecutionState &initialState, KBlock *target) {
   // Delay init till now so that ticks don't accrue during optimization and
   // such.
@@ -4010,7 +4000,7 @@ void Executor::targetedRun(ExecutionState &initialState, KBlock *target) {
 
   states.insert(&initialState);
 
-  TargetedSearcher *targetedSearcher = new TargetedSearcher(target);
+  TargetedSearcher *targetedSearcher = new TargetedSearcher(Target(target), *codeGraphDistance);
   searcher = targetedSearcher;
 
   std::vector<ExecutionState *> newStates(states.begin(), states.end());
@@ -4020,7 +4010,7 @@ void Executor::targetedRun(ExecutionState &initialState, KBlock *target) {
       target != nullptr ? target->instructions[target->numInstructions - 1]
                         : nullptr;
   while (!states.empty() && !haltExecution) {
-    if (!searcher->empty() && !haltExecution) {
+    while (!searcher->empty() && !haltExecution) {
       ExecutionState &state = searcher->selectState();
 
       KInstruction *ki = state.pc;
@@ -4032,107 +4022,19 @@ void Executor::targetedRun(ExecutionState &initialState, KBlock *target) {
       }
 
       executeStep(state);
-    }
 
-    if (targetedSearcher) {
-      newStates.clear();
-      newStates.push_back(targetedSearcher->result);
-      delete searcher;
-      targetedSearcher = nullptr;
-      searcher = constructUserSearcher(*this);
-      searcher->update(0, newStates, std::vector<ExecutionState *>());
-    } else {
-      break;
-    }
-  }
-
-  delete searcher;
-  searcher = nullptr;
-
-  doDumpStates();
-  haltExecution = false;
-}
-
-KBlock *Executor::calculateTarget(ExecutionState &state) {
-  BasicBlock *initialBlock = state.getInitPCBlock();
-  VisitedBlock &history = results[initialBlock].history;
-  BasicBlock *bb = state.getPCBlock();
-  KFunction *kf = kmodule->functionMap[bb->getParent()];
-  KBlock *kb = kf->blockMap[bb];
-  KBlock *nearestBlock = nullptr;
-  unsigned int minDistance = -1;
-  unsigned int sfNum = 0;
-  bool newCov = false;
-  for (auto sfi = state.stack.rbegin(), sfe = state.stack.rend(); sfi != sfe;
-       sfi++, sfNum++) {
-    kf = sfi->kf;
-
-    for (auto &kbd : kf->getDistance(kb)) {
-      KBlock *target = kbd.first;
-      unsigned distance = kbd.second;
-      if ((sfNum > 0 || distance > 0) && distance < minDistance) {
-        if (history[target->basicBlock].size() != 0) {
-          std::vector<BasicBlock *> diff;
-          if (!newCov) {
-            std::set<BasicBlock *> left(state.level.begin(), state.level.end());
-            std::set<BasicBlock *> right(history[target->basicBlock].begin(),
-                                         history[target->basicBlock].end());
-            std::set_difference(left.begin(), left.end(), right.begin(),
-                                right.end(), std::inserter(diff, diff.begin()));
-          }
-          if (diff.empty()) {
-            continue;
-          }
-        } else
-          newCov = true;
-        nearestBlock = target;
-        minDistance = distance;
-      }
-    }
-
-    if (nearestBlock) {
-      return nearestBlock;
-    }
-
-    if (sfi->caller) {
-      kb = sfi->caller->parent;
-    }
-  }
-  return nearestBlock;
-}
-
-void Executor::guidedRun(ExecutionState &initialState) {
-  // Delay init till now so that ticks don't accrue during optimization and
-  // such.
-  timers.reset();
-
-  states.insert(&initialState);
-
-  if (usingSeeds) {
-    seed(initialState);
-  }
-
-  searcher = new GuidedSearcher(constructUserSearcher(*this));
-
-  std::vector<ExecutionState *> newStates(states.begin(), states.end());
-  searcher->update(0, newStates, std::vector<ExecutionState *>());
-  // main interpreter loop
-  while (!states.empty() && !haltExecution) {
-    while (!searcher->empty() && !haltExecution) {
-      ExecutionState &state = searcher->selectState();
-      if (state.target)
-        executeStep(state);
-      else if (!tryBoundedExecuteStep(state, MaxCycles - 1)) {
-        KBlock *target = calculateTarget(state);
-        if (target) {
-          state.target = target;
-          unpauseState(state);
+      if (targetedSearcher && !targetedSearcher->reached().empty()) {
+        newStates.clear();
+        for (auto &state : targetedSearcher->reached()) {
+          newStates.push_back(state);
         }
+        targetedSearcher->removeReached();
+        delete searcher;
+        targetedSearcher = nullptr;
+        searcher = constructUserSearcher(*this);
+        searcher->update(0, newStates, std::vector<ExecutionState *>());
       }
     }
-
-    if (searcher->empty())
-      haltExecution = true;
   }
 
   delete searcher;
@@ -4196,6 +4098,7 @@ std::string Executor::getAddressInfo(ExecutionState &state, ref<Expr> address,
 
   return info.str();
 }
+
 
 void Executor::terminateState(ExecutionState &state) {
   if (replayKTest && replayPosition!=replayKTest->numObjects) {
@@ -4264,7 +4167,7 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
         terminationTypeFileExtension(StateTerminationType::Exit).c_str());
 
   interpreterHandler->incPathsCompleted();
-  addHistoryResult(state);
+  targetCalculator->update(state);
   terminateState(state);
 }
 
@@ -4284,7 +4187,7 @@ void Executor::terminateStateOnTerminator(ExecutionState &state) {
   if (shouldWriteTest(state) || (AlwaysOutputSeeds && seedMap.count(&state))) {
     interpreterHandler->processTestCase(state, nullptr, nullptr);
   }
-  addHistoryResult(state);
+  targetCalculator->update(state);
   terminateState(state);
 }
 
@@ -4382,7 +4285,7 @@ void Executor::terminateStateOnError(ExecutionState &state,
     interpreterHandler->processTestCase(state, msg.str().c_str(), file_suffix);
   }
 
-  addHistoryResult(state);
+  targetCalculator->update(state);
   terminateState(state);
 
   if (shouldExitOn(terminationType))

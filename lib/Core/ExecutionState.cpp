@@ -83,8 +83,7 @@ ExecutionState::ExecutionState(KFunction *kf) :
     steppedMemoryInstructions(0),
     instsSinceCovNew(0),
     coveredNew(false),
-    forkDisabled(false),
-    target(nullptr) {
+    forkDisabled(false) {
   pushFrame(nullptr, kf);
   setID();
 }
@@ -101,8 +100,7 @@ ExecutionState::ExecutionState(KFunction *kf, KBlock *kb) :
     instsSinceCovNew(0),
     roundingMode(llvm::APFloat::rmNearestTiesToEven),
     coveredNew(false),
-    forkDisabled(false),
-    target(nullptr) {
+    forkDisabled(false) {
   pushFrame(nullptr, kf);
   setID();
 }
@@ -142,7 +140,7 @@ ExecutionState::ExecutionState(const ExecutionState& state):
                              : nullptr),
     coveredNew(state.coveredNew),
     forkDisabled(state.forkDisabled),
-    target(state.target) {
+    targets(state.targets) {
   for (const auto &cur_mergehandler: openMergeStack)
     cur_mergehandler->addOpenState(this);
 }
@@ -426,23 +424,26 @@ void ExecutionState::addCexPreference(const ref<Expr> &cond) {
   cexPreferences = cexPreferences.insert(cond);
 }
 
-BasicBlock *ExecutionState::getInitPCBlock() {
+BasicBlock *ExecutionState::getInitPCBlock() const {
   return initPC->inst->getParent();
 }
 
-BasicBlock *ExecutionState::getPrevPCBlock() {
+BasicBlock *ExecutionState::getPrevPCBlock() const {
   return prevPC->inst->getParent();
 }
 
-BasicBlock *ExecutionState::getPCBlock() { return pc->inst->getParent(); }
+BasicBlock *ExecutionState::getPCBlock() const { return pc->inst->getParent(); }
 
-void ExecutionState::addLevel(BasicBlock *bb) {
+void ExecutionState::increaseLevel() {
+  llvm::BasicBlock *srcbb = getPrevPCBlock();
+  llvm::BasicBlock *dstbb = getPCBlock();
   KFunction *kf = prevPC->parent->parent;
   KModule *kmodule = kf->parent;
 
   if (prevPC->inst->isTerminator() &&
       kmodule->mainFunctions.count(kf->function)) {
-    multilevel.insert(bb);
-    level.insert(bb);
+    multilevel.insert(srcbb);
+    level.insert(srcbb);
   }
+  transitionLevel.insert(std::make_pair(srcbb, dstbb));
 }

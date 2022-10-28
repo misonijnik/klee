@@ -66,9 +66,11 @@ namespace llvm {
 namespace klee {  
   class Array;
   struct Cell;
+  class CodeGraphDistance;
   class ExecutionState;
   class ExternalDispatcher;
   class Expr;
+  template<class T> class ExprHashMap;
   class InstructionInfoTable;
   class KCallable;
   struct KFunction;
@@ -83,6 +85,7 @@ namespace klee {
   class SeedInfo;
   class SpecialFunctionHandler;
   struct StackFrame;
+  class TargetCalculator;
   class StatsTracker;
   class TimingSolver;
   class TreeStreamWriter;
@@ -106,16 +109,7 @@ class Executor : public Interpreter {
   friend klee::Searcher *klee::constructUserSearcher(Executor &executor);
 
 public:
-  typedef std::pair<ExecutionState *, ExecutionState *> StatePair;
-  typedef std::map<llvm::BasicBlock *,
-                   std::set<ExecutionState *, ExecutionStateIDCompare>>
-      ExecutedBlock;
-  typedef std::map<llvm::BasicBlock *, std::unordered_set<llvm::BasicBlock *>>
-      VisitedBlock;
-  struct ExecutionBlockResult {
-    VisitedBlock history;
-  };
-  typedef std::map<llvm::BasicBlock *, ExecutionBlockResult> ExecutionResult;
+  typedef std::pair<ExecutionState*,ExecutionState*> StatePair;
 
   enum MemoryOperation { Read, Write };
 
@@ -143,7 +137,9 @@ private:
   SpecialFunctionHandler *specialFunctionHandler;
   TimerGroup timers;
   std::unique_ptr<PTree> processTree;
-  std::map<ref<Expr>, std::pair<ref<Expr>, llvm::Type *>> gepExprBases;
+  ExprHashMap<std::pair<ref<Expr>, llvm::Type *>> gepExprBases;
+  std::unique_ptr<CodeGraphDistance> codeGraphDistance;
+  TargetCalculator *targetCalculator;
 
   /// Used to track states that have been added during the current
   /// instructions step. 
@@ -238,13 +234,10 @@ private:
   /// Return the typeid corresponding to a certain `type_info`
   ref<ConstantExpr> getEhTypeidFor(ref<Expr> type_info);
 
-  ExecutionResult results;
-
   void addHistoryResult(ExecutionState &state);
 
   void executeInstruction(ExecutionState &state, KInstruction *ki);
   void targetedRun(ExecutionState &initialState, KBlock *target);
-  void guidedRun(ExecutionState &initialState);
 
   void seed(ExecutionState &initialState);
   void run(ExecutionState &initialState);
@@ -641,8 +634,6 @@ public:
   const Array *makeArray(ExecutionState &state, const uint64_t size,
                          const std::string &name);
   void executeStep(ExecutionState &state);
-  bool tryBoundedExecuteStep(ExecutionState &state, unsigned bound);
-  KBlock *calculateTarget(ExecutionState &state);
   bool isGEPExpr(ref<Expr> expr);
 };
   
