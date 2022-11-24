@@ -14,11 +14,20 @@
 extern "C" {
 #endif
 
+  typedef struct Pointer Pointer;
+  struct Pointer {
+    unsigned offset;
+    unsigned index;
+    unsigned indexOffset;
+  };
+
   typedef struct KTestObject KTestObject;
   struct KTestObject {
     char *name;
     unsigned numBytes;
     unsigned char *bytes;
+    unsigned numPointers;
+    Pointer *pointers;
   };
   
   typedef struct KTest KTest;
@@ -47,7 +56,7 @@ extern "C" {
   KTest* kTest_fromFile(const char *path);
 
   /* returns 1 on success, 0 on (unspecified) error */
-  int   kTest_toFile(KTest *, const char *path);
+  int kTest_toFile(const KTest *, const char *path);
   
   /* returns total number of object bytes */
   unsigned kTest_numBytes(KTest *);
