@@ -534,10 +534,8 @@ public:
                         Interpreter::LogType logFormat =
                             Interpreter::STP) override;
 
-  bool getSymbolicSolution(
-      const ExecutionState &state,
-      std::vector<std::pair<std::string, std::vector<unsigned char>>> &res)
-      override;
+
+  bool getSymbolicSolution(const ExecutionState &state, KTest &res) override;
 
   void getCoveredLines(const ExecutionState &state,
                        std::map<const std::string *, std::set<unsigned>> &res)
