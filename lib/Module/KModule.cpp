@@ -537,7 +537,7 @@ KFunction::KFunction(llvm::Function *_function, KModule *_km)
       const CallBase &cs = cast<CallBase>(*fit);
       Value *fp = cs.getCalledOperand();
 #else
-      CallSite cs(it);
+      CallSite cs(fit);
       Value *fp = cs.getCalledValue();
 #endif
       Function *f = getTargetFunction(fp);

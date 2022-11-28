@@ -34,3 +34,4 @@ autom4te.cache/
 .vscode/launch.json
 .vscode/settings.json
 .cache/
+/lib/Fuzzer/
