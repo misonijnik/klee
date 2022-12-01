@@ -12,6 +12,7 @@
  */
 
 #include "klee/Solver/Common.h"
+#include "klee/Solver/Solver.h"
 #include "klee/Solver/SolverCmdLine.h"
 #include "klee/Support/ErrorHandling.h"
 #include "klee/System/Time.h"
@@ -20,11 +21,11 @@
 
 
 namespace klee {
-Solver *constructSolverChain(Solver *coreSolver,
-                             std::string querySMT2LogPath,
+Solver *constructSolverChain(Solver *coreSolver, std::string querySMT2LogPath,
                              std::string baseSolverQuerySMT2LogPath,
                              std::string queryKQueryLogPath,
-                             std::string baseSolverQueryKQueryLogPath) {
+                             std::string baseSolverQueryKQueryLogPath,
+                             ConcretizationManager *concretizationManager) {
   Solver *solver = coreSolver;
   const time::Span minQueryTimeToLog(MinQueryTimeToLog);
 
@@ -51,6 +52,9 @@ Solver *constructSolverChain(Solver *coreSolver,
 
   if (UseBranchCache)
     solver = createCachingSolver(solver);
+
+  if (UseConcretizingSolver)
+    solver = createConcretizingSolver(solver, concretizationManager);
 
   if (UseIndependentSolver)
     solver = createIndependentSolver(solver);

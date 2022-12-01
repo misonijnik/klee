@@ -13,6 +13,7 @@
 #include "Memory.h"
 
 #include "klee/Expr/Expr.h"
+#include "klee/Expr/SourceBuilder.h"
 #include "klee/Support/ErrorHandling.h"
 
 #include "llvm/Support/CommandLine.h"
@@ -60,7 +61,8 @@ llvm::cl::opt<unsigned long long> DeterministicStartAddress(
 
 /***/
 MemoryManager::MemoryManager(ArrayCache *_arrayCache)
-    : arrayCache(_arrayCache), deterministicSpace(0), nextFreeSlot(0),
+    : arrayCache(_arrayCache),
+      deterministicSpace(0), nextFreeSlot(0),
       spaceSize(DeterministicAllocationSize.getValue() * 1024 * 1024) {
   if (DeterministicAllocation) {
     // Page boundary
@@ -100,6 +102,7 @@ MemoryObject *MemoryManager::allocate(uint64_t size, bool isLocal,
                                       bool isGlobal,
                                       const llvm::Value *allocSite,
                                       size_t alignment,
+                                      ref<Expr> addressExpr,
                                       ref<Expr> lazyInitializationSource,
                                       unsigned timestamp) {
   if (size > 10 * 1024 * 1024)
@@ -150,7 +153,7 @@ MemoryObject *MemoryManager::allocate(uint64_t size, bool isLocal,
   ++stats::allocations;
   MemoryObject *res =
       new MemoryObject(address, size, isLocal, isGlobal, false, allocSite, this,
-                       lazyInitializationSource, timestamp);
+                       addressExpr, lazyInitializationSource, timestamp);
   objects.insert(res);
   return res;
 }

@@ -14,6 +14,7 @@
 #include "klee/Expr/ExprPPrinter.h"
 #include "klee/Expr/Parser/Lexer.h"
 #include "klee/Expr/Parser/Parser.h"
+#include "klee/Expr/SourceBuilder.h"
 #include "klee/Solver/Solver.h"
 
 #include "llvm/ADT/APInt.h"
@@ -521,12 +522,14 @@ DeclResult ParserImpl::ParseArrayDecl() {
   const Identifier *Label = GetOrCreateIdentifier(Name);
   const Array *Root;
   if (!Values.empty())
-    Root = TheArrayCache.CreateArray(Label->Name, Size.get(), &Values[0],
+    Root = TheArrayCache.CreateArray(Label->Name, Size.get(),
+                                     SourceBuilder::constant(), &Values[0],
                                      &Values[0] + Values.size());
   else
-    Root = TheArrayCache.CreateArray(Label->Name, Size.get());
-  ArrayDecl *AD = new ArrayDecl(Label, Size.get(), 
-                                DomainType.get(), RangeType.get(), Root);
+    Root = TheArrayCache.CreateArray(Label->Name, Size.get(),
+                                     SourceBuilder::makeSymbolic());
+  ArrayDecl *AD =
+      new ArrayDecl(Label, Size.get(), DomainType.get(), RangeType.get(), Root);
 
   ArraySymTab[Label] = AD;
 
@@ -1316,10 +1319,12 @@ VersionResult ParserImpl::ParseVersionSpecifier() {
   // Define update list to avoid use-of-undef errors.
   if (!Res.isValid()) {
     // FIXME: I'm not sure if this is right. Do we need a unique array here?
-    Res =
-        VersionResult(true, UpdateList(TheArrayCache.CreateArray("", 0), NULL));
+    Res = VersionResult(true,
+                        UpdateList(TheArrayCache.CreateArray(
+                                       "", 0, SourceBuilder::makeSymbolic()),
+                                   NULL));
   }
-  
+
   if (Label)
     VersionSymTab.insert(std::make_pair(Label, Res.get()));
   return Res;
