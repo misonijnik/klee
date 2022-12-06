@@ -10,9 +10,11 @@
 #ifndef KLEE_SOLVER_H
 #define KLEE_SOLVER_H
 
+#include "klee/ADT/SparseStorage.h"
 #include "klee/Expr/Expr.h"
 #include "klee/Expr/ExprHashMap.h"
 #include "klee/Solver/ConcretizationManager.h"
+#include "klee/Expr/ExprHashMap.h"
 #include "klee/System/Time.h"
 #include "klee/Solver/SolverCmdLine.h"
 
@@ -22,6 +24,7 @@ namespace klee {
   class ConstraintSet;
   class Expr;
   class SolverImpl;
+  class AddressGenerator;
 
   /// Collection of meta data that a solver can have access to. This is
   /// independent of the actual constraints but can be used as a two-way
@@ -62,6 +65,7 @@ namespace klee {
     }
     /// Get all arrays that figure in the query
     std::vector<const Array *> gatherArrays() const;
+    std::vector<const Array *> gatherSymcreteArrays() const;
 
     bool containsSymcretes() const;
 
@@ -70,7 +74,7 @@ namespace klee {
     }
 
     /// Dump query
-    void dump() const ;
+    void dump() const;
   };
 
   struct ValidityCore {
@@ -128,18 +132,20 @@ namespace klee {
 
     virtual ResponseKind getResponseKind() const = 0;
 
-    virtual bool
-    getInitialValuesFor(const std::vector<const Array *> &objects,
-                        std::vector<std::vector<unsigned char>> &values) {
+    virtual bool tryGetInitialValuesFor(
+        const std::vector<const Array *> &objects,
+        std::vector<SparseStorage<unsigned char>> &values) const {
       return false;
     }
 
-    virtual bool getInitialValues(
-        std::map<const Array *, std::vector<unsigned char>> &values) {
+    virtual bool tryGetInitialValues(
+        std::map<const Array *, SparseStorage<unsigned char>> &values) const {
       return false;
     }
 
-    virtual bool getValidityCore(ValidityCore &validityCore) { return false; }
+    virtual bool tryGetValidityCore(ValidityCore &validityCore) {
+      return false;
+    }
 
     static bool classof(const SolverResponse *) { return true; }
 
@@ -157,10 +163,12 @@ namespace klee {
   public:
     ValidResponse(const ValidityCore &validityCore) : result(validityCore) {}
 
-    bool getValidityCore(ValidityCore &validityCore) {
+    bool tryGetValidityCore(ValidityCore &validityCore) {
       validityCore = result;
       return true;
     }
+
+    ValidityCore validityCore() const { return result; }
 
     ResponseKind getResponseKind() const { return Valid; };
 
@@ -179,12 +187,12 @@ namespace klee {
 
   class InvalidResponse : public SolverResponse {
   private:
-    std::map<const Array *, std::vector<unsigned char>> result;
+    std::map<const Array *, SparseStorage<unsigned char>> result;
 
   public:
     InvalidResponse(const std::vector<const Array *> &objects,
-                    const std::vector<std::vector<unsigned char>> &values) {
-      std::vector<std::vector<unsigned char>>::const_iterator values_it =
+                    const std::vector<SparseStorage<unsigned char>> &values) {
+      std::vector<SparseStorage<unsigned char>>::const_iterator values_it =
           values.begin();
 
       for (std::vector<const Array *>::const_iterator i = objects.begin(),
@@ -194,27 +202,46 @@ namespace klee {
       }
     }
 
-    InvalidResponse(const std::map<const Array *, std::vector<unsigned char>>
+    InvalidResponse(const std::map<const Array *, SparseStorage<unsigned char>>
                         &initialValues)
         : result(initialValues) {}
 
-    bool getInitialValuesFor(const std::vector<const Array *> &objects,
-                             std::vector<std::vector<unsigned char>> &values) {
+    bool tryGetInitialValuesFor(
+        const std::vector<const Array *> &objects,
+        std::vector<SparseStorage<unsigned char>> &values) const {
+      Assignment resultAssignment(result);
       values.reserve(objects.size());
       for (auto object : objects) {
         if (result.count(object)) {
           values.push_back(result.at(object));
         } else {
-          values.push_back(std::vector<unsigned char>(object->size, 0));
+          ref<ConstantExpr> constantSize =
+              dyn_cast<ConstantExpr>(resultAssignment.evaluate(object->size));
+          assert(constantSize);
+          values.push_back(
+              SparseStorage<unsigned char>(constantSize->getZExtValue(), 0));
         }
       }
       return true;
     }
 
-    bool getInitialValues(
-        std::map<const Array *, std::vector<unsigned char>> &values) {
+    bool tryGetInitialValues(
+        std::map<const Array *, SparseStorage<unsigned char>> &values) const {
       values.insert(result.begin(), result.end());
       return true;
+    }
+
+    Assignment
+    initialValuesFor(const std::vector<const Array *> objects) const {
+      std::vector<SparseStorage<unsigned char>> values;
+      assert(tryGetInitialValuesFor(objects, values));
+      return Assignment(objects, values, true);
+    }
+
+    Assignment initialValues() const {
+      std::map<const Array *, SparseStorage<unsigned char>> values;
+      assert(tryGetInitialValues(values));
+      return Assignment(values, true);
     }
 
     ResponseKind getResponseKind() const { return Invalid; };
@@ -354,6 +381,15 @@ namespace klee {
     /// \return True on success.
     bool getValue(const Query&, ref<ConstantExpr> &result);
 
+    /// getValue - Compute the minimal possible non-negative value for the given
+    /// expression.
+    ///
+    /// \param [out] result - On success, a value for the expression in some
+    /// satisfying assignment.
+    ///
+    /// \return True on success.
+    bool getMinimalUnsignedValue(const Query &, ref<ConstantExpr> &result);
+
     /// getInitialValues - Compute the initial values for a list of objects.
     ///
     /// \param [out] result - On success, this vector will be filled in with an
@@ -369,9 +405,9 @@ namespace klee {
     // FIXME: This API is lame. We should probably just provide an API which
     // returns an Assignment object, then clients can get out whatever values
     // they want. This also allows us to optimize the representation.
-    bool getInitialValues(const Query&, 
-                          const std::vector<const Array*> &objects,
-                          std::vector< std::vector<unsigned char> > &result);
+    bool getInitialValues(const Query &,
+                          const std::vector<const Array *> &objects,
+                          std::vector<SparseStorage<unsigned char>> &result);
 
     bool getValidityCore(const Query &, ValidityCore &validityCore,
                          bool &result);
@@ -447,7 +483,8 @@ namespace klee {
 
   /// createSMTLIBLoggingSolver - Create a solver which will forward all queries
   /// after writing them to the given path in .smt2 format.
-  Solver *createSMTLIBLoggingSolver(Solver *s, std::string path,
+  Solver *createSMTLIBLoggingSolver(Solver *sm,
+                                    std::string path,
                                     time::Span minQueryTimeToLog,
                                     bool logTimedOut);
 
@@ -459,7 +496,9 @@ namespace klee {
   // Create a solver based on the supplied ``CoreSolverType``.
   Solver *createCoreSolver(CoreSolverType cst);
 
-  Solver *createConcretizingSolver(Solver *s, ConcretizationManager *cm);
-}
+  Solver *createConcretizingSolver(Solver *s,
+                                   ConcretizationManager *concretizationManager,
+                                   AddressGenerator *addressGenerator);
+} // namespace klee
 
 #endif /* KLEE_SOLVER_H */

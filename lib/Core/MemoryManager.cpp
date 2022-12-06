@@ -59,6 +59,18 @@ llvm::cl::opt<unsigned long long> DeterministicStartAddress(
     llvm::cl::init(0x7ff30000000), llvm::cl::cat(MemoryCat));
 } // namespace
 
+llvm::cl::opt<uint64_t> MaxConstantAllocationSize(
+    "max-constant-alloc",
+    llvm::cl::desc(
+        "Maximum available size for single allocation (default 10Mb)"),
+    llvm::cl::init(10ll << 20), llvm::cl::cat(MemoryCat));
+
+llvm::cl::opt<uint64_t> MaxSymbolicAllocationSize(
+    "max-sym-alloc",
+    llvm::cl::desc(
+        "Maximum available size for single allocation (default 10Mb)"),
+    llvm::cl::init(10ll << 20), llvm::cl::cat(MemoryCat));
+
 /***/
 MemoryManager::MemoryManager(ArrayCache *_arrayCache)
     : arrayCache(_arrayCache),
@@ -103,12 +115,13 @@ MemoryObject *MemoryManager::allocate(uint64_t size, bool isLocal,
                                       const llvm::Value *allocSite,
                                       size_t alignment,
                                       ref<Expr> addressExpr,
+                                      ref<Expr> sizeExpr,
                                       ref<Expr> lazyInitializationSource,
-                                      unsigned timestamp) {
-  if (size > 10 * 1024 * 1024)
-    klee_warning_once(0, "Large alloc: %" PRIu64
-                         " bytes.  KLEE may run out of memory.",
-                      size);
+                                      unsigned timestamp,
+                                      IDType id) {
+  if (size > MaxConstantAllocationSize) {
+    return 0;
+  }
 
   // Return NULL if size is zero, this is equal to error during allocation
   if (NullOnZeroMalloc && size == 0)
@@ -151,9 +164,14 @@ MemoryObject *MemoryManager::allocate(uint64_t size, bool isLocal,
     return 0;
 
   ++stats::allocations;
-  MemoryObject *res =
-      new MemoryObject(address, size, isLocal, isGlobal, false, allocSite, this,
-                       addressExpr, lazyInitializationSource, timestamp);
+  MemoryObject *res = new MemoryObject(
+      address, size, alignment, isLocal, isGlobal, false, allocSite, this,
+      addressExpr, sizeExpr, lazyInitializationSource, timestamp);
+  if (id) {
+    res->id = id;
+  }
+  allocatedSizes[res->id][size] = res;
+
   objects.insert(res);
   return res;
 }
@@ -171,7 +189,7 @@ MemoryObject *MemoryManager::allocateFixed(uint64_t address, uint64_t size,
 
   ++stats::allocations;
   MemoryObject *res =
-      new MemoryObject(address, size, false, true, true, allocSite, this);
+      new MemoryObject(address, size, 8, false, true, true, allocSite, this);
   objects.insert(res);
   return res;
 }
@@ -180,10 +198,16 @@ void MemoryManager::deallocate(const MemoryObject *mo) { assert(0); }
 
 void MemoryManager::markFreed(MemoryObject *mo) {
   if (objects.find(mo) != objects.end()) {
+    allocatedSizes[mo->id].erase(mo->size);
     if (!mo->isFixed && !DeterministicAllocation)
       free((void *)mo->address);
     objects.erase(mo);
   }
+}
+
+const std::map<uint64_t, MemoryObject *> &
+MemoryManager::getAllocatedObjects(IDType idObject) {
+  return allocatedSizes[idObject];
 }
 
 size_t MemoryManager::getUsedDeterministicSize() {

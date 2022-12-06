@@ -55,8 +55,10 @@ void testOperation(Solver &solver,
 
     unsigned size = Expr::getMinBytesForWidth(operandWidth);
     static uint64_t id = 0;
-    const Array *array = ac.CreateArray("arr" + llvm::utostr(++id), size,
-                                        SourceBuilder::makeSymbolic());
+    const Array *array =
+        ac.CreateArray("arr" + llvm::utostr(++id),
+                       ConstantExpr::create(size, sizeof(uint64_t) * CHAR_BIT),
+                       SourceBuilder::makeSymbolic());
     symbolicArgs.push_back(Expr::CreateArg(Expr::createTempRead(array, 
                                                                 operandWidth)));
   }

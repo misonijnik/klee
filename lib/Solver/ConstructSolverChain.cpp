@@ -19,13 +19,18 @@
 
 #include "llvm/Support/raw_ostream.h"
 
+#include <string>
 
 namespace klee {
+class ConcretizationManager;
+class AddressGenerator;
+
 Solver *constructSolverChain(Solver *coreSolver, std::string querySMT2LogPath,
                              std::string baseSolverQuerySMT2LogPath,
                              std::string queryKQueryLogPath,
                              std::string baseSolverQueryKQueryLogPath,
-                             ConcretizationManager *concretizationManager) {
+                             ConcretizationManager *concretizationManager,
+                             AddressGenerator *addressGenerator) {
   Solver *solver = coreSolver;
   const time::Span minQueryTimeToLog(MinQueryTimeToLog);
 
@@ -36,7 +41,9 @@ Solver *constructSolverChain(Solver *coreSolver, std::string querySMT2LogPath,
   }
 
   if (QueryLoggingOptions.isSet(SOLVER_SMTLIB)) {
-    solver = createSMTLIBLoggingSolver(solver, baseSolverQuerySMT2LogPath, minQueryTimeToLog, LogTimedOutQueries);
+    solver = createSMTLIBLoggingSolver(solver,
+                                       baseSolverQuerySMT2LogPath,
+                                       minQueryTimeToLog, LogTimedOutQueries);
     klee_message("Logging queries that reach solver in .smt2 format to %s\n",
                  baseSolverQuerySMT2LogPath.c_str());
   }
@@ -57,7 +64,7 @@ Solver *constructSolverChain(Solver *coreSolver, std::string querySMT2LogPath,
     solver = createIndependentSolver(solver);
 
   if (UseConcretizingSolver && concretizationManager)
-    solver = createConcretizingSolver(solver, concretizationManager);
+    solver = createConcretizingSolver(solver, concretizationManager, addressGenerator);
 
   if (DebugValidateSolver)
     solver = createValidatingSolver(solver, coreSolver);
@@ -69,7 +76,9 @@ Solver *constructSolverChain(Solver *coreSolver, std::string querySMT2LogPath,
   }
 
   if (QueryLoggingOptions.isSet(ALL_SMTLIB)) {
-    solver = createSMTLIBLoggingSolver(solver, querySMT2LogPath, minQueryTimeToLog, LogTimedOutQueries);
+    solver = createSMTLIBLoggingSolver(solver,
+                                       querySMT2LogPath, minQueryTimeToLog,
+                                       LogTimedOutQueries);
     klee_message("Logging all queries in .smt2 format to %s\n",
                  querySMT2LogPath.c_str());
   }

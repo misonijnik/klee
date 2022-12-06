@@ -17,6 +17,7 @@
 #include "klee/Expr/ExprVisitor.h"
 #include "klee/Solver/IncompleteSolver.h"
 #include "klee/Support/Debug.h"
+#include "klee/Support/ErrorHandling.h"
 #include "klee/Support/IntEvaluation.h" // FIXME: Use APInt
 
 #include "llvm/Support/raw_ostream.h"
@@ -358,11 +359,17 @@ public:
 
   ValueRange getInitialReadRange(const Array &array, ValueRange index) {
     // Check for a concrete read of a constant array.
-    if (array.isConstantArray() && 
-        index.isFixed() && 
-        index.min() < array.size)
-      return ValueRange(array.constantValues[index.min()]->getZExtValue(8));
-
+    if (array.isConstantArray() && index.isFixed()) {
+      if (isa<ConstantSource>(array.source) &&
+          index.min() < array.constantValues.size()) {
+        return ValueRange(array.constantValues[index.min()]->getZExtValue(8));
+      } else if (ref<ConstantWithSymbolicSizeSource>
+                     constantWithSymbolicSizeSource =
+                         dyn_cast<ConstantWithSymbolicSizeSource>(
+                             array.source)) {
+        return ValueRange(constantWithSymbolicSizeSource->defaultValue);
+      }
+    }
     return ValueRange(0, 255);
   }
 };
@@ -372,10 +379,18 @@ protected:
   ref<Expr> getInitialValue(const Array& array, unsigned index) {
     // If the index is out of range, we cannot assign it a value, since that
     // value cannot be part of the assignment.
-    if (index >= array.size)
-      return ReadExpr::create(UpdateList(&array, 0), 
+    ref<ConstantExpr> constantArraySize = dyn_cast<ConstantExpr>(array.size);
+    if (!constantArraySize) {
+      klee_error(
+          "FIXME: Arrays of symbolic sizes are unsupported in FastCex\n");
+      std::abort();
+    }
+
+    if (index >= constantArraySize->getZExtValue()) {
+      return ReadExpr::create(UpdateList(&array, 0),
                               ConstantExpr::alloc(index, array.getDomain()));
-      
+    }
+
     std::map<const Array*, CexObjectData*>::iterator it = objects.find(&array);
     return ConstantExpr::alloc((it == objects.end() ? 127 : 
                                 it->second->getPossibleValue(index)),
@@ -393,10 +408,17 @@ protected:
   ref<Expr> getInitialValue(const Array& array, unsigned index) {
     // If the index is out of range, we cannot assign it a value, since that
     // value cannot be part of the assignment.
-    if (index >= array.size)
-      return ReadExpr::create(UpdateList(&array, 0), 
+    ref<ConstantExpr> constantArraySize = dyn_cast<ConstantExpr>(array.size);
+    if (!constantArraySize) {
+      klee_error("FIXME: Arrays of symbolic sizes are unsupported in FastCex\n");
+      std::abort();
+    }
+
+    if (index >= constantArraySize->getZExtValue()) {
+      return ReadExpr::create(UpdateList(&array, 0),
                               ConstantExpr::alloc(index, array.getDomain()));
-      
+    }
+
     std::map<const Array*, CexObjectData*>::iterator it = objects.find(&array);
     if (it == objects.end())
       return ReadExpr::create(UpdateList(&array, 0), 
@@ -433,9 +455,15 @@ public:
 
   CexObjectData &getObjectData(const Array *A) {
     CexObjectData *&Entry = objects[A];
+    
+    ref<ConstantExpr> constantArraySize = dyn_cast<ConstantExpr>(A->size);
+    if (!constantArraySize) {
+      klee_error("FIXME: Arrays of symbolic sizes are unsupported in FastCex\n");
+      std::abort();
+    }
 
     if (!Entry)
-      Entry = new CexObjectData(A->size);
+      Entry = new CexObjectData(constantArraySize->getZExtValue());
 
     return *Entry;
   }
@@ -470,20 +498,24 @@ public:
       // FIXME: This is imprecise, we need to look through the existing writes
       // to see if this is an initial read or not.
       if (ConstantExpr *CE = dyn_cast<ConstantExpr>(re->index)) {
-        uint64_t index = CE->getZExtValue();
+        if (ref<ConstantExpr> constantArraySize = dyn_cast<ConstantExpr>(array->size)) {
+          uint64_t index = CE->getZExtValue();
 
-        if (index < array->size) {
-          // If the range is fixed, just set that; even if it conflicts with the
-          // previous range it should be a better guess.
-          if (range.isFixed()) {
-            cod.setPossibleValue(index, range.min());
-          } else {
-            CexValueData cvd = cod.getPossibleValues(index);
-            CexValueData tmp = cvd.set_intersection(range);
+          if (index < constantArraySize->getZExtValue()) {
+            // If the range is fixed, just set that; even if it conflicts with the
+            // previous range it should be a better guess.
+            if (range.isFixed()) {
+              cod.setPossibleValue(index, range.min());
+            } else {
+              CexValueData cvd = cod.getPossibleValues(index);
+              CexValueData tmp = cvd.set_intersection(range);
 
-            if (!tmp.isEmpty())
-              cod.setPossibleValues(index, tmp);
+              if (!tmp.isEmpty())
+                cod.setPossibleValues(index, tmp);
+            }
           }
+        } else {
+          // XXX        fatal("XXX not implemented");
         }
       } else {
         // XXX        fatal("XXX not implemented");
@@ -950,18 +982,23 @@ public:
              ie = objects.end();
          it != ie; ++it) {
       const Array *A = it->first;
+      ref<ConstantExpr> arrayConstantSize = dyn_cast<ConstantExpr>(A->size);
+      if (!arrayConstantSize) {
+        klee_warning("Cannot dump %s as it has symbolic size\n", A->name.c_str());
+      }
+
       CexObjectData *COD = it->second;
 
       llvm::errs() << A->name << "\n";
       llvm::errs() << "possible: [";
-      for (unsigned i = 0; i < A->size; ++i) {
+      for (unsigned i = 0; i < arrayConstantSize->getZExtValue(); ++i) {
         if (i)
           llvm::errs() << ", ";
         llvm::errs() << COD->getPossibleValues(i);
       }
       llvm::errs() << "]\n";
       llvm::errs() << "exact   : [";
-      for (unsigned i = 0; i < A->size; ++i) {
+      for (unsigned i = 0; i < arrayConstantSize->getZExtValue(); ++i) {
         if (i)
           llvm::errs() << ", ";
         llvm::errs() << COD->getExactValues(i);
@@ -983,7 +1020,7 @@ public:
   bool computeValue(const Query&, ref<Expr> &result);
   bool computeInitialValues(const Query&,
                             const std::vector<const Array*> &objects,
-                            std::vector< std::vector<unsigned char> > &values,
+                            std::vector<SparseStorage<unsigned char>> &values,
                             bool &hasSolution);
 };
 
@@ -1094,7 +1131,7 @@ bool
 FastCexSolver::computeInitialValues(const Query& query,
                                     const std::vector<const Array*>
                                       &objects,
-                                    std::vector< std::vector<unsigned char> >
+                                    std::vector<SparseStorage<unsigned char>>
                                       &values,
                                     bool &hasSolution) {
   CexData cd;
@@ -1114,17 +1151,21 @@ FastCexSolver::computeInitialValues(const Query& query,
   for (unsigned i = 0; i != objects.size(); ++i) {
     const Array *array = objects[i];
     assert(array);
-    std::vector<unsigned char> data;
-    data.reserve(array->size);
+    SparseStorage<unsigned char> data;
+    ref<ConstantExpr> arrayConstantSize =
+        dyn_cast<ConstantExpr>(cd.evaluatePossible(array->size));
+    assert(arrayConstantSize &&
+           "Array of symbolic size had not receive value for size!");
+    data.resize(arrayConstantSize->getZExtValue());
 
-    for (unsigned i=0; i < array->size; i++) {
+    for (unsigned i = 0; i < arrayConstantSize->getZExtValue(); i++) {
       ref<Expr> read = 
         ReadExpr::create(UpdateList(array, 0),
                          ConstantExpr::create(i, array->getDomain()));
       ref<Expr> value = cd.evaluatePossible(read);
       
       if (ConstantExpr *CE = dyn_cast<ConstantExpr>(value)) {
-        data.push_back((unsigned char) CE->getZExtValue(8));
+        data.store(i, ((unsigned char)CE->getZExtValue(8)));
       } else {
         // FIXME: When does this happen?
         return false;

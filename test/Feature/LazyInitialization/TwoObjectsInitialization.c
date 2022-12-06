@@ -1,10 +1,11 @@
+// REQUIRES: z3
 // RUN: %clang %s -emit-llvm -g -c -o %t1.bc
 // RUN: rm -rf %t.klee-out
-// RUN: %klee --output-dir=%t.klee-out --skip-not-symbolic-objects %t1.bc 2>&1 | FileCheck %s
+// RUN: %klee --output-dir=%t.klee-out -solver-backend=z3 --skip-not-symbolic-objects %t1.bc 2>&1 | FileCheck %s
 
+#include "klee/klee.h"
 #include <assert.h>
 #include <stdlib.h>
-#include "klee/klee.h"
 
 int *make_ptr() {
   int **x = malloc(sizeof(int *));
@@ -15,12 +16,12 @@ int *make_ptr() {
 int main() {
   int *x = make_ptr();
   int *y = make_ptr();
-  
+
   // CHECK: TwoObjectsInitialization.c:[[@LINE+1]]: memory error: null pointer exception
   *x = 10;
   // CHECK: TwoObjectsInitialization.c:[[@LINE+1]]: memory error: null pointer exception
   *y = 20;
-  
+
   if (*x == 20) {
     // One object
 
@@ -29,10 +30,10 @@ int main() {
     // CHECK-NOT: TwoObjectsInitialization.c:[[@LINE+2]]: memory error: out of bound pointer
     // CHECK-NOT: TwoObjectsInitialization.c:[[@LINE+1]]: ASSERTION FAIL
     assert(*x == *y && *y == 30);
-  
+
   } else if (*x == 10) {
     // Two LI objects
-  
+
     // CHECK-NOT: TwoObjectsInitialization.c:[[@LINE+2]]: memory error: out of bound pointer
     // CHECK-NOT: TwoObjectsInitialization.c:[[@LINE+1]]: ASSERTION FAIL
     assert(*y == 20);

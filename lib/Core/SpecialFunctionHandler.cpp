@@ -577,7 +577,7 @@ void SpecialFunctionHandler::handleSetForking(ExecutionState &state,
   assert(arguments.size()==1 &&
          "invalid number of arguments to klee_set_forking");
   ref<Expr> value = executor.toUnique(state, arguments[0]);
-  
+
   if (ConstantExpr *CE = dyn_cast<ConstantExpr>(value)) {
     state.forkDisabled = CE->isZero();
   } else {
@@ -685,8 +685,9 @@ void SpecialFunctionHandler::handleGetErrno(ExecutionState &state,
       executor.kmodule->targetData->getAllocaAddrSpace());
 
   bool resolved = state.addressSpace.resolveOne(
-      ConstantExpr::create((uint64_t)errno_addr, Expr::Int64),
-      executor.typeSystemManager->getWrappedType(pointerErrnoAddr), idErrnoObject);
+      ConstantExpr::createPointer((uint64_t)errno_addr),
+      executor.typeSystemManager->getWrappedType(pointerErrnoAddr),
+      idErrnoObject);
   if (!resolved)
     executor.terminateStateOnUserError(state,
                                        "Could not resolve address for errno");
@@ -792,7 +793,7 @@ void SpecialFunctionHandler::handleCheckMemoryAccess(ExecutionState &state,
     IDType idObject;
 
     if (!state.addressSpace.resolveOne(cast<ConstantExpr>(address),
-        executor.typeSystemManager->getUnknownType(), idObject)) {
+            executor.typeSystemManager->getUnknownType(), idObject)) {
       executor.terminateStateOnError(state,
                                      "check_memory_access: memory error",
                                      StateTerminationType::Ptr,

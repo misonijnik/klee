@@ -19,6 +19,7 @@
 #include "Z3Solver.h"
 #include "Z3Builder.h"
 
+#include "klee/ADT/SparseStorage.h"
 #include "klee/Expr/Constraints.h"
 #include "klee/Expr/Assignment.h"
 #include "klee/Expr/ExprUtil.h"
@@ -70,7 +71,7 @@ private:
 
   bool internalRunSolver(const Query &,
                          const std::vector<const Array *> *objects,
-                         std::vector<std::vector<unsigned char> > *values,
+                         std::vector<SparseStorage<unsigned char>> *values,
                          ValidityCore *validityCore,
                          bool &hasSolution);
   bool validateZ3Model(::Z3_solver &theSolver, ::Z3_model &theModel);
@@ -100,15 +101,16 @@ public:
   bool computeValue(const Query &, ref<Expr> &result);
   bool computeInitialValues(const Query &,
                             const std::vector<const Array *> &objects,
-                            std::vector<std::vector<unsigned char> > &values,
+                            std::vector<SparseStorage<unsigned char>> &values,
                             bool &hasSolution);
   bool check(const Query &query, ref<SolverResponse> &result);
   bool computeValidityCore(const Query &query, ValidityCore &validityCore,
-                        bool &isValid);
+                           bool &isValid);
   SolverRunStatus
   handleSolverResponse(::Z3_solver theSolver, ::Z3_lbool satisfiable,
                        const std::vector<const Array *> *objects,
-                       std::vector<std::vector<unsigned char> > *values,
+                       std::vector<SparseStorage<unsigned char>> *values,
+                       const std::unordered_map<const Array *, ExprHashSet> &usedArrayBytes,
                        bool &hasSolution);
   SolverRunStatus getOperationStatusCode();
 };
@@ -239,7 +241,7 @@ bool Z3SolverImpl::computeTruth(const Query &query, bool &isValid) {
 
 bool Z3SolverImpl::computeValue(const Query &query, ref<Expr> &result) {
   std::vector<const Array *> objects;
-  std::vector<std::vector<unsigned char> > values;
+  std::vector<SparseStorage<unsigned char>> values;
   bool hasSolution;
 
   // Find the object used in the expression, and compute an assignment
@@ -258,7 +260,7 @@ bool Z3SolverImpl::computeValue(const Query &query, ref<Expr> &result) {
 
 bool Z3SolverImpl::computeInitialValues(
     const Query &query, const std::vector<const Array *> &objects,
-    std::vector<std::vector<unsigned char> > &values, bool &hasSolution) {
+    std::vector<SparseStorage<unsigned char>> &values, bool &hasSolution) {
   return internalRunSolver(query, &objects, &values, /*validityCore=*/NULL, hasSolution);
 }
 
@@ -269,7 +271,7 @@ bool Z3SolverImpl::check(const Query &query, ref<SolverResponse> &result) {
 
   std::vector<const Array *> objects;
   findSymbolicObjects(expressions.begin(), expressions.end(), objects);
-  std::vector<std::vector<unsigned char>> values;
+  std::vector<SparseStorage<unsigned char>> values;
 
   ValidityCore validityCore;
 
@@ -295,7 +297,7 @@ bool Z3SolverImpl::computeValidityCore(const Query &query, ValidityCore &validit
 
 bool Z3SolverImpl::internalRunSolver(
     const Query &query, const std::vector<const Array *> *objects,
-    std::vector<std::vector<unsigned char> > *values,
+    std::vector<SparseStorage<unsigned char>> *values,
     ValidityCore *validityCore, bool &hasSolution) {
 
   if (ProduceUnsatCore && validityCore) {
@@ -318,8 +320,6 @@ bool Z3SolverImpl::internalRunSolver(
   // TODO: make a RAII
   Z3_probe probe = Z3_mk_probe(builder->ctx, "is-qfaufbv");
   Z3_probe_inc_ref(builder->ctx, probe);
-  
-
 
   runStatusCode = SOLVER_RUN_STATUS_FAILURE;
 
@@ -413,9 +413,21 @@ bool Z3SolverImpl::internalRunSolver(
     dumpedQueriesFile->flush();
   }
 
+  ConstraintSet allConstraints = query.constraints.withExpr(query.expr);
+  std::unordered_map<const Array *, ExprHashSet> usedArrayBytes;
+  for (auto constraint : allConstraints) {
+    std::vector<ref<ReadExpr>> reads;
+    findReads(constraint, true, reads);
+    for (auto readExpr : reads) {
+      const Array *readFromArray = readExpr->updates.root;  
+      assert(readFromArray);
+      usedArrayBytes[readFromArray].insert(readExpr->index);
+    }
+  }
+
   ::Z3_lbool satisfiable = Z3_solver_check(builder->ctx, theSolver);
   runStatusCode = handleSolverResponse(theSolver, satisfiable, objects, values,
-                                       hasSolution);
+                                       usedArrayBytes, hasSolution);
   if (ProduceUnsatCore && validityCore && satisfiable == Z3_L_FALSE) {
     ExprHashSet unsatCore;
     Z3_ast_vector z3_unsat_core = Z3_solver_get_unsat_core(builder->ctx, theSolver);
@@ -480,7 +492,9 @@ bool Z3SolverImpl::internalRunSolver(
 SolverImpl::SolverRunStatus Z3SolverImpl::handleSolverResponse(
     ::Z3_solver theSolver, ::Z3_lbool satisfiable,
     const std::vector<const Array *> *objects,
-    std::vector<std::vector<unsigned char> > *values, bool &hasSolution) {
+    std::vector<SparseStorage<unsigned char>> *values,
+    const std::unordered_map<const Array *, ExprHashSet> &usedArrayBytes, 
+    bool &hasSolution) {
   switch (satisfiable) {
   case Z3_L_TRUE: {
     hasSolution = true;
@@ -498,34 +512,65 @@ SolverImpl::SolverRunStatus Z3SolverImpl::handleSolverResponse(
                                                     ie = objects->end();
          it != ie; ++it) {
       const Array *array = *it;
-      std::vector<unsigned char> data;
+      SparseStorage<unsigned char> data;
 
-      data.reserve(array->size);
-      for (unsigned offset = 0; offset < array->size; offset++) {
-        // We can't use Z3ASTHandle here so have to do ref counting manually
-        ::Z3_ast arrayElementExpr;
-        Z3ASTHandle initial_read = builder->getInitialRead(array, offset);
+      ::Z3_ast arraySizeExpr;
+      Z3_model_eval(builder->ctx, theModel, builder->construct(array->size),
+                    Z3_TRUE, &arraySizeExpr);
+      Z3_inc_ref(builder->ctx, arraySizeExpr);
+      assert(Z3_get_ast_kind(builder->ctx, arraySizeExpr) == Z3_NUMERAL_AST &&
+             "Evaluated size expression has wrong sort");
+      uint64_t arraySize = 0;
+      assert(Z3_get_numeral_uint64(builder->ctx, arraySizeExpr, &arraySize) &&
+             "Failed to get size");
 
-        __attribute__((unused))
-        bool successfulEval =
-            Z3_model_eval(builder->ctx, theModel, initial_read,
-                          /*model_completion=*/Z3_TRUE, &arrayElementExpr);
-        assert(successfulEval && "Failed to evaluate model");
-        Z3_inc_ref(builder->ctx, arrayElementExpr);
-        assert(Z3_get_ast_kind(builder->ctx, arrayElementExpr) ==
-                   Z3_NUMERAL_AST &&
-               "Evaluated expression has wrong sort");
+      data.resize(arraySize);
+      if (usedArrayBytes.count(array)) {  
+        std::unordered_set<uint64_t> offsetValues;
+        for (ref<Expr> offsetExpr : usedArrayBytes.at(array)) {
+          ::Z3_ast arrayElementOffsetExpr;
+          Z3_model_eval(builder->ctx, theModel, builder->construct(offsetExpr),
+                        Z3_TRUE, &arrayElementOffsetExpr);
+          Z3_inc_ref(builder->ctx, arrayElementOffsetExpr);
+          assert(Z3_get_ast_kind(builder->ctx, arrayElementOffsetExpr) ==
+                    Z3_NUMERAL_AST &&
+                "Evaluated size expression has wrong sort");
+          size_t concretizedOffsetValue = 0;
+          assert(Z3_get_numeral_uint64(builder->ctx, arrayElementOffsetExpr,
+                                      &concretizedOffsetValue) &&
+                "Failed to get size");
+          offsetValues.insert(concretizedOffsetValue);
+          Z3_dec_ref(builder->ctx, arrayElementOffsetExpr);
+        }
+        
+        for (unsigned offset : offsetValues) {
+          // We can't use Z3ASTHandle here so have to do ref counting manually
+          ::Z3_ast arrayElementExpr;
+          Z3ASTHandle initial_read = builder->getInitialRead(array, offset);
 
-        int arrayElementValue = 0;
-        __attribute__((unused))
-        bool successGet = Z3_get_numeral_int(builder->ctx, arrayElementExpr,
-                                             &arrayElementValue);
-        assert(successGet && "failed to get value back");
-        assert(arrayElementValue >= 0 && arrayElementValue <= 255 &&
-               "Integer from model is out of range");
-        data.push_back(arrayElementValue);
-        Z3_dec_ref(builder->ctx, arrayElementExpr);
+          __attribute__((unused))
+          bool successfulEval =
+              Z3_model_eval(builder->ctx, theModel, initial_read,
+                            /*model_completion=*/Z3_TRUE, &arrayElementExpr);
+          assert(successfulEval && "Failed to evaluate model");
+          Z3_inc_ref(builder->ctx, arrayElementExpr);
+          assert(Z3_get_ast_kind(builder->ctx, arrayElementExpr) ==
+                    Z3_NUMERAL_AST &&
+                "Evaluated expression has wrong sort");
+
+          int arrayElementValue = 0;
+          __attribute__((unused))
+          bool successGet = Z3_get_numeral_int(builder->ctx, arrayElementExpr,
+                                              &arrayElementValue);
+          assert(successGet && "failed to get value back");
+          assert(arrayElementValue >= 0 && arrayElementValue <= 255 &&
+                "Integer from model is out of range");
+          data.store(offset, arrayElementValue);
+          Z3_dec_ref(builder->ctx, arrayElementExpr);
+        }
       }
+
+      Z3_dec_ref(builder->ctx, arraySizeExpr);
       values->push_back(data);
     }
 
