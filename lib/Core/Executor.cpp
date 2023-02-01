@@ -1303,10 +1303,11 @@ void Executor::addConstraint(ExecutionState &state, ref<Expr> condition) {
       klee_warning("seeds patched for violating constraint"); 
   }
 
-  ConstraintSet oldCS = state.constraints;
-  state.addConstraint(condition);
-  if (concretizationManager->get(state.constraints).bindings.empty()) {
-    concretizationManager->add(Query(oldCS, condition), Assignment(true));
+  ConstraintSet oldConstraints = state.constraints;
+  if (concretizationManager->contains(state.constraints, condition)) {
+    state.addConstraint(condition, concretizationManager->get(state.constraints, condition));
+  } else {
+    state.addConstraint(condition);
   }
 
   if (ivcEnabled)
@@ -3965,6 +3966,13 @@ void Executor::callExternalFunction(ExecutionState &state,
   uint64_t *args = (uint64_t*) alloca(2*sizeof(*args) * (arguments.size() + 1));
   memset(args, 0, 2 * sizeof(*args) * (arguments.size() + 1));
   unsigned wordIndex = 2;
+
+  /* To check types we iterate over types of parameteres in function
+  signature. Notice, that number of them can differ from passed,
+  as function can have variadic arguments. */
+  llvm::FunctionType *functionType = functionType->getFunctionType();
+
+  llvm::FunctionType::param_iterator ati = functionType->param_begin();
   for (std::vector<ref<Expr> >::iterator ai = arguments.begin(), 
        ae = arguments.end(); ai!=ae; ++ai) {
     if (ExternalCalls == ExternalCallPolicy::All) { // don't bother checking uniqueness
@@ -3977,6 +3985,10 @@ void Executor::callExternalFunction(ExecutionState &state,
       ce->toMemory(&args[wordIndex]);
       IDType result;
       // Checking to see if the argument is a pointer to something
+      llvm::Type *argumentType = nullptr;
+      if (ati != functionType->param_end()) {
+        argumentType = const_cast<llvm::Type *>(*ati);
+      }
       if (ce->getWidth() == Context::get().getPointerWidth() &&
           state.addressSpace.resolveOne(ce, typeSystemManager->getWrappedType(argumentType), result)) {
         state.addressSpace.findObject(result).second->flushToConcreteStore(
@@ -3999,6 +4011,9 @@ void Executor::callExternalFunction(ExecutionState &state,
                                   function->getName());
         return;
       }
+    }
+    if (ati != functionType->param_end()) {
+      ++ati;
     }
   }
 
@@ -4105,7 +4120,7 @@ ref<Expr> Executor::replaceReadWithSymbolic(ExecutionState &state,
   ref<Expr> res = Expr::createTempRead(array, e->getWidth());
   ref<Expr> eq = NotOptimizedExpr::create(EqExpr::create(e, res));
   llvm::errs() << "Making symbolic: " << eq << "\n";
-  state.addConstraint(eq);
+  addConstraint(state, eq);
   return res;
 }
 
@@ -4357,7 +4372,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
 
   if (state.resolvedPointers.count(address)) {
     success = true;
-    const MemoryObject* mo = state.resolvedPointers[address].first;
+    ref<const MemoryObject> mo = state.resolvedPointers[address].first;
     idFastResult = mo->id;
   } else {
     solver->setTimeout(coreSolverTimeout);
@@ -4669,7 +4684,7 @@ IDType Executor::lazyInitializeObject(ExecutionState &state,
     return 0;
   }
 
-  Assignment addressEqualityAssignment(true);
+  Assignment addressEqualityAssignment = state.constraints.getConcretization();
   unsigned char *bytesBegin = reinterpret_cast<unsigned char *>(&mo->address);
   addressEqualityAssignment.bindings[addressArray] =
       std::vector<unsigned char>(bytesBegin, bytesBegin + sizeof(mo->address));
@@ -4727,7 +4742,7 @@ void Executor::executeMakeSymbolic(ExecutionState &state,
         addConstraint(state, alignmentRestrictions);
       }
     }
-    state.addSymbolic(mo, array);
+    state.addSymbolic(mo, array, type);
     
     std::map< ExecutionState*, std::vector<SeedInfo> >::iterator it = 
       seedMap.find(&state);
@@ -4956,14 +4971,14 @@ void Executor::logState(const ExecutionState &state, int id,
   size_t sc = 0;
   for (auto i : state.symbolics) {
     *f << "Symbolic number " << sc++ << "\n";
-    *f << "Associated memory object: " << i.first.get()->id << "\n";
-    *f << "Memory object size: " << i.first.get()->size << "\n";
-    if (!i.first->isLazyInitialized()) {
+    *f << "Associated memory object: " << i.memoryObject.get()->id << "\n";
+    *f << "Memory object size: " << i.memoryObject.get()->size << "\n";
+    if (!i.memoryObject->isLazyInitialized()) {
       *f << "<Not initialized lazily>"
          << "\n";
       continue;
     }
-    auto lisource = i.first->lazyInitializationSource;
+    auto lisource = i.memoryObject->lazyInitializationSource;
     *f << "Lazy Initializaion Source: ";
     lisource->print(*f);
     *f << "\n";
@@ -4977,11 +4992,45 @@ void Executor::logState(const ExecutionState &state, int id,
 }
 
 void Executor::setInitializationGraph(const ExecutionState &state,
-                                      KTest &ktest) {
+                                      const Assignment &model, KTest &ktest) {
   std::map<size_t, std::vector<Pointer>> pointers;
   std::map<size_t, std::map<unsigned, std::pair<unsigned, unsigned>>> s;
+  ExprHashMap<std::pair<ref<const MemoryObject>, ref<Expr>>> resolvedPointers =
+      state.resolvedPointers;
 
-  for (const auto &pointer : state.resolvedPointers) {
+  for (const auto &symbolic : state.symbolics) {
+    KType *symbolicType = symbolic.type;
+    if (!symbolicType->getRawType()) {
+      continue;
+    }
+    if (symbolicType->getRawType()->isPointerTy()) {
+      symbolicType = typeSystemManager->getWrappedType(
+          symbolicType->getRawType()->getPointerElementType());
+    }
+
+    if (!(symbolicType->getRawType()->isPointerTy() ||
+          symbolicType->getRawType()->isStructTy())) {
+      continue;
+    }
+    for (const auto &innerTypeOffset : symbolicType->getInnerTypes()) {
+      if (!innerTypeOffset.first->getRawType()->isPointerTy()) {
+        continue;
+      }
+      for (const auto &offset : innerTypeOffset.second) {
+        ref<Expr> address = Expr::createTempRead(
+            symbolic.array, Context::get().getPointerWidth(), offset);
+        ref<ConstantExpr> constantAddress = model.evaluate(address);
+        ref<const MemoryObject> mo;
+
+        if (state.resolveOnSymbolics(constantAddress, mo)) {
+          resolvedPointers[address] =
+              std::make_pair(mo, mo->getOffsetExpr(address));
+        }
+      }
+    }
+  }
+
+  for (const auto &pointer : resolvedPointers) {
 
     if (!isa<ReadExpr>(pointer.first) && !isa<ConcatExpr>(pointer.first)) {
       continue;
@@ -5008,30 +5057,18 @@ void Executor::setInitializationGraph(const ExecutionState &state,
       bool pointerFound = false, pointeeFound = false;
       size_t pointerIndex = 0, pointeeIndex = 0;
       for (size_t i = 0; i < state.symbolics.size(); i++) {
-        if (state.symbolics[i].first == pointerResolution.first) {
+        if (state.symbolics[i].memoryObject == pointerResolution.first) {
           pointerIndex = i;
           pointerFound = true;
         }
-        if (state.symbolics[i].first == pointer.second.first) {
+        if (state.symbolics[i].memoryObject == pointer.second.first) {
           pointeeIndex = i;
           pointeeFound = true;
         }
       }
       if (pointerFound && pointeeFound) {
-        ref<ConstantExpr> offset;
-        bool success =
-            solver->getValue(state.constraints, pointerResolution.second,
-                             offset, state.queryMetaData);
-        if (!success) {
-          klee_error("Offset resolution failure in setInitializationGraph");
-        }
-        ref<ConstantExpr> indexOffset;
-        success = solver->getValue(state.constraints, pointer.second.second,
-                                   indexOffset, state.queryMetaData);
-        if (!success) {
-          klee_error(
-              "Index offset resolution failure in setInitializationGraph");
-        }
+        ref<ConstantExpr> offset = model.evaluate(pointerResolution.second);
+        ref<ConstantExpr> indexOffset = model.evaluate(pointer.second.second);
         Pointer o;
         o.offset = offset->getZExtValue();
         o.index = pointeeIndex;
@@ -5063,7 +5100,7 @@ bool Executor::getSymbolicSolution(const ExecutionState &state,
   solver->setTimeout(coreSolverTimeout);
 
   ConstraintSet extendedConstraints(state.constraints);
-  ConstraintManager cm(extendedConstraints);
+  ConstraintManager extendedConstrainsManager(extendedConstraints);
 
   // Go through each byte in every test case and attempt to restrict
   // it to the constraints contained in cexPreferences.  (Note:
@@ -5083,14 +5120,20 @@ bool Executor::getSymbolicSolution(const ExecutionState &state,
     if (!success) break;
     // If the particular constraint operated on in this iteration through
     // the loop isn't implied then add it to the list of constraints.
-    if (!mustBeTrue)
-      cm.addConstraint(pi);
+    if (!mustBeTrue) {
+      if (concretizationManager->contains(extendedConstraints, pi)) {
+        extendedConstrainsManager.addConstraint(
+            pi, concretizationManager->get(extendedConstraints, pi));
+      } else {
+        extendedConstrainsManager.addConstraint(pi);
+      }
+    }
   }
 
   std::vector< std::vector<unsigned char> > values;
   std::vector<const Array*> objects;
   for (unsigned i = 0; i != state.symbolics.size(); ++i)
-    objects.push_back(state.symbolics[i].second);
+    objects.push_back(state.symbolics[i].array);
   bool success = solver->getInitialValues(extendedConstraints, objects, values,
                                           state.queryMetaData);
   solver->setTimeout(time::Span());
@@ -5105,7 +5148,7 @@ bool Executor::getSymbolicSolution(const ExecutionState &state,
   res.numObjects = state.symbolics.size();
 
   for (unsigned i = 0; i != state.symbolics.size(); ++i) {
-    auto mo = state.symbolics[i].first;
+    auto mo = state.symbolics[i].memoryObject;
     KTestObject *o = &res.objects[i];
     o->name = const_cast<char*>(mo->name.c_str());
     o->numBytes = values[i].size();
@@ -5114,6 +5157,13 @@ bool Executor::getSymbolicSolution(const ExecutionState &state,
     o->numPointers = 0;
     o->pointers = nullptr;
   }
+
+  Assignment model = Assignment(objects, values, true);
+  for (auto binding : state.constraints.getConcretization().bindings) {
+    model.bindings.insert(binding);
+  }
+
+  setInitializationGraph(state, model, res);
 
   return true;
 }

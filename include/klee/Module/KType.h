@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <vector>
 #include <unordered_map>
+#include <set>
 
 namespace llvm {
 class Type;
@@ -56,7 +57,7 @@ protected:
    * For example, if object of type A contains object
    * of type B, then all types in B can be accessed via A.
    */
-  std::unordered_map<KType *, std::vector<uint64_t>> innerTypes;
+  std::unordered_map<KType *, std::set<uint64_t>> innerTypes;
 
   KType(llvm::Type *, TypeManager *);
 
@@ -102,6 +103,9 @@ public:
    * returns ref to null expression.
    */
   virtual ref<Expr> getContentRestrictions(ref<Expr>) const;
+
+  const std::unordered_map<KType *, std::set<uint64_t>> &
+  getInnerTypes() const;
 
   TypeSystemKind getTypeSystemKind() const;
 

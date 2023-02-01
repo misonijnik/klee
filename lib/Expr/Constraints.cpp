@@ -9,6 +9,7 @@
 
 #include "klee/Expr/Constraints.h"
 
+#include "klee/Expr/Assignment.h"
 #include "klee/Expr/ExprUtil.h"
 #include "klee/Expr/ExprVisitor.h"
 #include "klee/Module/KModule.h"
@@ -99,6 +100,7 @@ public:
 
 bool ConstraintManager::rewriteConstraints(ExprVisitor &visitor) {
   ConstraintSet old;
+  Assignment concretization = constraints.getConcretization();
   bool changed = false;
 
   std::swap(constraints, old);
@@ -113,6 +115,7 @@ bool ConstraintManager::rewriteConstraints(ExprVisitor &visitor) {
     }
   }
 
+  constraints.updateConcretization(concretization);
   return changed;
 }
 
@@ -196,6 +199,11 @@ void ConstraintManager::addConstraint(const ref<Expr> &e) {
   addConstraintInternal(simplified);
 }
 
+void ConstraintManager::addConstraint(const ref<Expr> &e, const Assignment &symcretes) {
+  addConstraint(e);
+  constraints.updateConcretization(symcretes);
+}
+
 ConstraintManager::ConstraintManager(ConstraintSet &_constraints)
     : constraints(_constraints) {}
 
@@ -211,7 +219,24 @@ klee::ConstraintSet::constraint_iterator ConstraintSet::end() const {
 
 size_t ConstraintSet::size() const noexcept { return constraints.size(); }
 
-void ConstraintSet::push_back(const ref<Expr> &e) { constraints.push_back(e); }
+ConstraintSet::ConstraintSet(constraints_ty cs)
+    : constraints(std::move(cs)), concretization(Assignment(true)) {}
+
+ConstraintSet::ConstraintSet(ExprHashSet cs)
+    : constraints(), concretization(Assignment(true)) {
+  constraints.insert(constraints.end(), cs.begin(), cs.end());
+}
+
+ConstraintSet::ConstraintSet()
+    : constraints(), concretization(Assignment(true)) {}
+
+void ConstraintSet::push_back(const ref<Expr> &e) {
+  constraints.push_back(e);
+}
+
+void ConstraintSet::updateConcretization(const Assignment &c) {
+  concretization = c;
+}
 
 void ConstraintSet::dump() const {
   llvm::errs() << "Constraints [\n";
@@ -233,4 +258,8 @@ std::set<ref<Expr>> ConstraintSet::asSet() const {
     ret.insert(i);
   }
   return ret;
+}
+
+const Assignment &ConstraintSet::getConcretization() const {
+  return concretization;
 }
