@@ -13,6 +13,7 @@
 #include "MergeHandler.h"
 #include "Searcher.h"
 
+#include "klee/Core/Interpreter.h"
 #include "klee/Support/ErrorHandling.h"
 #include "klee/Support/OptionCategories.h"
 
@@ -89,7 +90,7 @@ cl::opt<std::string> BatchTime(
     cl::init("5s"),
     cl::cat(SearchCat));
 
-cl::opt<unsigned long long> MaxCycles(
+cl::opt<std::size_t> MaxCycles(
     "max-cycles",
     cl::desc("stop execution after visiting some basic block this amount of times (default=1)."),
     cl::init(1),
@@ -118,13 +119,13 @@ bool klee::userSearcherRequiresMD2U() {
 }
 
 
-Searcher *getNewSearcher(Searcher::CoreSearchType type, RNG &rng, PTree &processTree) {
+Searcher *getNewSearcher(Searcher::CoreSearchType type, RNG &rng, PForest &processForest) {
   Searcher *searcher = nullptr;
   switch (type) {
     case Searcher::DFS: searcher = new DFSSearcher(); break;
     case Searcher::BFS: searcher = new BFSSearcher(); break;
     case Searcher::RandomState: searcher = new RandomSearcher(rng); break;
-    case Searcher::RandomPath: searcher = new RandomPathSearcher(processTree, rng); break;
+    case Searcher::RandomPath: searcher = new RandomPathSearcher(processForest, rng); break;
     case Searcher::NURS_CovNew: searcher = new WeightedRandomSearcher(WeightedRandomSearcher::CoveringNew, rng); break;
     case Searcher::NURS_MD2U: searcher = new WeightedRandomSearcher(WeightedRandomSearcher::MinDistToUncovered, rng); break;
     case Searcher::NURS_Depth: searcher = new WeightedRandomSearcher(WeightedRandomSearcher::Depth, rng); break;
@@ -139,14 +140,14 @@ Searcher *getNewSearcher(Searcher::CoreSearchType type, RNG &rng, PTree &process
 
 Searcher *klee::constructUserSearcher(Executor &executor) {
 
-  Searcher *searcher = getNewSearcher(CoreSearch[0], executor.theRNG, *executor.processTree);
+  Searcher *searcher = getNewSearcher(CoreSearch[0], executor.theRNG, *executor.processForest);
 
   if (CoreSearch.size() > 1) {
     std::vector<Searcher *> s;
     s.push_back(searcher);
 
     for (unsigned i = 1; i < CoreSearch.size(); i++)
-      s.push_back(getNewSearcher(CoreSearch[i], executor.theRNG, *executor.processTree));
+      s.push_back(getNewSearcher(CoreSearch[i], executor.theRNG, *executor.processForest));
 
     searcher = new InterleavedSearcher(s);
   }
@@ -167,10 +168,19 @@ Searcher *klee::constructUserSearcher(Executor &executor) {
     searcher = ms;
   }
 
-  if (UseGuidedSearch) {
-    searcher = new GuidedSearcher(searcher, *executor.codeGraphDistance.get(),
-                                  *executor.targetCalculator, executor.pausedStates,
-                                  MaxCycles - 1, executor.theRNG);
+  if (executor.guidanceKind == Interpreter::GuidanceKind::CoverageGuidance) {
+    searcher = new GuidedSearcher(
+        searcher, *executor.codeGraphDistance.get(), *executor.targetCalculator,
+        executor.removedButReachableStates,
+        executor.pausedStates, MaxCycles - 1, executor.theRNG);
+  }
+
+  if (executor.guidanceKind == Interpreter::GuidanceKind::ErrorGuidance) {
+    delete searcher;
+    searcher = new GuidedSearcher(*executor.codeGraphDistance.get(),
+                                  executor.removedButReachableStates,
+                                  executor.pausedStates, MaxCycles - 1,
+                                  executor.theRNG);
   }
 
   llvm::raw_ostream &os = executor.getHandler().getInfoStream();

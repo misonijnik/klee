@@ -14,6 +14,8 @@
 #include "klee/ADT/TreeStream.h"
 #include "klee/Config/Version.h"
 #include "klee/Core/Interpreter.h"
+#include "klee/Core/TargetedExecutionReporter.h"
+#include "klee/Module/Locations.h"
 #include "klee/ADT/KTest.h"
 #include "klee/Support/OptionCategories.h"
 #include "klee/Statistics/Statistics.h"
@@ -58,6 +60,8 @@
 #include <iomanip>
 #include <iterator>
 
+#include <klee/Misc/json.hpp>
+using json = nlohmann::json;
 
 using namespace llvm;
 using namespace klee;
@@ -155,6 +159,28 @@ namespace {
       cl::desc("Number of parallel process in klee, must lie in [1, 50] (default = 1)."),
       cl::init(1), cl::cat(StartCat));
 
+  cl::opt<std::string>
+      AnalysisReproduce("analysis-reproduce",
+                        cl::desc("Path of JSON file containing static analysis "
+                                 "paths to be reproduced"),
+                        cl::init(""), cl::cat(StartCat));
+
+  cl::opt<std::string>
+      AnalysisFile("analysis-file",
+                   cl::desc("Filename of C code in which source and sink to be "
+                            "checked are located"),
+                   cl::init(""), cl::cat(StartCat));
+
+  cl::opt<unsigned>
+      AnalysisSource("analysis-source",
+                     cl::desc("Line number of a source of a potential bug to "
+                              "be checked. Set to 0 to disable (default=0)"),
+                     cl::init(0), cl::cat(StartCat));
+
+  cl::opt<unsigned> AnalysisSink(
+      "analysis-sink",
+      cl::desc("Line number of a sink of a potential bug to be checked"),
+      cl::init(0), cl::cat(StartCat));
 
   cl::opt<std::string>
   RunInDir("run-in-dir",
@@ -179,9 +205,32 @@ namespace {
                  cl::cat(StartCat));
 
   cl::opt<bool>
+  SimplifyModule("simplify",
+                  cl::desc("Simplify the code before execution (default=true)."),
+                  cl::init(true),
+                  cl::cat(StartCat));
+
+  cl::opt<bool>
   WarnAllExternals("warn-all-external-symbols",
                    cl::desc("Issue a warning on startup for all external symbols (default=false)."),
                    cl::cat(StartCat));
+
+  cl::opt<Interpreter::GuidanceKind> ExecutionMode(
+      "execution-mode",
+      cl::values(clEnumValN(Interpreter::GuidanceKind::NoGuidance, "default",
+                            "Use basic klee symbolic execution"),
+                 clEnumValN(Interpreter::GuidanceKind::CoverageGuidance, "coverage-guided",
+                            "Takes place in two steps. First, all acyclic "
+                            "paths are executed, "
+                            "then the execution is guided to sections of the "
+                            "program not yet covered. "
+                            "These steps are repeated until all blocks of the "
+                            "program are covered"),
+                 clEnumValN(Interpreter::GuidanceKind::ErrorGuidance, "error-guided",
+                            "The execution is guided to sections of the "
+                            "program errors not yet covered")),
+      cl::init(Interpreter::GuidanceKind::CoverageGuidance), cl::desc("Kind of execution mode"),
+      cl::cat(StartCat));
 
 
   /*** Linking options ***/
@@ -623,7 +672,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
     }
 
     if (m_numGeneratedTests == MaxTests)
-      m_interpreter->setHaltExecution(true);
+      m_interpreter->setHaltExecution(HaltExecution::MaxTests);
 
     if (WriteTestInfo) {
       time::Span elapsed_time(time::getWallTime() - start_time);
@@ -1100,13 +1149,14 @@ void externalsAndGlobalsCheck(const llvm::Module *m) {
 }
 
 static Interpreter *theInterpreter = 0;
+static PathForest *pathForest = 0;
 
-static bool interrupted = false;
+static std::atomic_bool interrupted{false};
 
 // Pulled out so it can be easily called from a debugger.
 extern "C"
 void halt_execution() {
-  theInterpreter->setHaltExecution(true);
+  theInterpreter->setHaltExecution(HaltExecution::Interrupt);
 }
 
 extern "C"
@@ -1120,6 +1170,26 @@ static void interrupt_handle() {
     halt_execution();
     sys::SetInterruptFunction(interrupt_handle);
   } else {
+    if (pathForest && (!theInterpreter || !theInterpreter->hasTargetForest())) {
+      std::vector<PathForest *> q;
+      q.push_back(pathForest);
+      while (!q.empty()) {
+        auto tree = q.back();
+        q.pop_back();
+        for (const auto &p : tree->layer) {
+          auto event = p.first;
+          auto nextTree = p.second;
+          if (nextTree->empty()) {
+            if (event->shouldFailOnThisTarget()) {
+              reportFalsePositive(confidence::MinConfidence, *event,
+                                  "max-time");
+            }
+          } else {
+            q.push_back(nextTree);
+          }
+        }
+      }
+    }
     llvm::errs() << "KLEE: ctrl-c detected, exiting.\n";
     exit(1);
   }
@@ -1271,13 +1341,32 @@ linkWithUclibc(StringRef libDir, std::string opt_suffix,
 }
 #endif
 
+static PathForest *parseStaticAnalysisInput() {
+  if (AnalysisReproduce != "")
+    return parseInputPathTree(AnalysisReproduce);
+  if (AnalysisFile == "" || AnalysisSink == 0)
+    klee_error("--analysis-reproduce JSON file with error paths to be checked "
+               "is not provided in error-guidance mode");
+  auto sinkLoc = new LocatedEvent(new Location(AnalysisFile, AnalysisSink),
+                                  ReachWithError::NullPointerException);
+  auto sink = new PathForest();
+  sink->addLeaf(sinkLoc);
+  unsigned sourceLine = AnalysisSource == 0 ? AnalysisSink : AnalysisSource;
+  auto sourceLoc = new LocatedEvent(new Location(AnalysisFile, sourceLine));
+  auto source = new PathForest();
+  source->addSubTree(sourceLoc, sink);
+  return source;
+}
+
 static int run_klee_on_function(
-    int pArgc, char **pArgv, char **pEnvp, KleeHandler *handler,
-    Interpreter *interpreter, llvm::Module *finalModule,
+    int pArgc, char **pArgv, char **pEnvp,
+    std::unique_ptr<KleeHandler> &handler,
+    std::unique_ptr<Interpreter> &interpreter, llvm::Module *finalModule,
     std::vector<bool> &replayPath,
     std::vector<std::unique_ptr<llvm::Module>> &loadedModules) {
-    Function *mainFn = finalModule->getFunction(EntryPoint);
-  if (!mainFn) {
+  Function *mainFn = finalModule->getFunction(EntryPoint);
+  if ((ExecutionMode != Interpreter::GuidanceKind::ErrorGuidance) &&
+      !mainFn) { // in error guided mode we do not need main function
     klee_error("Entry function '%s' not found in module.", EntryPoint.c_str());
   }
 
@@ -1337,8 +1426,20 @@ static int run_klee_on_function(
                    << " bytes)"
                    << " (" << ++i << "/" << kTestFiles.size() << ")\n";
       // XXX should put envp in .ktest ?
-      interpreter->runFunctionAsMain(mainFn, out->numArgs, out->args, pEnvp);
-      if (interrupted) break;
+      switch (ExecutionMode) {
+      case Interpreter::GuidanceKind::NoGuidance:
+        interpreter->runFunctionAsMain(mainFn, out->numArgs, out->args, pEnvp);
+        break;
+      case Interpreter::GuidanceKind::CoverageGuidance:
+        interpreter->runMainAsGuided(mainFn, out->numArgs, out->args, pEnvp);
+        break;
+      case Interpreter::GuidanceKind::ErrorGuidance:
+        interpreter->runThroughLocations(mainFn, out->numArgs, out->args, pEnvp,
+                                         pathForest);
+        break;
+      }
+      if (interrupted)
+        break;
     }
     interpreter->setReplayKTest(0);
     while (!kTests.empty()) {
@@ -1386,13 +1487,26 @@ static int run_klee_on_function(
                    sys::StrError(errno).c_str());
       }
     }
-    interpreter->runFunctionAsMain(mainFn, pArgc, pArgv, pEnvp);
+
+    switch (ExecutionMode) {
+    case Interpreter::GuidanceKind::NoGuidance:
+      interpreter->runFunctionAsMain(mainFn, pArgc, pArgv, pEnvp);
+      break;
+    case Interpreter::GuidanceKind::CoverageGuidance:
+      interpreter->runMainAsGuided(mainFn, pArgc, pArgv, pEnvp);
+      break;
+    case Interpreter::GuidanceKind::ErrorGuidance:
+      interpreter->runThroughLocations(mainFn, pArgc, pArgv, pEnvp, pathForest);
+      break;
+    }
 
     while (!seeds.empty()) {
       kTest_free(seeds.back());
       seeds.pop_back();
     }
   }
+
+  delete pathForest;
 
   auto endTime = std::time(nullptr);
   { // output end and elapsed time
@@ -1456,6 +1570,8 @@ void wait_until_any_child_dies(
 }
 
 int run_klee(int argc, char **argv, char **envp) {
+  time::Point lastTime, startTime = lastTime = time::getWallTime();
+
   if (theInterpreter) {
     theInterpreter = nullptr;
   }
@@ -1556,8 +1672,15 @@ int run_klee(int argc, char **argv, char **envp) {
   // Load the bytecode...
   std::string errorMsg;
   LLVMContext ctx;
+  LLVMContext originalCtx;
   std::vector<std::unique_ptr<llvm::Module>> loadedModules;
+  std::vector<std::unique_ptr<llvm::Module>> originalLoadedModules;
   if (!klee::loadFile(InputFile, ctx, loadedModules, errorMsg)) {
+    klee_error("error loading program '%s': %s", InputFile.c_str(),
+               errorMsg.c_str());
+  }
+  if (!klee::loadFile(InputFile, originalCtx, originalLoadedModules,
+                      errorMsg)) {
     klee_error("error loading program '%s': %s", InputFile.c_str(),
                errorMsg.c_str());
   }
@@ -1571,12 +1694,40 @@ int run_klee(int argc, char **argv, char **envp) {
                errorMsg.c_str());
   }
 
+  std::unique_ptr<llvm::Module> OM(klee::linkModules(
+      originalLoadedModules, "" /* link all modules together */, errorMsg));
+  if (!OM) {
+    klee_error("error loading program '%s': %s", InputFile.c_str(),
+               errorMsg.c_str());
+  }
+
   llvm::Module *mainModule = M.get();
 
-  std::vector<std::string> mainModuleFunctions;
+  if (ExecutionMode == Interpreter::GuidanceKind::ErrorGuidance) {
+    std::vector<llvm::Type *> args;
+    args.push_back(llvm::Type::getInt32Ty(ctx)); // argc
+    args.push_back(llvm::PointerType::get(
+        Type::getInt8PtrTy(ctx),
+        mainModule->getDataLayout().getAllocaAddrSpace())); // argv
+    args.push_back(llvm::PointerType::get(
+        Type::getInt8PtrTy(ctx),
+        mainModule->getDataLayout().getAllocaAddrSpace())); // envp
+    std::string stubEntryPoint = "__klee_entry_point_main";
+    Function *stub = Function::Create(
+        llvm::FunctionType::get(llvm::Type::getInt32Ty(ctx), args, false),
+        GlobalVariable::ExternalLinkage, stubEntryPoint, mainModule);
+    BasicBlock *bb = BasicBlock::Create(ctx, "entry", stub);
+
+    llvm::IRBuilder<> Builder(bb);
+    Builder.CreateRet(ConstantInt::get(Type::getInt32Ty(ctx), 0));
+    EntryPoint = stubEntryPoint;
+    UseIndependentSolver = false;
+  }
+
+  std::vector<std::string> mainFunctions;
   for (auto &Function : *mainModule) {
     if (!Function.isDeclaration()) {
-        mainModuleFunctions.push_back(Function.getName().str());
+      mainFunctions.push_back(Function.getName().str());
     }
   }
 
@@ -1602,12 +1753,18 @@ int run_klee(int argc, char **argv, char **envp) {
   // Push the module as the first entry
   loadedModules.emplace_back(std::move(M));
 
+  if (ExecutionMode == Interpreter::GuidanceKind::ErrorGuidance) {
+    SimplifyModule = false;
+  }
+
   std::string LibraryDir = KleeHandler::getRunTimeLibraryPath(argv[0]);
   Interpreter::ModuleOptions Opts(LibraryDir.c_str(), EntryPoint, opt_suffix,
                                   /*Optimize=*/OptimizeModule,
+                                  /*Simplify*/ SimplifyModule,
                                   /*CheckDivZero=*/CheckDivZero,
                                   /*CheckOvershift=*/CheckOvershift,
-                                  /*WithFPRuntime=*/WithFPRuntime);
+                                  /*WithFPRuntime=*/WithFPRuntime,
+                                  /*WithPOSIXRuntime=*/WithPOSIXRuntime);
 
   if (WithPOSIXRuntime) {
     SmallString<128> Path(Opts.LibraryDir);
@@ -1655,8 +1812,8 @@ int run_klee(int argc, char **argv, char **envp) {
 #else
     SmallString<128> LibcxxBC(Opts.LibraryDir);
     llvm::sys::path::append(LibcxxBC, KLEE_LIBCXX_BC_NAME);
-    if (!klee::loadFile(LibcxxBC.c_str(), mainModule->getContext(), loadedModules,
-                        errorMsg))
+    if (!klee::loadFile(LibcxxBC.c_str(), mainModule->getContext(),
+                        loadedModules, errorMsg))
       klee_error("error loading libc++ '%s': %s", LibcxxBC.c_str(),
                  errorMsg.c_str());
     klee_message("NOTE: Using libc++ : %s", LibcxxBC.c_str());
@@ -1753,13 +1910,26 @@ int run_klee(int argc, char **argv, char **envp) {
     KleeHandler::loadPathFile(ReplayPathFile, replayPath);
   }
 
+  std::unique_ptr<KleeHandler> handler =
+      std::make_unique<KleeHandler>(pArgc, pArgv);
+
+  if (ExecutionMode == Interpreter::GuidanceKind::ErrorGuidance)
+    pathForest = parseStaticAnalysisInput();
+
+  lastTime = time::getWallTime();
   Interpreter::InterpreterOptions IOpts;
   IOpts.MakeConcreteSymbolic = MakeConcreteSymbolic;
-  KleeHandler *handler = new KleeHandler(pArgc, pArgv);
-  Interpreter *interpreter =
-    theInterpreter = Interpreter::create(ctx, IOpts, handler);
+  IOpts.InitializationOverhead = (lastTime - startTime).toSeconds();
+  IOpts.Guidance = ExecutionMode;
+  klee_message("Initialization overhead: %ds", IOpts.InitializationOverhead);
+  if (ExecutionMode != Interpreter::GuidanceKind::ErrorGuidance) {
+    IOpts.InitializationOverhead = 0;
+  }
+  std::unique_ptr<Interpreter> interpreter(
+      Interpreter::create(ctx, IOpts, handler.get()));
+  theInterpreter = interpreter.get();
   assert(interpreter);
-  handler->setInterpreter(interpreter);
+  handler->setInterpreter(interpreter.get());
 
   for (int i=0; i<argc; i++) {
     handler->getInfoStream() << argv[i] << (i+1<argc ? " ":"\n");
@@ -1770,7 +1940,7 @@ int run_klee(int argc, char **argv, char **envp) {
   // locale and other data and then calls main.
 
   auto finalModule =
-      interpreter->setModule(loadedModules, Opts, mainModuleFunctions);
+      interpreter->setModule(std::move(OM), loadedModules, Opts, mainFunctions);
 
   if (InteractiveMode) {
     klee_message("KLEE finish preprocessing.");
@@ -1832,6 +2002,7 @@ int run_klee(int argc, char **argv, char **envp) {
       if (TimeoutPerFunction != 0) {
         while (!child_processes.empty()) {
           wait_until_any_child_dies(child_processes);
+
           std::vector<std::pair<pid_t, time_point>> alive_child;
           for (const auto &child_process : child_processes) {
             if (kill(child_process.first, 0) == 0) {
@@ -1852,8 +2023,6 @@ int run_klee(int argc, char **argv, char **envp) {
   for (unsigned i=0; i<InputArgv.size()+1; i++)
     delete[] pArgv[i];
   delete[] pArgv;
-
-  delete interpreter;
 
   uint64_t queries =
     *theStatisticManager->getStatisticByName("Queries");
@@ -1908,8 +2077,5 @@ int run_klee(int argc, char **argv, char **envp) {
     llvm::errs().resetColor();
 
   handler->getInfoStream() << stats.str();
-
-  delete handler;
-
   return 0;
 }

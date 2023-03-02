@@ -15,12 +15,16 @@ klee_add_component(kleeCore
   CoreStats.cpp
   CXXTypeSystem/CXXTypeManager.cpp
   ExecutionState.cpp
+  TargetedExecutionReporter.cpp
+  TargetForest.cpp
+  TargetedExecutionManager.cpp
   Executor.cpp
   ExecutorUtil.cpp
   ExternalDispatcher.cpp
   ImpliedValue.cpp
   Memory.cpp
   MemoryManager.cpp
+  PForest.cpp
   PTree.cpp
   Searcher.cpp
   SeedInfo.cpp

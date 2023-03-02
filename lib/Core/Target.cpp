@@ -22,19 +22,81 @@ using namespace klee;
 namespace klee {
 llvm::cl::opt<TargetCalculateBy> TargetCalculatorMode(
     "target-calculator-kind", cl::desc("Specifiy the target calculator mode."),
-    cl::values(clEnumValN(TargetCalculateBy::Default, "default", "Looks for the closest uncovered block."),
-               clEnumValN(TargetCalculateBy::Blocks, "blocks", "Looks for the closest uncovered block by state blocks history."),
-               clEnumValN(TargetCalculateBy::Transitions, "transitions", "Looks for the closest uncovered block by state transitions history.")),
+    cl::values(
+        clEnumValN(TargetCalculateBy::Default, "default",
+                   "Looks for the closest uncovered block."),
+        clEnumValN(
+            TargetCalculateBy::Blocks, "blocks",
+            "Looks for the closest uncovered block by state blocks history."),
+        clEnumValN(TargetCalculateBy::Transitions, "transitions",
+                   "Looks for the closest uncovered block by state transitions "
+                   "history.")),
     cl::init(TargetCalculateBy::Default), cl::cat(ExecCat));
-} // namespace
+} // namespace klee
 
 std::string Target::toString() const {
-  std::string repr = "Target: ";
-  repr += block->getAssemblyLocation();
-  if (atReturn()) {
-    repr += " (at the end)";
+  std::ostringstream repr;
+  repr << "Target " << getId() << ": ";
+  if (shouldFailOnThisTarget()) {
+    repr << "error in ";
   }
-  return repr;
+  repr << block->getAssemblyLocation();
+  if (atReturn()) {
+    repr << " (at the end)";
+  }
+  return repr.str();
+}
+
+Target::EquivTargetHashSet Target::cachedTargets;
+Target::TargetHashSet Target::targets;
+
+ref<Target> Target::getFromCacheOrReturn(Target *target) {
+  std::pair<TargetHashSet::const_iterator, bool> success =
+      cachedTargets.insert(target);
+  if (success.second) {
+    // Cache miss
+    targets.insert(target);
+    return target;
+  }
+  // Cache hit
+  delete target;
+  target = *(success.first);
+  return target;
+}
+
+ref<Target> Target::create(LocatedEvent *_le, KBlock *_block) {
+  Target *target = new Target(_le, _block);
+  return getFromCacheOrReturn(target);
+}
+
+ref<Target> Target::create(KBlock *_block) {
+  return create(nullptr, _block);
+}
+
+int Target::compare(const Target &other) const {
+  if (block != other.block) {
+    return block < other.block ? -1 : 1;
+  }
+  return this->LocatedEvent::compare(other);
+}
+
+bool Target::equals(const Target &other) const {
+  return compare(other) == 0;
+}
+
+bool Target::operator<(const Target &other) const {
+  return compare(other) == -1;
+}
+
+bool Target::operator==(const Target &other) const {
+  return equals(other);
+}
+
+Target::~Target() {
+  if (targets.find(this) != targets.end()) {
+    cachedTargets.erase(this);
+    targets.erase(this);
+  }
 }
 
 void TargetCalculator::update(const ExecutionState &state) {
@@ -85,7 +147,7 @@ bool TargetCalculator::differenceIsEmpty(
   return diff.empty();
 }
 
-Target TargetCalculator::calculate(ExecutionState &state) {
+ref<Target> TargetCalculator::calculate(ExecutionState &state) {
   BasicBlock *initialBlock = state.getInitPCBlock();
   std::unordered_map<llvm::BasicBlock *, VisitedBlocks> &history =
       blocksHistory[initialBlock];
@@ -94,7 +156,7 @@ Target TargetCalculator::calculate(ExecutionState &state) {
   BasicBlock *bb = state.getPCBlock();
   KFunction *kf = module.functionMap.at(bb->getParent());
   KBlock *kb = kf->blockMap[bb];
-  KBlock *nearestBlock = nullptr;
+  ref<Target> nearestBlock;
   unsigned int minDistance = UINT_MAX;
   unsigned int sfNum = 0;
   bool newCov = false;
@@ -129,13 +191,13 @@ Target TargetCalculator::calculate(ExecutionState &state) {
         } else {
           newCov = true;
         }
-        nearestBlock = target;
+        nearestBlock = Target::create(target);
         minDistance = distance;
       }
     }
 
     if (nearestBlock) {
-      return Target(nearestBlock);
+      return nearestBlock;
     }
 
     if (sfi->caller) {
@@ -143,5 +205,5 @@ Target TargetCalculator::calculate(ExecutionState &state) {
     }
   }
 
-  return Target(nearestBlock);
+  return nearestBlock;
 }

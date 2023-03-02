@@ -25,11 +25,13 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <cassert>
+#include <fstream>
 #include <iomanip>
 #include <map>
 #include <set>
 #include <sstream>
 #include <stdarg.h>
+#include <string>
 
 using namespace llvm;
 using namespace klee;
@@ -76,10 +78,42 @@ StackFrame::~StackFrame() {
 }
 
 /***/
+ExecutionState::ExecutionState() :
+    initPC(nullptr),
+    pc(nullptr),
+    prevPC(nullptr),
+    incomingBBIndex(-1),
+    depth(0),
+    ptreeNode(nullptr),
+    steppedInstructions(0),
+    steppedMemoryInstructions(0),
+    instsSinceCovNew(0),
+    roundingMode(llvm::APFloat::rmNearestTiesToEven),
+    coveredNew(false),
+    forkDisabled(false) {
+  setID();
+}
 
 ExecutionState::ExecutionState(KFunction *kf)
     : initPC(kf->instructions), pc(initPC), prevPC(pc),
       roundingMode(llvm::APFloat::rmNearestTiesToEven) {
+  pushFrame(nullptr, kf);
+  setID();
+}
+
+ExecutionState::ExecutionState(KFunction *kf, KBlock *kb) :
+    initPC(kb->instructions),
+    pc(initPC),
+    prevPC(pc),
+    incomingBBIndex(-1),
+    depth(0),
+    ptreeNode(nullptr),
+    steppedInstructions(0),
+    steppedMemoryInstructions(0),
+    instsSinceCovNew(0),
+    roundingMode(llvm::APFloat::rmNearestTiesToEven),
+    coveredNew(false),
+    forkDisabled(false) {
   pushFrame(nullptr, kf);
   setID();
 }
@@ -103,6 +137,7 @@ ExecutionState::ExecutionState(const ExecutionState& state):
     level(state.level),
     addressSpace(state.addressSpace),
     constraints(state.constraints),
+    targetForest(state.targetForest),
     pathOS(state.pathOS),
     symPathOS(state.symPathOS),
     coveredLines(state.coveredLines),
@@ -121,7 +156,6 @@ ExecutionState::ExecutionState(const ExecutionState& state):
                              : nullptr),
     coveredNew(state.coveredNew),
     forkDisabled(state.forkDisabled),
-    targets(state.targets),
     gepExprBases(state.gepExprBases),
     gepExprOffsets(state.gepExprOffsets) {
   for (const auto &cur_mergehandler: openMergeStack)
@@ -146,6 +180,41 @@ bool ExecutionState::inSymbolics(const MemoryObject *mo) const {
     }
   }
   return false;
+}
+
+ExecutionState *ExecutionState::withKFunction(KFunction *kf) {
+  ExecutionState *newState = new ExecutionState(*this);
+  newState->setID();
+  newState->pushFrame(nullptr, kf);
+  newState->initPC = kf->blockMap[&*kf->function->begin()]->instructions;
+  newState->pc = newState->initPC;
+  newState->prevPC = newState->pc;
+  return newState;
+}
+
+ExecutionState *ExecutionState::withStackFrame(KInstIterator caller, KFunction *kf) {
+  ExecutionState *newState = new ExecutionState(*this);
+  newState->setID();
+  newState->pushFrame(caller, kf);
+  newState->initPC = kf->blockMap[&*kf->function->begin()]->instructions;
+  newState->pc = newState->initPC;
+  newState->prevPC = newState->pc;
+  return newState;
+}
+
+ExecutionState *ExecutionState::withKBlock(KBlock *kb) {
+  ExecutionState *newState = new ExecutionState(*this);
+  newState->setID();
+  newState->initPC = kb->instructions;
+  newState->pc = newState->initPC;
+  newState->prevPC = newState->pc;
+  return newState;
+}
+
+ExecutionState *ExecutionState::copy() {
+  ExecutionState *newState = new ExecutionState(*this);
+  newState->setID();
+  return newState;
 }
 
 void ExecutionState::pushFrame(KInstIterator caller, KFunction *kf) {
@@ -307,6 +376,7 @@ bool ExecutionState::merge(const ExecutionState &b) {
   std::set< ref<Expr> > aConstraints(constraints.begin(), constraints.end());
   std::set< ref<Expr> > bConstraints(b.constraints.begin(), 
                                      b.constraints.end());
+
   std::set< ref<Expr> > commonConstraints, aSuffix, bSuffix;
   std::set_intersection(aConstraints.begin(), aConstraints.end(),
                         bConstraints.begin(), bConstraints.end(),
@@ -317,6 +387,7 @@ bool ExecutionState::merge(const ExecutionState &b) {
   std::set_difference(bConstraints.begin(), bConstraints.end(),
                       commonConstraints.begin(), commonConstraints.end(),
                       std::inserter(bSuffix, bSuffix.end()));
+
   if (DebugLogStateMerge) {
     llvm::errs() << "\tconstraint prefix: [";
     for (std::set<ref<Expr> >::iterator it = commonConstraints.begin(),
@@ -433,6 +504,7 @@ bool ExecutionState::merge(const ExecutionState &b) {
   constraints = ConstraintSet();
 
   ConstraintManager m(constraints);
+
   for (const auto &constraint : commonConstraints)
     m.addConstraint(constraint);
   m.addConstraint(OrExpr::create(inA, inB));
@@ -512,6 +584,14 @@ void ExecutionState::increaseLevel() {
   transitionLevel.insert(std::make_pair(srcbb, dstbb));
 }
 
+bool ExecutionState::isTransfered() {
+  return getPrevPCBlock() != getPCBlock();
+}
+
 bool ExecutionState::isGEPExpr(ref<Expr> expr) const {
   return UseGEPOptimization && gepExprBases.find(expr) != gepExprBases.end();
+}
+
+bool ExecutionState::visited(KBlock *block) const {
+  return level.find(block->basicBlock) != level.end();
 }

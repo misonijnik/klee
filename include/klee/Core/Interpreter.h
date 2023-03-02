@@ -15,9 +15,13 @@
 #include <string>
 #include <vector>
 
+#include "TerminationTypes.h"
+
 struct KTest;
+struct TestCase;
 
 namespace llvm {
+class BasicBlock;
 class Function;
 class LLVMContext;
 class Module;
@@ -27,8 +31,10 @@ class raw_fd_ostream;
 
 namespace klee {
 class ExecutionState;
+struct PathForest;
 class Interpreter;
 class TreeStreamWriter;
+struct LocatedEvent;
 
 class InterpreterHandler {
 public:
@@ -50,6 +56,12 @@ public:
 
 class Interpreter {
 public:
+  enum class GuidanceKind {
+    NoGuidance,       // Default symbolic execution
+    CoverageGuidance, // Use GuidedSearcher and guidedRun to maximize full code coverage
+    ErrorGuidance     // Use GuidedSearcher and guidedRun to maximize specified targets coverage
+  };
+
   /// ModuleOptions - Module level options which can be set when
   /// registering a module with the interpreter.
   struct ModuleOptions {
@@ -57,16 +69,21 @@ public:
     std::string EntryPoint;
     std::string OptSuffix;
     bool Optimize;
+    bool Simplify;
     bool CheckDivZero;
     bool CheckOvershift;
     bool WithFPRuntime;
+    bool WithPOSIXRuntime;
 
     ModuleOptions(const std::string &_LibraryDir,
                   const std::string &_EntryPoint, const std::string &_OptSuffix,
-                  bool _Optimize, bool _CheckDivZero, bool _CheckOvershift, bool _WithFPRuntime)
+                  bool _Optimize, bool _Simplify, bool _CheckDivZero,
+                  bool _CheckOvershift, bool _WithFPRuntime,
+                  bool _WithPOSIXRuntime)
         : LibraryDir(_LibraryDir), EntryPoint(_EntryPoint),
-          OptSuffix(_OptSuffix), Optimize(_Optimize),
-          CheckDivZero(_CheckDivZero), CheckOvershift(_CheckOvershift), WithFPRuntime(_WithFPRuntime) {}
+          OptSuffix(_OptSuffix), Optimize(_Optimize), Simplify(_Simplify),
+          CheckDivZero(_CheckDivZero), CheckOvershift(_CheckOvershift),
+          WithFPRuntime(_WithFPRuntime), WithPOSIXRuntime(_WithPOSIXRuntime) {}
   };
 
   enum LogType
@@ -83,6 +100,8 @@ public:
     /// symbolic values. This is used to test the correctness of the
     /// symbolic execution on concrete programs.
     unsigned MakeConcreteSymbolic;
+    unsigned InitializationOverhead;
+    GuidanceKind Guidance;
 
     InterpreterOptions()
       : MakeConcreteSymbolic(false)
@@ -109,9 +128,10 @@ public:
   /// \return The final module after it has been optimized, checks
   /// inserted, and modified for interpretation.
   virtual llvm::Module *
-  setModule(std::vector<std::unique_ptr<llvm::Module>> &modules,
+  setModule(std::unique_ptr<llvm::Module> mainModule,
+            std::vector<std::unique_ptr<llvm::Module>> &modules,
             const ModuleOptions &opts,
-            const std::vector<std::string> &mainModuleFunctions) = 0;
+            const std::vector<std::string> &mainFunctions) = 0;
 
   // supply a tree stream writer which the interpreter will use
   // to record the concrete path (as a stream of '0' and '1' bytes).
@@ -139,13 +159,34 @@ public:
                                  char **argv,
                                  char **envp) = 0;
 
+  virtual void runFunctionGuided(llvm::Function *fn,
+                                 int argc,
+                                 char **argv,
+                                 char **envp) = 0;
+
+  virtual void runThroughLocations(llvm::Function *f, int argc, char **argv,
+                                   char **envp,
+                                   PathForest *paths) = 0;
+
+  virtual void runMainAsGuided(llvm::Function *f,
+                               int argc,
+                               char **argv,
+                               char **envp) = 0;
+
+  virtual void runMainWithTarget(llvm::Function *mainFn,
+                                 llvm::BasicBlock *target,
+                                 int argc,
+                                 char **argv,
+                                 char **envp) = 0;
   /*** Runtime options ***/
 
-  virtual void setHaltExecution(bool value) = 0;
+  virtual void setHaltExecution(HaltExecution::Reason value) = 0;
 
   virtual void setInhibitForking(bool value) = 0;
 
   virtual void prepareForEarlyExit() = 0;
+
+  virtual bool hasTargetForest() const = 0;
 
   /*** State accessor methods ***/
 

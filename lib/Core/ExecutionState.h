@@ -13,9 +13,13 @@
 #include "AddressSpace.h"
 #include "MergeHandler.h"
 #include "Target.h"
+#include "TargetForest.h"
+#include "TargetedExecutionManager.h"
 
 #include "klee/ADT/ImmutableSet.h"
 #include "klee/ADT/TreeStream.h"
+#include "klee/Core/TerminationTypes.h"
+#include "klee/Expr/Assignment.h"
 #include "klee/Expr/Constraints.h"
 #include "klee/Expr/Expr.h"
 #include "klee/Expr/ExprHashMap.h"
@@ -29,6 +33,7 @@
 #include <memory>
 #include <set>
 #include <utility>
+#include <unordered_set>
 #include <vector>
 
 namespace klee {
@@ -42,6 +47,7 @@ struct KInstruction;
 class MemoryObject;
 class PTreeNode;
 struct InstructionInfo;
+struct Target;
 
 llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const MemoryMap &mm);
 
@@ -197,7 +203,7 @@ public:
 
   /// @brief Remember from which Basic Block control flow arrived
   /// (i.e. to select the right phi values)
-  std::uint32_t incomingBBIndex;
+  std::int32_t incomingBBIndex;
 
   // Overall state of the state - Data specific
 
@@ -214,6 +220,13 @@ public:
 
   /// @brief Constraints collected so far
   ConstraintSet constraints;
+
+  /// @brief Key points which should be visited through execution
+  TargetForest targetForest;
+
+  /// @brief Velocity and acceleration of this state investigating new blocks
+  long long progress_velocity = 0;
+  unsigned long progress_acceleration = 1;
 
   /// Statistics and information
 
@@ -285,19 +298,17 @@ public:
   /// @brief Disables forking for this state. Set by user code
   bool forkDisabled = false;
 
-  /// @brief The targets that the state must achieve
-  std::set<Target> targets;
-
   ExprHashMap<std::pair<ref<Expr>, llvm::Type *>> gepExprBases;
   ExprHashMap<ref<Expr>> gepExprOffsets;
 
+  ReachWithError error = ReachWithError::None;
+  std::atomic<HaltExecution::Reason> terminationReasonType {HaltExecution::NotHalt};
+
 public:
-#ifdef KLEE_UNITTEST
-  // provide this function only in the context of unittests
-  ExecutionState() = default;
-#endif
   // only to create the initial state
+  explicit ExecutionState();
   explicit ExecutionState(KFunction *kf);
+  explicit ExecutionState(KFunction *kf, KBlock *kb);
   // no copy assignment, use copy constructor
   ExecutionState &operator=(const ExecutionState &) = delete;
   // no move ctor
@@ -308,6 +319,11 @@ public:
   ~ExecutionState();
 
   ExecutionState *branch();
+  ExecutionState *withKFunction(KFunction *kf);
+  ExecutionState *withStackFrame(KInstIterator caller, KFunction *kf);
+  ExecutionState *withKBlock(KBlock *kb);
+  ExecutionState *empty();
+  ExecutionState *copy();
 
   bool inSymbolics(const MemoryObject* mo) const;
 
@@ -333,12 +349,15 @@ public:
   bool merge(const ExecutionState &b);
   void dumpStack(llvm::raw_ostream &out) const;
 
+  bool visited(KBlock *block) const;
+
   std::uint32_t getID() const { return id; };
   void setID() { id = nextID++; };
   llvm::BasicBlock *getInitPCBlock() const;
   llvm::BasicBlock *getPrevPCBlock() const;
   llvm::BasicBlock *getPCBlock() const;
   void increaseLevel();
+  bool isTransfered();
   bool isGEPExpr(ref<Expr> expr) const;
 };
 

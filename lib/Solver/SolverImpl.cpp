@@ -54,6 +54,29 @@ bool SolverImpl::computeValidityCore(const Query &query,
   return false;
 }
 
+Solver::PartialValidity SolverImpl::computePartialValidity(const Query &query) {
+  bool isTrue, isFalse;
+  bool trueSuccess, falseSuccess;
+  trueSuccess = computeTruth(query, isTrue);
+  if (trueSuccess && isTrue) {
+      return Solver::PartialValidity::MustBeTrue;
+  }
+  falseSuccess = computeTruth(query.negateExpr(), isFalse);
+  if (falseSuccess && isFalse) {
+    return Solver::PartialValidity::MustBeFalse;
+  }
+  if (trueSuccess && falseSuccess) {
+    return Solver::PartialValidity::TrueOrFalse;
+  }
+  if (trueSuccess && !falseSuccess) {
+    return Solver::PartialValidity::MayBeFalse;
+  }
+  if (!trueSuccess && falseSuccess) {
+    return Solver::PartialValidity::MayBeTrue;
+  }
+  return Solver::PartialValidity::None;
+}
+
 bool SolverImpl::computeMinimalUnsignedValue(const Query &query,
                                              ref<ConstantExpr> &result) {
   bool mustBeTrue;

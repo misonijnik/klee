@@ -105,6 +105,7 @@ namespace klee {
     HANDLER(handleAbort);
     HANDLER(handleAssert);
     HANDLER(handleAssertFail);
+    HANDLER(handleSleep);
     HANDLER(handleAssume);
     HANDLER(handleCalloc);
     HANDLER(handleCheckMemoryAccess);
@@ -130,6 +131,7 @@ namespace klee {
     HANDLER(handleCloseMerge);
     HANDLER(handleNew);
     HANDLER(handleNewArray);
+    HANDLER(handleNewNothrowArray);
     HANDLER(handlePreferCex);
     HANDLER(handlePosixPreferCex);
     HANDLER(handlePrintExpr);

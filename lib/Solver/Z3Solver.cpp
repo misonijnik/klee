@@ -668,7 +668,7 @@ bool Z3SolverImpl::validateZ3Model(::Z3_solver &theSolver, ::Z3_model &theModel)
     __attribute__((unused))
     bool successfulEval =
         Z3_model_eval(builder->ctx, theModel, constraint,
-                      /*model_completion=*/Z3_TRUE, &rawEvaluatedExpr);
+                      /*model_completion=*/true, &rawEvaluatedExpr);
     assert(successfulEval && "Failed to evaluate model");
 
     // Use handle to do ref-counting.

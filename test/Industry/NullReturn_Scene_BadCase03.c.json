@@ -1,0 +1,53 @@
+{
+    "errors": [
+        {
+            "category": "NULL pointer deference",
+            "id": 23,
+            "trace": [
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/src-bc-reports/sources/secbrella/SecB_NullReturns/BadCase/NullReturn_Scene_BadCase03.c",
+                        "reportLine": 35,
+                        "function": "TestBad3",
+                        "instructionOffset": 3,
+                        "column": 25,
+                        "instructionOpcode": 56
+                    },
+                    "event": {
+                        "kind": "NoOp"
+                    }
+                },
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/src-bc-reports/sources/secbrella/SecB_NullReturns/BadCase/NullReturn_Scene_BadCase03.c",
+                        "reportLine": 39,
+                        "function": "TestBad3",
+                        "instructionOffset": 8,
+                        "column": 12,
+                        "instructionOpcode": 32
+                    },
+                    "event": {
+                        "kind": "NoOp"
+                    }
+                },
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/src-bc-reports/sources/secbrella/SecB_NullReturns/BadCase/NullReturn_Scene_BadCase03.c",
+                        "reportLine": 39,
+                        "function": "TestBad3",
+                        "instructionOffset": 8,
+                        "column": 5,
+                        "instructionOpcode": 56
+                    },
+                    "event": {
+                        "kind": "Error",
+                        "error": {
+                            "sort": "NullDereference",
+                            "target": "bufNew"
+                        }
+                    }
+                }
+            ]
+        }
+    ]
+}

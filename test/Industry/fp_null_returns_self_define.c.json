@@ -1,0 +1,45 @@
+{
+    "errors": [
+        {
+            "category": "NULL pointer deference",
+            "id": 1,
+            "trace": [
+                {
+                    "location": {
+                        "file": "/mnt/d/wsl-ubuntu/test2/null_returns/fp_null_returns_self_define.c",
+                        "reportLine": 12,
+                        "function": "MyValue"
+                    },
+                    "event": {
+                        "kind": "NoOp"
+                    }
+                },
+                {
+                    "location": {
+                        "file": "/mnt/d/wsl-ubuntu/test2/null_returns/fp_null_returns_self_define.c",
+                        "reportLine": 22,
+                        "function": "TEST_NullReturns004"
+                    },
+                    "event": {
+                        "kind": "ExitCall",
+                        "function": "MyValue"
+                    }
+                },
+                {
+                    "location": {
+                        "file": "/mnt/d/wsl-ubuntu/test2/null_returns/fp_null_returns_self_define.c",
+                        "reportLine": 23,
+                        "function": "TEST_NullReturns004"
+                    },
+                    "event": {
+                        "kind": "Error",
+                        "error": {
+                            "sort": "NullDereference",
+                            "target": "value"
+                        }
+                    }
+                }
+            ]
+        }
+    ]
+}

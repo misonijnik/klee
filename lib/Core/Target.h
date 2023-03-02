@@ -10,32 +10,63 @@
 #ifndef KLEE_TARGET_H
 #define KLEE_TARGET_H
 
+#include "klee/ADT/RNG.h"
 #include "klee/Module/KModule.h"
+#include "klee/Module/Locations.h"
+#include "klee/System/Time.h"
+
 #include "klee/Support/OptionCategories.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <map>
+#include <queue>
+#include <set>
 #include <unordered_set>
+#include <vector>
 
 namespace klee {
 class CodeGraphDistance;
 class ExecutionState;
 class Executor;
+struct TargetHash;
+struct EquivTargetCmp;
+struct TargetCmp;
 
 enum TargetCalculateBy { Default, Blocks, Transitions };
 
-struct Target {
+struct Target : LocatedEvent {
 private:
+  typedef std::unordered_set<Target *, TargetHash, EquivTargetCmp>
+      EquivTargetHashSet;
+  typedef std::unordered_set<Target *, TargetHash, TargetCmp> TargetHashSet;
+  static EquivTargetHashSet cachedTargets;
+  static TargetHashSet targets;
   KBlock *block;
 
+  explicit Target(LocatedEvent *_le, KBlock *_block)
+      : LocatedEvent(_le ? *_le : LocatedEvent()), block(_block) {}
+
+  static ref<Target> getFromCacheOrReturn(Target *target);
+
 public:
-  explicit Target(KBlock *_block) : block(_block) {}
+  bool isReported = false;
+  /// @brief Required by klee::ref-managed objects
+  class ReferenceCounter _refCount;
 
-  bool operator<(const Target &other) const { return block < other.block; }
+  static ref<Target> create(LocatedEvent *_le, KBlock *_block);
+  static ref<Target> create(KBlock *_block);
 
-  bool operator==(const Target &other) const { return block == other.block; }
+  int compare(const Target &other) const;
 
-  bool atReturn() const { return llvm::isa<KReturnBlock>(block); }
+  bool equals(const Target &other) const;
+
+  bool operator<(const Target &other) const;
+
+  bool operator==(const Target &other) const;
+
+  bool atReturn() const { return isa<KReturnBlock>(block); }
 
   KBlock *getBlock() const { return block; }
 
@@ -43,7 +74,10 @@ public:
 
   explicit operator bool() const noexcept { return !isNull(); }
 
+  unsigned hash() const { return reinterpret_cast<uintptr_t>(block); }
+
   std::string toString() const;
+  ~Target();
 };
 
 typedef std::pair<llvm::BasicBlock *, llvm::BasicBlock *> Transition;
@@ -75,7 +109,7 @@ public:
 
   void update(const ExecutionState &state);
 
-  Target calculate(ExecutionState &state);
+  ref<Target> calculate(ExecutionState &state);
 
 private:
   const KModule &module;

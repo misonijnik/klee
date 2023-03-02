@@ -10,6 +10,7 @@
 #ifndef KLEE_TERMINATIONTYPES_H
 #define KLEE_TERMINATIONTYPES_H
 
+#include <atomic>
 #include <cstdint>
 
 #define TERMINATION_TYPES                                                      \
@@ -33,7 +34,8 @@
   TTYPE(ReadOnly, 17U, "read_only.err")                                        \
   TTYPE(ReportError, 18U, "report_error.err")                                  \
   TTYPE(UndefinedBehavior, 19U, "undefined_behavior.err")                      \
-  MARK(PROGERR, 19U)                                                           \
+  TTYPE(InternalOutOfMemory, 20U, "out_of_memory.er")                          \
+  MARK(PROGERR, 20U)                                                           \
   TTYPE(User, 23U, "user.err")                                                 \
   MARK(USERERR, 23U)                                                           \
   TTYPE(Execution, 25U, "exec.err")                                            \
@@ -42,7 +44,8 @@
   TTYPE(Replay, 27U, "")                                                       \
   TTYPE(Merge, 28U, "")                                                        \
   TTYPE(SilentExit, 29U, "")                                                   \
-  MARK(END, 29U)
+  TTYPE(Paused, 30U, "")                                                       \
+  MARK(END, 30U)
 
 ///@brief Reason an ExecutionState got terminated.
 enum class StateTerminationType : std::uint8_t {
@@ -51,6 +54,25 @@ enum class StateTerminationType : std::uint8_t {
   TERMINATION_TYPES
 #undef TTYPE
 #undef MARK
+};
+
+namespace HaltExecution {
+  enum Reason {
+    NotHalt = 0,
+    MaxTests,
+    MaxInstructions,
+    MaxSteppedInstructions,
+    MaxTime,
+    CovCheck,
+    NoMoreStates,
+    ReachedTarget,
+    ErrorOnWhichShouldExit,
+    Interrupt,
+    MaxDepth,
+    MaxStackFrames,
+    MaxSolverTime,
+    Unspecified
+  };
 };
 
 #endif

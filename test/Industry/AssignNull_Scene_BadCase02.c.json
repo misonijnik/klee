@@ -1,0 +1,76 @@
+{
+    "errors": [
+        {
+            "category": "NULL pointer deference",
+            "id": 1,
+            "trace": [
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/src-bc-reports/sources/secbrella/SecB_ForwardNull/BadCase/AssignNull_Scene_BadCase02.c",
+                        "reportLine": 45,
+                        "function": "TestBad5",
+                        "instructionOffset": 14,
+                        "column": 17,
+                        "instructionOpcode": 33
+                    },
+                    "event": {
+                        "kind": "AssignZero"
+                    }
+                },
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/src-bc-reports/sources/secbrella/SecB_ForwardNull/BadCase/AssignNull_Scene_BadCase02.c",
+                        "reportLine": 47,
+                        "function": "TestBad5",
+                        "instructionOffset": 15,
+                        "column": 16,
+                        "instructionOpcode": 32
+                    },
+                    "event": {
+                        "kind": "Error",
+                        "error": {
+                            "sort": "NullDereference",
+                            "target": "stu"
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "category": "NULL pointer deference",
+            "id": 2,
+            "trace": [
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/src-bc-reports/sources/secbrella/SecB_ForwardNull/BadCase/AssignNull_Scene_BadCase02.c",
+                        "reportLine": 45,
+                        "function": "TestBad5",
+                        "instructionOffset": 14,
+                        "column": 17,
+                        "instructionOpcode": 33
+                    },
+                    "event": {
+                        "kind": "AssignZero"
+                    }
+                },
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/src-bc-reports/sources/secbrella/SecB_ForwardNull/BadCase/AssignNull_Scene_BadCase02.c",
+                        "reportLine": 47,
+                        "function": "TestBad5",
+                        "instructionOffset": 15,
+                        "column": 11,
+                        "instructionOpcode": 32
+                    },
+                    "event": {
+                        "kind": "Error",
+                        "error": {
+                            "sort": "NullDereference",
+                            "target": "stu"
+                        }
+                    }
+                }
+            ]
+        }
+    ]
+}

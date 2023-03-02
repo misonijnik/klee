@@ -187,16 +187,16 @@ bool ExternalDispatcherImpl::executeCall(KCallable *callable, Instruction *i,
   // Code for this not JIT'ed. Do this now.
   Function *dispatcher;
 #ifdef WINDOWS
-  std::map<std::string, void *>::iterator it2 =
-      preboundFunctions.find(f->getName());
+      std::map<std::string, void *>::iterator it2 =
+          preboundFunctions.find(f->getName());
 
-  if (it2 != preboundFunctions.end()) {
-    // only bind once
-    if (it2->second) {
-      executionEngine->addGlobalMapping(f, it2->second);
-      it2->second = 0;
-    }
-  }
+      if (it2 != preboundFunctions.end()) {
+        // only bind once
+        if (it2->second) {
+          executionEngine->addGlobalMapping(f, it2->second);
+          it2->second = 0;
+        }
+      }
 #endif
 
       Module *dispatchModule = NULL;

@@ -94,10 +94,10 @@ namespace klee {
     /// \return true iff an object was found at \a address.
     bool resolveOne(ExecutionState &state, TimingSolver *solver,
                     ref<Expr> address, KType *objectType, IDType &result,
-                    bool &success) const;
+                    bool &success, const std::atomic_bool &haltExecution) const;
     bool resolveOne(ExecutionState &state, TimingSolver *solver,
                     ref<Expr> address, KType *objectType, IDType &result,
-                    MOPredicate predicate, bool &success) const;
+                    MOPredicate predicate, bool &success, const std::atomic_bool &haltExecution) const;
 
     /// @brief Tries to resolve the pointer in the concrete object
     /// if it value is unique.
@@ -174,6 +174,8 @@ namespace klee {
     /// @return
     bool copyInConcrete(const MemoryObject *mo, const ObjectState *os,
                         uint64_t src_address);
+
+    void clear();
   };
 } // End klee namespace
 

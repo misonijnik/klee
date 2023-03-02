@@ -19,6 +19,7 @@
 #include "ImpliedValue.h"
 #include "Memory.h"
 #include "MemoryManager.h"
+#include "PForest.h"
 #include "PTree.h"
 #include "Searcher.h"
 #include "SeedInfo.h"
@@ -33,7 +34,9 @@
 #include "klee/Config/config.h"
 #include "klee/Config/Version.h"
 #include "klee/Core/Interpreter.h"
+#include "klee/Core/TargetedExecutionReporter.h"
 #include "klee/Expr/ArrayExprOptimizer.h"
+#include "klee/Expr/ArrayExprVisitor.h"
 #include "klee/Expr/Assignment.h"
 #include "klee/Expr/Constraints.h"
 #include "klee/Expr/Expr.h"
@@ -96,11 +99,13 @@ typedef unsigned TypeSize;
 #include <algorithm>
 #include <cassert>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <cxxabi.h>
 #include <fstream>
 #include <iomanip>
 #include <iosfwd>
+#include <iostream>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -108,6 +113,7 @@ typedef unsigned TypeSize;
 #include <utility>
 #include <vector>
 
+using namespace std::chrono;
 using namespace llvm;
 using namespace klee;
 
@@ -146,6 +152,9 @@ cl::opt<bool> LazyInitialization(
      cl::desc("Enable lazy initialization (default=true)"),
      cl::cat(ExecCat));
 
+cl::opt<bool> ForkPartialValidity("fork-partial-validity", cl::init(false),
+                                  cl::cat(ExecCat));
+
 cl::opt<TypeSystemKind>
     TypeSystem("type-system",
                cl::desc("Use information about type system from specified "
@@ -173,6 +182,12 @@ cl::opt<bool>
                    cl::desc("Model malloc behavior, i.e. model NULL on 0 "
                             "or huge symbolic allocations."),
                    cl::init(false));
+
+cl::opt<bool>
+    ExternCallsCanReturnNull("extern-calls-can-return-null", cl::init(false),
+                             cl::desc("Enable case when extern call can crash "
+                                      "and return null (default=false)"),
+                             cl::cat(ExecCat));
 } // namespace klee
 
 namespace {
@@ -197,6 +212,11 @@ cl::opt<bool> EmitAllErrors(
              "(default=false, i.e. one per (error,instruction) pair)"),
     cl::cat(TestGenCat));
 
+cl::opt<bool> SkipNotLazyAndSymbolicPointers(
+    "skip-not-lazy-and-symbolic-pointers", cl::init(false),
+    cl::desc("Set pointers only on lazy and make_symbolic variables "
+             "(default=false)"),
+    cl::cat(TestGenCat));
 
 /* Constraint solving options */
 
@@ -261,6 +281,19 @@ cl::opt<bool> AllExternalWarnings(
              "as opposed to once per function (default=false)"),
     cl::cat(ExtCallsCat));
 
+cl::opt<bool> MockExternalCalls(
+    "mock-external-calls",
+    cl::init(false),
+    cl::desc("If true, failed external calls are mocked, i.e. return values are made symbolic "
+             "and then added to generated test cases. "
+             "If false, fails on externall calls."),
+    cl::cat(ExtCallsCat));
+
+cl::opt<bool> MockAllExternalCalls(
+    "mock-all-external-calls",
+    cl::init(false),
+    cl::desc("If true, all external calls are mocked."),
+    cl::cat(ExtCallsCat));
 
 /*** Seeding options ***/
 
@@ -353,6 +386,12 @@ cl::list<StateTerminationType> ExitOnErrorType(
 cl::opt<unsigned long long> MaxInstructions(
     "max-instructions",
     cl::desc("Stop execution after this many instructions.  Set to 0 to disable (default=0)"),
+    cl::init(0),
+    cl::cat(TerminationCat));
+
+cl::opt<unsigned long long> MaxSteppedInstructions(
+    "max-stepped-instructions",
+    cl::desc("Stop state execution after this many instructions.  Set to 0 to disable (default=0)"),
     cl::init(0),
     cl::cat(TerminationCat));
 
@@ -487,8 +526,119 @@ extern llvm::cl::opt<uint64_t> MaxConstantAllocationSize;
 extern llvm::cl::opt<uint64_t> MaxSymbolicAllocationSize;
 
 // XXX hack
-extern "C" unsigned dumpStates, dumpPTree;
-unsigned dumpStates = 0, dumpPTree = 0;
+extern "C" unsigned dumpStates, dumpPForest;
+unsigned dumpStates = 0, dumpPForest = 0;
+
+bool Interpreter::hasTargetForest() const {
+	return false;
+}
+
+TargetedHaltsOnTraces::TargetedHaltsOnTraces(ref<TargetForest> &forest) {
+  auto leafs = forest->leafs();
+  for (auto finalTargetPair : *leafs) {
+    traceToHaltTypeToConfidence.emplace(finalTargetPair.first, HaltTypeToConfidence());
+  }
+  delete leafs;
+}
+
+void TargetedHaltsOnTraces::subtractConfidencesFrom(TargetForest &forest, HaltExecution::Reason reason) {
+  auto leafs = forest.leafs();
+  for (auto finalTargetPair : *leafs) {
+    auto &haltTypeToConfidence = traceToHaltTypeToConfidence.at(finalTargetPair.first);
+    auto confidence = finalTargetPair.second;
+    auto it = haltTypeToConfidence.find(reason);
+    if (it == haltTypeToConfidence.end()) {
+      haltTypeToConfidence.emplace(reason, confidence);
+    } else {
+      haltTypeToConfidence[reason] = it->second + confidence;
+    }
+  }
+  delete leafs;
+}
+
+void TargetedHaltsOnTraces::totalConfidenceAndTopContributor(
+  const HaltTypeToConfidence &haltTypeToConfidence,
+  confidence::ty *confidence,
+  HaltExecution::Reason *reason)
+{
+  *confidence = confidence::MaxConfidence;
+  HaltExecution::Reason maxReason = HaltExecution::MaxTime;
+  confidence::ty maxConfidence = confidence::MinConfidence;
+  for (auto p : haltTypeToConfidence) {
+    auto r = p.first;
+    auto c = p.second;
+    if (c > maxConfidence) {
+      maxConfidence = c;
+      maxReason = r;
+    }
+    *confidence -= c;
+  }
+  *reason = maxReason;
+}
+
+std::string
+getAdviseWhatToIncreaseConfidenceRate(HaltExecution::Reason reason) {
+  std::string what = "";
+  switch (reason) {
+  case HaltExecution::MaxSolverTime:
+    what = MaxCoreSolverTime.ArgStr.str();
+    break;
+  case HaltExecution::MaxStackFrames:
+    what = RuntimeMaxStackFrames.ArgStr.str();
+    break;
+  case HaltExecution::MaxTests:
+    what = "max-tests"; // TODO: taken from run_klee.cpp
+    break;
+  case HaltExecution::MaxInstructions:
+    what = MaxInstructions.ArgStr.str();
+    break;
+  case HaltExecution::MaxSteppedInstructions:
+    what = MaxSteppedInstructions.ArgStr.str();
+    break;
+  case HaltExecution::CovCheck:
+    what = "cov-check"; // TODO: taken from StatsTracker.cpp
+    break;
+  case HaltExecution::MaxDepth:
+    what = MaxDepth.ArgStr.str();
+    break;
+  case HaltExecution::ErrorOnWhichShouldExit: // this should never be the case
+  case HaltExecution::ReachedTarget:          // this should never be the case
+  case HaltExecution::NoMoreStates:           // this should never be the case
+  case HaltExecution::Interrupt: // it is ok to advise to increase time if we
+                                 // were interrupted by user
+  case HaltExecution::MaxTime:
+#ifndef ENABLE_KLEE_DEBUG
+  default:
+#endif
+    what = MaxTime.ArgStr.str();
+    break;
+#ifdef ENABLE_KLEE_DEBUG
+  default:
+    what = std::to_string(reason);
+    break;
+#endif
+  }
+  return what;
+}
+
+void TargetedHaltsOnTraces::reportFalsePositives(bool canReachSomeTarget) {
+  confidence::ty confidence;
+  HaltExecution::Reason reason;
+  for (const auto &targetWithConfidences : traceToHaltTypeToConfidence) {
+    auto target = targetWithConfidences.first;
+    if (!target->shouldFailOnThisTarget())
+      continue;
+    if (target->isReported)
+      continue;
+    totalConfidenceAndTopContributor(targetWithConfidences.second, &confidence, &reason);
+    if (canReachSomeTarget && confidence::isVeryConfident(confidence)) {// We should not be so sure if there are states that can reach some targets
+      confidence = confidence::VeryConfident;
+      reason = HaltExecution::MaxTime;
+    }
+    reportFalsePositive(confidence, *target, getAdviseWhatToIncreaseConfidenceRate(reason));
+    target->isReported = true;
+  }
+}
 
 const std::unordered_set <Intrinsic::ID> Executor::supportedFPIntrinsics = {
   //Intrinsic::fabs, //handled individually because of its presence in mainline KLEE
@@ -523,15 +673,20 @@ Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
       concretizationManager(new ConcretizationManager(EqualitySubstitution)),
       codeGraphDistance(new CodeGraphDistance()), replayKTest(0), replayPath(0),
       usingSeeds(0), atMemoryLimit(false), inhibitForking(false),
-      haltExecution(false), ivcEnabled(false),
+      haltExecution(HaltExecution::NotHalt), ivcEnabled(false),
       debugLogBuffer(debugBufferString) {
 
-  const time::Span maxTime{MaxTime};
-  if (maxTime) timers.add(
-        std::make_unique<Timer>(maxTime, [&]{
+  time::Span maxTime{MaxTime};
+  if (maxTime) {
+    if (opts.InitializationOverhead != 0) {
+      maxTime -= time::seconds(opts.InitializationOverhead);
+    }
+    if (maxTime)
+      timers.add(std::make_unique<Timer>(maxTime, [&] {
         klee_message("HaltTimer invoked");
-        setHaltExecution(true);
+        setHaltExecution(HaltExecution::MaxTime);
       }));
+  }
 
   coreSolverTimeout = time::Span{MaxCoreSolverTime};
   if (coreSolverTimeout) UseForkedCoreSolver = true;
@@ -584,13 +739,15 @@ Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
 }
 
 llvm::Module *
-Executor::setModule(std::vector<std::unique_ptr<llvm::Module>> &modules,
+Executor::setModule(std::unique_ptr<llvm::Module> mainModule,
+                    std::vector<std::unique_ptr<llvm::Module>> &modules,
                     const ModuleOptions &opts,
                     const std::vector<std::string> &mainModuleFunctions) {
   assert(!kmodule && !modules.empty() &&
          "can only register one module"); // XXX gross
 
   kmodule = std::unique_ptr<KModule>(new KModule());
+  kmoduleOrig = std::unique_ptr<KModule>(new KModule());
 
   // Preparing the final module happens in multiple stages
 
@@ -603,6 +760,12 @@ Executor::setModule(std::vector<std::unique_ptr<llvm::Module>> &modules,
                       error)) {
     klee_error("Could not load KLEE intrinsic file %s", LibPath.c_str());
   }
+
+  std::vector<std::unique_ptr<llvm::Module>> mainModuleVector;
+  mainModuleVector.push_back(std::move(mainModule));
+  kmoduleOrig->link(mainModuleVector, ""); //TODO: [Aleksandr Misonizhnik], should "" be replaced with sth?
+  std::vector<Function *> declarations;
+  kmoduleOrig->manifestFunctions(declarations);
 
   // 1.) Link the modules together
   while (kmodule->link(modules, opts.EntryPoint)) {
@@ -631,8 +794,8 @@ Executor::setModule(std::vector<std::unique_ptr<llvm::Module>> &modules,
   // 4.) Manifest the module
   kmodule->manifest(interpreterHandler, StatsTracker::useStatistics());
   kmodule->mainModuleFunctions.insert(kmodule->mainModuleFunctions.end(),
-                                  mainModuleFunctions.begin(),
-                                  mainModuleFunctions.end());
+                                      mainModuleFunctions.begin(),
+                                      mainModuleFunctions.end());
 
   specialFunctionHandler->bind();
 
@@ -873,6 +1036,7 @@ void Executor::allocateGlobalObjects(ExecutionState &state) {
                                         /*alignment=*/globalObjectAlignment);
     if (!mo)
       klee_error("out of memory");
+    
     globalObjects.emplace(&v, mo);
     globalAddresses.emplace(&v, mo->getBaseConstantExpr());
   }
@@ -1012,7 +1176,7 @@ void Executor::branch(ExecutionState &state,
       ExecutionState *ns = es->branch();
       addedStates.push_back(ns);
       result.push_back(ns);
-      processTree->attach(es->ptreeNode, ns, es, reason);
+      processForest->attach(es->ptreeNode, ns, es, reason);
     }
   }
 
@@ -1126,7 +1290,6 @@ ref<Expr> Executor::maxStaticPctChecks(ExecutionState &current,
 
 Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
                                    bool isInternal, BranchType reason) {
-  Solver::Validity res;
   std::map< ExecutionState*, std::vector<SeedInfo> >::iterator it =
     seedMap.find(&current);
   bool isSeeding = it != seedMap.end();
@@ -1138,10 +1301,34 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
   if (isSeeding)
     timeout *= static_cast<unsigned>(it->second.size());
   solver->setTimeout(timeout);
-  bool success = solver->evaluate(current.constraints, condition, res,
-                                  current.queryMetaData);
+  Solver::PartialValidity res;
+  if (ForkPartialValidity) {
+    res =
+        solver->evaluate(current.constraints, condition, current.queryMetaData);
+  } else {
+    Solver::Validity val;
+    bool success = solver->evaluate(current.constraints, condition, val,
+                                    current.queryMetaData);
+    if (!success) {
+      res = Solver::PartialValidity::None;
+    } else {
+      switch (val) {
+      case Solver::Validity::True:
+        res = Solver::PartialValidity::MustBeTrue;
+        break;
+      case Solver::Validity::False:
+        res = Solver::PartialValidity::MustBeFalse;
+        break;
+      case Solver::Validity::Unknown:
+        res = Solver::PartialValidity::TrueOrFalse;
+        break;
+      default:
+        assert(0 && "Validity did not match any switch case");
+      }
+    }
+  }
   solver->setTimeout(time::Span());
-  if (!success) {
+  if (res == Solver::PartialValidity::None) {
     current.pc = current.prevPC;
     terminateStateOnSolverError(current, "Query timed out (fork).");
     return StatePair(nullptr, nullptr);
@@ -1153,31 +1340,31 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
              "ran out of branches in replay path mode");
       bool branch = (*replayPath)[replayPosition++];
       
-      if (res==Solver::True) {
+      if (res==Solver::PartialValidity::MustBeTrue) {
         assert(branch && "hit invalid branch in replay path mode");
-      } else if (res==Solver::False) {
+      } else if (res==Solver::PartialValidity::MustBeFalse) {
         assert(!branch && "hit invalid branch in replay path mode");
       } else {
         // add constraints
         if(branch) {
-          res = Solver::True;
+          res = Solver::PartialValidity::MustBeTrue;
           addConstraint(current, condition);
         } else  {
-          res = Solver::False;
+          res = Solver::PartialValidity::MustBeFalse;
           addConstraint(current, Expr::createIsZero(condition));
         }
       }
-    } else if (res==Solver::Unknown) {
+    } else if (res==Solver::PartialValidity::TrueOrFalse) {
       assert(!replayKTest && "in replay mode, only one branch can be true.");
       
       if (!branchingPermitted(current)) {
         TimerStatIncrementer timer(stats::forkTime);
         if (theRNG.getBool()) {
           addConstraint(current, condition);
-          res = Solver::True;        
+          res = Solver::PartialValidity::MustBeTrue;
         } else {
           addConstraint(current, Expr::createIsZero(condition));
-          res = Solver::False;
+          res = Solver::PartialValidity::MustBeFalse;
         }
       }
     }
@@ -1187,7 +1374,7 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
   // and false seeds.
   if (isSeeding && 
       (current.forkDisabled || OnlyReplaySeeds) && 
-      res == Solver::Unknown) {
+      res == Solver::PartialValidity::TrueOrFalse) {
     bool trueSeed=false, falseSeed=false;
     // Is seed extension still ok here?
     for (std::vector<SeedInfo>::iterator siit = it->second.begin(), 
@@ -1208,8 +1395,9 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
     }
     if (!(trueSeed && falseSeed)) {
       assert(trueSeed || falseSeed);
-      
-      res = trueSeed ? Solver::True : Solver::False;
+
+      res = trueSeed ? Solver::PartialValidity::MustBeTrue
+                     : Solver::PartialValidity::MustBeFalse;
       addConstraint(current, trueSeed ? condition : Expr::createIsZero(condition));
     }
   }
@@ -1222,21 +1410,29 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
   // the value it has been fixed at, we should take this as a nice
   // hint to just use the single constraint instead of all the binary
   // search ones. If that makes sense.
-  if (res==Solver::True) {
+  if (res == Solver::PartialValidity::MustBeTrue ||
+      res == Solver::PartialValidity::MayBeTrue) {
     if (!isInternal) {
       if (pathWriter) {
         current.pathOS << "1";
       }
     }
 
+    if (res == Solver::PartialValidity::MayBeTrue) {
+      current.addConstraint(condition);
+    }
     return StatePair(&current, nullptr);
-  } else if (res==Solver::False) {
+  } else if (res == Solver::PartialValidity::MustBeFalse ||
+             res == Solver::PartialValidity::MayBeFalse) {
     if (!isInternal) {
       if (pathWriter) {
         current.pathOS << "0";
       }
     }
 
+    if (res == Solver::PartialValidity::MayBeFalse) {
+      current.addConstraint(Expr::createIsZero(condition));
+    }
     return StatePair(nullptr, &current);
   } else {
     TimerStatIncrementer timer(stats::forkTime);
@@ -1282,7 +1478,7 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
       }
     }
 
-    processTree->attach(current.ptreeNode, falseState, trueState, reason);
+    processForest->attach(current.ptreeNode, falseState, trueState, reason);
 
     if (pathWriter) {
       // Need to update the pathOS.id field of falseState, otherwise the same id
@@ -1363,8 +1559,8 @@ void Executor::addConstraint(ExecutionState &state, ref<Expr> condition) {
                                  ConstantExpr::alloc(1, Expr::Bool));
 }
 
-const Cell& Executor::eval(KInstruction *ki, unsigned index,
-                           ExecutionState &state) const {
+const Cell &Executor::eval(KInstruction *ki, unsigned index, ExecutionState &state,
+                           bool isSymbolic) {
   assert(index < ki->inst->getNumOperands());
   int vnumber = ki->operands[index];
 
@@ -1378,6 +1574,10 @@ const Cell& Executor::eval(KInstruction *ki, unsigned index,
   } else {
     unsigned index = vnumber;
     StackFrame &sf = state.stack.back();
+    ref<Expr> reg = sf.locals[index].value;
+    if (isSymbolic && reg.isNull()) {
+      prepareSymbolicRegister(state, sf, index);
+    }
     return sf.locals[index];
   }
 }
@@ -1536,7 +1736,10 @@ void Executor::stepInstruction(ExecutionState &state) {
   ++state.pc;
 
   if (stats::instructions == MaxInstructions)
-    haltExecution = true;
+    haltExecution = HaltExecution::MaxInstructions;
+
+  if (MaxSteppedInstructions && state.steppedInstructions >= MaxSteppedInstructions)
+    haltExecution = HaltExecution::MaxSteppedInstructions;
 }
 
 static inline const llvm::fltSemantics *fpWidthToSemantics(unsigned width) {
@@ -2156,6 +2359,7 @@ void Executor::executeCall(ExecutionState &state, KInstruction *ki, Function *f,
         terminateStateOnExecError(state, "out of memory (varargs)");
         return;
       }
+      assert(mo);
 
       if (mo) {
         if ((WordSize == Expr::Int64) && (mo->address & 15) &&
@@ -2198,7 +2402,23 @@ void Executor::executeCall(ExecutionState &state, KInstruction *ki, Function *f,
   }
 }
 
-void Executor::transferToBasicBlock(BasicBlock *dst, BasicBlock *src, 
+void Executor::increaseProgressVelocity(ExecutionState &state, KBlock *block) {
+  if (state.visited(block)) {
+    if (state.progress_velocity >= 0) {
+      state.progress_velocity -= state.progress_acceleration;
+      state.progress_acceleration *= 2;
+    }
+  } else {
+    if (state.progress_velocity >= 0) {
+      state.progress_velocity += 1;
+    } else {
+      state.progress_velocity = 0;
+      state.progress_acceleration = 1;
+    }
+  }
+}
+
+void Executor::transferToBasicBlock(KBlock *kdst, BasicBlock *src,
                                     ExecutionState &state) {
   // Note that in general phi nodes can reuse phi values from the same
   // block but the incoming value is the eval() result *before* the
@@ -2213,17 +2433,38 @@ void Executor::transferToBasicBlock(BasicBlock *dst, BasicBlock *src,
   // instructions know which argument to eval, set the pc, and continue.
   
   // XXX this lookup has to go ?
-  KFunction *kf = state.stack.back().kf;
-  state.pc = kf->blockMap[dst]->instructions;
+  state.pc = kdst->instructions;
   state.increaseLevel();
   if (state.pc->inst->getOpcode() == Instruction::PHI) {
     PHINode *first = static_cast<PHINode*>(state.pc->inst);
     state.incomingBBIndex = first->getBasicBlockIndex(src);
   }
+  increaseProgressVelocity(state, kdst);
+}
+
+void Executor::transferToBasicBlock(BasicBlock *dst, BasicBlock *src,
+                                    ExecutionState &state) {
+  KFunction *kf = state.stack.back().kf;
+  auto kdst = kf->blockMap[dst];
+  transferToBasicBlock(kdst, src, state);
 }
 
 void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
   Instruction *i = ki->inst;
+
+  if (guidanceKind == GuidanceKind::ErrorGuidance &&
+      state.prevPC->inst->isTerminator()) {
+    for (auto kvp : state.targetForest) {
+      auto target = kvp.first;
+      auto expectedLocation = target->getLocation();
+      if (target->getError() == ReachWithError::Reachable &&
+          expectedLocation->isTheSameAsIn(ki)) {
+        terminateStateOnTargetError(state, ReachWithError::Reachable);
+        return;
+      }
+    }
+  }
+
   switch (i->getOpcode()) {
     // Control flow
   case Instruction::Ret: {
@@ -2324,7 +2565,12 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
         // We check that the return value has no users instead of
         // checking the type, since C defaults to returning int for
         // undeclared functions.
-        if (!caller->use_empty()) {
+        if (kmodule->WithPOSIXRuntime() &&
+            cast<KCallBlock>(kcaller->parent)->getKFunction() &&
+            cast<KCallBlock>(kcaller->parent)->getKFunction()->getName() ==
+                "__klee_posix_wrapped_main") {
+          bindLocal(kcaller, state, ConstantExpr::alloc(0, Expr::Int32));
+        } else if (!caller->use_empty()) {
           terminateStateOnExecError(state, "return void when caller expected a result");
         }
       }
@@ -2342,6 +2588,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       ref<Expr> cond = eval(ki, 0, state).value;
 
       cond = optimizer.optimizeExpr(cond, false);
+
       Executor::StatePair branches = fork(state, cond, false, BranchType::ConditionalBranch);
 
       // NOTE: There is a hidden dependency here, markBranchVisited
@@ -2634,50 +2881,64 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     } else {
       ref<Expr> v = eval(ki, 0, state).value;
 
-      ExecutionState *free = &state;
-      bool hasInvalid = false, first = true;
+      if (MockExternalCalls) {
+        if (ki->inst->getType()->isSized()) {
+          prepareSymbolicValue(state, ki);
+        }
+      } else {
+        ExecutionState *free = &state;
+        bool hasInvalid = false, first = true;
 
-      /* XXX This is wasteful, no need to do a full evaluate since we
-         have already got a value. But in the end the caches should
-         handle it for us, albeit with some overhead. */
-      do {
-        v = optimizer.optimizeExpr(v, true);
-        ref<ConstantExpr> value;
-        bool success =
-            solver->getValue(free->constraints, v, value, free->queryMetaData);
-        assert(success && "FIXME: Unhandled solver failure");
-        (void) success;
-        StatePair res = fork(*free, EqExpr::create(v, value), true, BranchType::Call);
-        if (res.first) {
-          uint64_t addr = value->getZExtValue();
-          auto it = legalFunctions.find(addr);
-          if (it != legalFunctions.end()) {
-            f = it->second;
+        /* XXX This is wasteful, no need to do a full evaluate since we
+           have already got a value. But in the end the caches should
+           handle it for us, albeit with some overhead. */
+        do {
+          v = optimizer.optimizeExpr(v, true);
+          ref<ConstantExpr> value;
+          bool success = solver->getValue(
+              free->constraints,
+              v, value, free->queryMetaData);
+          assert(success && "FIXME: Unhandled solver failure");
+          (void)success;
+          StatePair res =
+              fork(*free, EqExpr::create(v, value), true, BranchType::Call);
+          if (res.first) {
+            uint64_t addr = value->getZExtValue();
+            auto it = legalFunctions.find(addr);
+            if (it != legalFunctions.end()) {
+              f = it->second;
 
-            // Don't give warning on unique resolution
-            if (res.second || !first)
-              klee_warning_once(reinterpret_cast<void*>(addr),
-                                "resolved symbolic function pointer to: %s",
-                                f->getName().data());
+              // Don't give warning on unique resolution
+              if (res.second || !first)
+                klee_warning_once(reinterpret_cast<void *>(addr),
+                                  "resolved symbolic function pointer to: %s",
+                                  f->getName().data());
 
-            executeCall(*res.first, ki, f, arguments);
-          } else {
-            if (!hasInvalid) {
-              terminateStateOnExecError(state, "invalid function pointer");
-              hasInvalid = true;
+              executeCall(*res.first, ki, f, arguments);
+            } else {
+              if (!hasInvalid) {
+                terminateStateOnExecError(state, "invalid function pointer");
+                hasInvalid = true;
+              }
             }
           }
-        }
 
-        first = false;
-        free = res.second;
-      } while (free);
+          first = false;
+          free = res.second;
+          timers.invoke();
+        } while (free && !haltExecution);
+      }
     }
     break;
   }
   case Instruction::PHI: {
-    ref<Expr> result = eval(ki, state.incomingBBIndex, state).value;
-    bindLocal(ki, state, result);
+    if (state.incomingBBIndex == -1)
+      prepareSymbolicValue(state, ki);
+    else {
+      ref<Expr> result;
+      result = eval(ki, state.incomingBBIndex, state).value;
+      bindLocal(ki, state, result);
+    }
     break;
   }
 
@@ -3672,7 +3933,7 @@ void Executor::updateStates(ExecutionState *current) {
   if (searcher) {
     searcher->update(current, addedStates, removedStates);
   }
-  
+
   states.insert(addedStates.begin(), addedStates.end());
   addedStates.clear();
 
@@ -3687,9 +3948,10 @@ void Executor::updateStates(ExecutionState *current) {
       seedMap.find(es);
     if (it3 != seedMap.end())
       seedMap.erase(it3);
-    processTree->remove(es->ptreeNode);
+    processForest->remove(es->ptreeNode);
     delete es;
   }
+  removedButReachableStates.clear();
   removedStates.clear();
 }
 
@@ -3809,6 +4071,22 @@ bool Executor::checkMemoryUsage() {
   return false;
 }
 
+bool Executor::decreaseConfidenceFromStoppedStates(SetOfStates &left_states, HaltExecution::Reason reason) {
+  bool hasStateWhichCanReachSomeTarget = false;
+  for (auto state : left_states) {
+    if (state->targetForest.empty())
+      continue;
+    hasStateWhichCanReachSomeTarget = true;
+    auto realReason = reason ? reason : state->terminationReasonType.load();
+    if (state->progress_velocity >= 0) {
+      assert(targets.count(state->targetForest.getEntryFunction()) != 0);
+      targets.at(state->targetForest.getEntryFunction())
+          .subtractConfidencesFrom(state->targetForest, realReason);
+    }
+  }
+  return hasStateWhichCanReachSomeTarget;
+}
+
 void Executor::doDumpStates() {
   if (!DumpStatesOnHalt || states.empty()) {
     interpreterHandler->incPathsExplored(states.size());
@@ -3821,77 +4099,88 @@ void Executor::doDumpStates() {
                         StateTerminationType::Interrupted);
   updateStates(nullptr);
   for (const auto &state : states)
-    terminateStateEarly(*state, "Execution halting.", StateTerminationType::Interrupted);
+    terminateStateEarly(*state, "Execution halting.",
+                        guidanceKind == GuidanceKind::ErrorGuidance
+                            ? StateTerminationType::SilentExit
+                            : StateTerminationType::Interrupted);
   updateStates(nullptr);
 }
 
-void Executor::run(ExecutionState &initialState) {
-  // Delay init till now so that ticks don't accrue during optimization and such.
-  timers.reset();
+void Executor::seed(ExecutionState &initialState) {
+  std::vector<SeedInfo> &v = seedMap[&initialState];
 
-  states.insert(&initialState);
+  for (std::vector<KTest *>::const_iterator it = usingSeeds->begin(),
+                                            ie = usingSeeds->end();
+       it != ie; ++it)
+    v.push_back(SeedInfo(*it));
 
-  if (usingSeeds) {
-    std::vector<SeedInfo> &v = seedMap[&initialState];
-
-    for (std::vector<KTest*>::const_iterator it = usingSeeds->begin(),
-           ie = usingSeeds->end(); it != ie; ++it)
-      v.push_back(SeedInfo(*it));
-
-    int lastNumSeeds = usingSeeds->size()+10;
-    time::Point lastTime, startTime = lastTime = time::getWallTime();
-    ExecutionState *lastState = 0;
-    while (!seedMap.empty()) {
-      if (haltExecution) {
-        doDumpStates();
-        return;
-      }
-
-      std::map<ExecutionState*, std::vector<SeedInfo> >::iterator it =
-        seedMap.upper_bound(lastState);
-      if (it == seedMap.end())
-        it = seedMap.begin();
-      lastState = it->first;
-      ExecutionState &state = *lastState;
-      KInstruction *ki = state.pc;
-      stepInstruction(state);
-
-      executeInstruction(state, ki);
-      timers.invoke();
-      if (::dumpStates) dumpStates();
-      if (::dumpPTree) dumpPTree();
-      updateStates(&state);
-
-      if ((stats::instructions % 1000) == 0) {
-        int numSeeds = 0, numStates = 0;
-        for (std::map<ExecutionState*, std::vector<SeedInfo> >::iterator
-               it = seedMap.begin(), ie = seedMap.end();
-             it != ie; ++it) {
-          numSeeds += it->second.size();
-          numStates++;
-        }
-        const auto time = time::getWallTime();
-        const time::Span seedTime(SeedTime);
-        if (seedTime && time > startTime + seedTime) {
-          klee_warning("seed time expired, %d seeds remain over %d states",
-                       numSeeds, numStates);
-          break;
-        } else if (numSeeds<=lastNumSeeds-10 ||
-                   time - lastTime >= time::seconds(10)) {
-          lastTime = time;
-          lastNumSeeds = numSeeds;
-          klee_message("%d seeds remaining over: %d states",
-                       numSeeds, numStates);
-        }
-      }
-    }
-
-    klee_message("seeding done (%d states remain)", (int) states.size());
-
-    if (OnlySeed) {
+  int lastNumSeeds = usingSeeds->size() + 10;
+  time::Point lastTime, startTime = lastTime = time::getWallTime();
+  ExecutionState *lastState = 0;
+  while (!seedMap.empty()) {
+    if (haltExecution) {
       doDumpStates();
       return;
     }
+
+    std::map<ExecutionState *, std::vector<SeedInfo>>::iterator it =
+        seedMap.upper_bound(lastState);
+    if (it == seedMap.end())
+      it = seedMap.begin();
+    lastState = it->first;
+    ExecutionState &state = *lastState;
+    KInstruction *ki = state.pc;
+    stepInstruction(state);
+
+    executeInstruction(state, ki);
+    timers.invoke();
+    if (::dumpStates) dumpStates();
+    if (::dumpPForest) dumpPForest();
+    updateStates(&state);
+
+    if ((stats::instructions % 1000) == 0) {
+      int numSeeds = 0, numStates = 0;
+      for (std::map<ExecutionState *, std::vector<SeedInfo>>::iterator
+               it = seedMap.begin(),
+               ie = seedMap.end();
+           it != ie; ++it) {
+        numSeeds += it->second.size();
+        numStates++;
+      }
+      const auto time = time::getWallTime();
+      const time::Span seedTime(SeedTime);
+      if (seedTime && time > startTime + seedTime) {
+        klee_warning("seed time expired, %d seeds remain over %d states",
+                     numSeeds, numStates);
+        break;
+      } else if (numSeeds <= lastNumSeeds - 10 ||
+                 time - lastTime >= time::seconds(10)) {
+        lastTime = time;
+        lastNumSeeds = numSeeds;
+        klee_message("%d seeds remaining over: %d states", numSeeds, numStates);
+      }
+    }
+  }
+
+  klee_message("seeding done (%d states remain)", (int)states.size());
+
+  if (OnlySeed) {
+    doDumpStates();
+    return;
+  }
+}
+
+void Executor::run(std::vector<ExecutionState *> initialStates) {
+  // Delay init till now so that ticks don't accrue during optimization and such.
+  if (guidanceKind != GuidanceKind::ErrorGuidance)
+    timers.reset();
+
+  states.insert(initialStates.begin(), initialStates.end());
+
+  if (usingSeeds) {
+    assert(initialStates.size() == 1);
+    ExecutionState *initialState = initialStates.back();
+    seed(*initialState);
   }
 
   searcher = constructUserSearcher(*this);
@@ -3915,14 +4204,97 @@ void Executor::run(ExecutionState &initialState) {
     }
 
     if (searcher->empty())
-      haltExecution = true;
+      haltExecution = HaltExecution::NoMoreStates;
+  }
+
+  if (guidanceKind == GuidanceKind::ErrorGuidance) {
+    bool canReachNew1 = decreaseConfidenceFromStoppedStates(pausedStates);
+    bool canReachNew2 = decreaseConfidenceFromStoppedStates(states, haltExecution);
+
+    for (auto &startBlockAndWhiteList : targets) {
+      startBlockAndWhiteList.second.reportFalsePositives(canReachNew1 || canReachNew2);
+    }
+
+    if (searcher->empty())
+      haltExecution = HaltExecution::NoMoreStates;
   }
 
   delete searcher;
   searcher = nullptr;
 
   doDumpStates();
-  haltExecution = false;
+  haltExecution = HaltExecution::NotHalt;
+}
+
+void Executor::runWithTarget(ExecutionState &state, KFunction *kf,
+                             KBlock *target) {
+  if (pathWriter)
+    state.pathOS = pathWriter->open();
+  if (symPathWriter)
+    state.symPathOS = symPathWriter->open();
+
+  if (statsTracker)
+    statsTracker->framePushed(state, 0);
+
+  processForest = std::make_unique<PForest>();
+  processForest->addRoot(&state);
+  targetedRun(state, target);
+  processForest = nullptr;
+
+  if (statsTracker)
+    statsTracker->done();
+}
+
+void Executor::runGuided(ExecutionState &state, KFunction *kf) {
+  if (pathWriter)
+    state.pathOS = pathWriter->open();
+  if (symPathWriter)
+    state.symPathOS = symPathWriter->open();
+
+  if (statsTracker)
+    statsTracker->framePushed(state, 0);
+
+  processForest = std::make_unique<PForest>();
+  processForest->addRoot(&state);
+  std::vector<ExecutionState *> states;
+  states.push_back(&state);
+  run(states);
+  processForest = nullptr;
+
+  if (statsTracker)
+    statsTracker->done();
+}
+
+
+void Executor::runGuided(std::vector<ExecutionState *> states) {
+  TreeOStream pathOS;
+  TreeOStream symPathOS;
+  if (pathWriter) {
+    pathOS = pathWriter->open();
+  }
+
+  if (symPathWriter) {
+    symPathOS = symPathWriter->open();
+  }
+
+  processForest = std::make_unique<PForest>();
+  for (auto &state : states) {
+    if (statsTracker)
+      statsTracker->framePushed(*state, 0);
+
+    if (pathWriter)
+      state->pathOS = pathOS;
+    if (symPathWriter)
+      state->symPathOS = symPathOS;
+
+    processForest->addRoot(state);
+  }
+
+  run(states);
+  processForest = nullptr;
+
+  if (statsTracker)
+    statsTracker->done();
 }
 
 void Executor::initializeTypeManager() {
@@ -3946,7 +4318,7 @@ void Executor::executeStep(ExecutionState &state) {
   executeInstruction(state, ki);
   timers.invoke();
   if (::dumpStates) dumpStates();
-  if (::dumpPTree) dumpPTree();
+  if (::dumpPForest) dumpPForest();
 
   updateStates(&state);
 
@@ -3954,6 +4326,48 @@ void Executor::executeStep(ExecutionState &state) {
     // update searchers when states were terminated early due to memory pressure
     updateStates(nullptr);
   }
+}
+
+void Executor::targetedRun(ExecutionState &initialState, KBlock *target, ExecutionState **resultState) {
+  // Delay init till now so that ticks don't accrue during optimization and
+  // such.
+  if (guidanceKind != GuidanceKind::ErrorGuidance)
+    timers.reset();
+
+  states.insert(&initialState);
+
+  TargetedSearcher *targetedSearcher =
+      new TargetedSearcher(Target::create(target), *codeGraphDistance);
+  searcher = targetedSearcher;
+
+  std::vector<ExecutionState *> newStates(states.begin(), states.end());
+  searcher->update(0, newStates, std::vector<ExecutionState *>());
+  // main interpreter loop
+  KInstruction *terminator =
+      target != nullptr ? target->getFirstInstruction()
+                        : nullptr;
+    while (!searcher->empty() && !haltExecution) {
+      ExecutionState &state = searcher->selectState();
+
+      KInstruction *ki = state.pc;
+
+      if (ki == terminator) {
+        *resultState = state.copy();
+        terminateStateOnTerminator(state);
+        updateStates(&state);
+        haltExecution = HaltExecution::ReachedTarget;
+        break;
+      }
+
+      executeStep(state);
+    }
+
+  delete searcher;
+  searcher = nullptr;
+
+  doDumpStates();
+  if (*resultState)
+    haltExecution = HaltExecution::NotHalt;
 }
 
 std::string Executor::getAddressInfo(ExecutionState &state, ref<Expr> address,
@@ -4011,8 +4425,21 @@ std::string Executor::getAddressInfo(ExecutionState &state, ref<Expr> address,
   return info.str();
 }
 
+HaltExecution::Reason fromStateTerminationType(StateTerminationType t) {
+  switch (t) {
+    case StateTerminationType::MaxDepth:
+      return HaltExecution::MaxDepth;
+    case StateTerminationType::OutOfStackMemory:
+      return HaltExecution::MaxStackFrames;
+    case StateTerminationType::Solver:
+      return HaltExecution::MaxSolverTime;
+    default:
+      return HaltExecution::Unspecified;
+  }
+}
 
-void Executor::terminateState(ExecutionState &state) {
+void Executor::terminateState(ExecutionState &state, StateTerminationType terminationType) {
+  state.terminationReasonType = fromStateTerminationType(terminationType);
   if (replayKTest && replayPosition!=replayKTest->numObjects) {
     klee_warning_once(replayKTest,
                       "replay did not consume all objects in test input.");
@@ -4028,22 +4455,8 @@ void Executor::terminateState(ExecutionState &state) {
 
   interpreterHandler->incPathsExplored();
 
-  std::vector<ExecutionState *>::iterator it =
-      std::find(addedStates.begin(), addedStates.end(), &state);
-  if (it==addedStates.end()) {
-    state.pc = state.prevPC;
-
-    removedStates.push_back(&state);
-  } else {
-    // never reached searcher, just delete immediately
-    std::map< ExecutionState*, std::vector<SeedInfo> >::iterator it3 = 
-      seedMap.find(&state);
-    if (it3 != seedMap.end())
-      seedMap.erase(it3);
-    addedStates.erase(it);
-    processTree->remove(state.ptreeNode);
-    delete &state;
-  }
+  state.pc = state.prevPC;
+  removedStates.push_back(&state);
 }
 
 static bool shouldWriteTest(const ExecutionState &state) {
@@ -4073,14 +4486,15 @@ void Executor::unpauseState(ExecutionState &state) {
 }
 
 void Executor::terminateStateOnExit(ExecutionState &state) {
+  auto terminationType = StateTerminationType::Exit;
   if (shouldWriteTest(state) || (AlwaysOutputSeeds && seedMap.count(&state)))
     interpreterHandler->processTestCase(
         state, nullptr,
-        terminationTypeFileExtension(StateTerminationType::Exit).c_str());
+        terminationTypeFileExtension(terminationType).c_str());
 
   interpreterHandler->incPathsCompleted();
   targetCalculator->update(state);
-  terminateState(state);
+  terminateState(state, terminationType);
 }
 
 void Executor::terminateStateEarly(ExecutionState &state, const Twine &message,
@@ -4092,8 +4506,15 @@ void Executor::terminateStateEarly(ExecutionState &state, const Twine &message,
         state, (message + "\n").str().c_str(),
         terminationTypeFileExtension(terminationType).c_str());
   }
+  terminateState(state, terminationType);
+}
 
-  terminateState(state);
+void Executor::terminateStateOnTerminator(ExecutionState &state) {
+  if (shouldWriteTest(state) || (AlwaysOutputSeeds && seedMap.count(&state))) {
+    interpreterHandler->processTestCase(state, nullptr, nullptr);
+  }
+  targetCalculator->update(state);
+  terminateState(state, StateTerminationType::SilentExit);
 }
 
 void Executor::terminateStateOnUserError(ExecutionState &state, const llvm::Twine &message) {
@@ -4148,6 +4569,47 @@ bool shouldExitOn(StateTerminationType reason) {
   return it != ExitOnErrorType.end();
 }
 
+void Executor::terminateStateOnTargetError(ExecutionState &state,
+                                           ReachWithError error) {
+  if (guidanceKind == GuidanceKind::ErrorGuidance) {
+    bool reportedTruePositive = targetedExecutionManager.reportTruePositive(state, error);
+    if (!reportedTruePositive) {
+      targetedExecutionManager.reportFalseNegative(state, error);
+    }
+  }
+
+  // Proceed with normal `terminateStateOnError` call
+  std::string messaget;
+  StateTerminationType terminationType;
+  switch (error) {
+    case ReachWithError::NullPointerException:
+      messaget = "memory error: null pointer exception";
+      terminationType = StateTerminationType::Ptr;
+      break;
+    case ReachWithError::DoubleFree:
+      messaget = "double free error";
+      terminationType = StateTerminationType::Ptr;
+      break;
+    case ReachWithError::UseAfterFree:
+      messaget = "use after free error";
+      terminationType = StateTerminationType::Ptr;
+      break;
+    case ReachWithError::Reachable:
+      messaget = "";
+      terminationType = StateTerminationType::Exit;
+      break;
+    case ReachWithError::None:
+    default:
+      messaget = "unspecified error";
+      terminationType = StateTerminationType::User;
+  }
+  if (error == ReachWithError::Reachable) {
+    terminateStateEarly(state, messaget, terminationType);
+  } else {
+    terminateStateOnError(state, messaget, terminationType);
+  }
+}
+
 void Executor::terminateStateOnError(ExecutionState &state,
                                      const llvm::Twine &messaget,
                                      StateTerminationType terminationType,
@@ -4191,10 +4653,10 @@ void Executor::terminateStateOnError(ExecutionState &state,
   }
 
   targetCalculator->update(state);
-  terminateState(state);
+  terminateState(state, terminationType);
 
   if (shouldExitOn(terminationType))
-    haltExecution = true;
+    haltExecution = HaltExecution::ErrorOnWhichShouldExit;
 }
 
 void Executor::terminateStateOnExecError(ExecutionState &state,
@@ -4232,6 +4694,28 @@ void Executor::callExternalFunction(ExecutionState &state,
     klee_warning("Disallowed call to external function: %s\n",
                callable->getName().str().c_str());
     terminateStateOnUserError(state, "external calls disallowed");
+    return;
+  }
+
+  if (ExternalCalls == ExternalCallPolicy::All && MockAllExternalCalls) {
+    std::string TmpStr;
+    llvm::raw_string_ostream os(TmpStr);
+    os << "calling external: " << callable->getName().str() << "(";
+    for (unsigned i = 0; i < arguments.size(); i++) {
+      os << arguments[i];
+      if (i != arguments.size() - 1)
+        os << ", ";
+    }
+    os << ") at " << state.pc->getSourceLocation();
+
+    if (AllExternalWarnings)
+      klee_warning("%s", os.str().c_str());
+    else if (!SuppressExternalWarnings)
+      klee_warning_once(callable->getValue(), "%s", os.str().c_str());
+
+    if (target->inst->getType()->isSized()) {
+      prepareSymbolicValue(state, target);
+    }
     return;
   }
 
@@ -4355,8 +4839,15 @@ void Executor::callExternalFunction(ExecutionState &state,
   bool success = externalDispatcher->executeCall(callable, target->inst, args, roundingMode);
 
   if (!success) {
-    terminateStateOnError(state, "failed external call: " + callable->getName(),
-                          StateTerminationType::External);
+    if (MockExternalCalls) {
+      if (target->inst->getType()->isSized()) {
+        prepareSymbolicValue(state, target);
+      }
+    } else {
+      terminateStateOnError(state,
+                            "failed external call: " + callable->getName(),
+                            StateTerminationType::External);
+    }
     return;
   }
 
@@ -4375,8 +4866,20 @@ void Executor::callExternalFunction(ExecutionState &state,
 
   Type *resultType = target->inst->getType();
   if (resultType != Type::getVoidTy(kmodule->module->getContext())) {
-    ref<Expr> e = ConstantExpr::fromMemory((void*) args, 
-                                           getWidthForLLVMType(resultType));
+    ref<Expr> e =
+        ConstantExpr::fromMemory((void *)args, getWidthForLLVMType(resultType));
+    if (ExternCallsCanReturnNull &&
+        e->getWidth() == Context::get().getPointerWidth()) {
+      const Array *symExternCallsCanReturnNull = makeArray(
+          state, Expr::createPointer(1), "symExternCallsCanReturnNull",
+          SourceBuilder::irreproducible());
+
+      ref<Expr> symExternCallsCanReturnNullExpr =
+          Expr::createTempRead(symExternCallsCanReturnNull, Expr::Bool);
+      e = SelectExpr::create(
+          symExternCallsCanReturnNullExpr,
+          ConstantExpr::alloc(0, Context::get().getPointerWidth()), e);
+    }
     bindLocal(target, state, e);
   }
 }
@@ -4431,7 +4934,8 @@ ObjectState *Executor::bindObjectInState(ExecutionState &state,
 void Executor::executeAlloc(ExecutionState &state, ref<Expr> size, bool isLocal,
                             KInstruction *target, KType *type, bool zeroMemory,
                             const ObjectState *reallocFrom,
-                            size_t allocationAlignment) {
+                            size_t allocationAlignment,
+                            bool checkOutOfMemory) {
   const llvm::Value *allocSite = state.prevPC->inst;
   if (allocationAlignment == 0) {
     allocationAlignment = getAllocationAlignment(allocSite);
@@ -4458,8 +4962,20 @@ void Executor::executeAlloc(ExecutionState &state, ref<Expr> size, bool isLocal,
       } else {
         os->initializeToRandom();
       }
-      bindLocal(target, *bound, mo->getBaseExpr());
 
+      ref<Expr> address = mo->getBaseExpr();
+      if (checkOutOfMemory) {
+        const Array *symCheckOutOfMemory = makeArray(
+            state, Expr::createPointer(1), "symCheckOutOfMemory", SourceBuilder::irreproducible());
+
+        ref<Expr> symCheckOutOfMemoryExpr = Expr::createTempRead(
+            symCheckOutOfMemory, Expr::Bool);
+        address = SelectExpr::create(
+            symCheckOutOfMemoryExpr,
+            ConstantExpr::alloc(0, Context::get().getPointerWidth()), address);
+      }
+      bindLocal(target, state, address);
+      
       if (reallocFrom) {
         unsigned count = std::min(reallocFrom->size, os->size);
         for (unsigned i = 0; i < count; i++) {
@@ -4492,8 +5008,13 @@ void Executor::executeFree(ExecutionState &state,
   }
   if (zeroPointer.second) { // address != 0
     ExactResolutionList rl;
-    resolveExact(*zeroPointer.second, address,
-                 typeSystemManager->getUnknownType(), rl, "free");
+    if (!resolveExact(*zeroPointer.second, address,
+                      typeSystemManager->getUnknownType(), rl, "free") &&
+        guidanceKind == GuidanceKind::ErrorGuidance) {
+      terminateStateOnTargetError(*zeroPointer.second,
+                                  ReachWithError::DoubleFree);
+      return;
+    }
 
     for (Executor::ExactResolutionList::iterator it = rl.begin(), 
            ie = rl.end(); it != ie; ++it) {
@@ -4518,8 +5039,7 @@ void Executor::executeFree(ExecutionState &state,
   }
 }
 
-void Executor::resolveExact(ExecutionState &state,
-                            ref<Expr> p, KType *type,
+bool Executor::resolveExact(ExecutionState &state, ref<Expr> p, KType *type,
                             ExactResolutionList &results,
                             const std::string &name) {
   p = optimizer.optimizeExpr(p, true);
@@ -4547,10 +5067,15 @@ void Executor::resolveExact(ExecutionState &state,
       break;
   }
 
+  if (guidanceKind == GuidanceKind::ErrorGuidance && rl.size() == 0) {
+    return false;
+  }
+
   if (unbound) {
     terminateStateOnError(*unbound, "memory error: invalid pointer: " + name,
                           StateTerminationType::Ptr, getAddressInfo(*unbound, p));
   }
+  return true;
 }
 
 MemoryObject *Executor::allocate(ExecutionState &state, ref<Expr> size,
@@ -4666,37 +5191,56 @@ MemoryObject *Executor::allocate(ExecutionState &state, ref<Expr> size,
   return mo;
 }
 
-void Executor::executeMemoryOperation(ExecutionState &state,
-                                      bool isWrite,
-                                      KType *targetType, ref<Expr> address,
-                                      ref<Expr> value /* undef if read */,
-                                      KInstruction *target /* undef if write */) {
-  Expr::Width type = (isWrite ? value->getWidth() :
-                     getWidthForLLVMType(target->inst->getType()));
+void Executor::executeMemoryOperation(
+    ExecutionState &estate, bool isWrite, KType *targetType, ref<Expr> address,
+    ref<Expr> value /* undef if read */,
+    KInstruction *target /* undef if write */) {
+  Expr::Width type = (isWrite ? value->getWidth()
+                              : getWidthForLLVMType(target->inst->getType()));
   unsigned bytes = Expr::getMinBytesForWidth(type);
 
   ref<Expr> base = address;
   unsigned size = bytes;
   KType *baseTargetType = targetType;
 
-  if (state.isGEPExpr(address)) {
-    base = state.gepExprBases[address].first;
-    size = kmodule->targetData->getTypeStoreSize(state.gepExprBases[address].second);
+  if (estate.isGEPExpr(address)) {
+    base = estate.gepExprBases[address].first;
+    size = kmodule->targetData->getTypeStoreSize(
+        estate.gepExprBases[address].second);
     baseTargetType = typeSystemManager->getWrappedType(
-        llvm::PointerType::get(state.gepExprBases[address].second,
+        llvm::PointerType::get(estate.gepExprBases[address].second,
                                kmodule->targetData->getAllocaAddrSpace()));
   }
 
   if (SimplifySymIndices) {
     if (!isa<ConstantExpr>(address))
-      address = ConstraintManager::simplifyExpr(state.constraints, address);
+      address = ConstraintManager::simplifyExpr(estate.constraints, address);
     if (!isa<ConstantExpr>(base))
-      base = ConstraintManager::simplifyExpr(state.constraints, base);
+      base = ConstraintManager::simplifyExpr(estate.constraints, base);
     if (isWrite && !isa<ConstantExpr>(value))
-      value = ConstraintManager::simplifyExpr(state.constraints, value);
+      value = ConstraintManager::simplifyExpr(estate.constraints, value);
   }
 
   address = optimizer.optimizeExpr(address, true);
+
+  ref<Expr> uniqueBase =
+      ConstraintManager::simplifyExpr(estate.constraints, base);
+  uniqueBase = toUnique(estate, uniqueBase);
+
+  StatePair branches =
+      fork(estate, Expr::createIsZero(base), true, BranchType::MemOp);
+  ExecutionState *bound = branches.first;
+  if (bound) {
+    if (!isReadFromSymbolicArray(uniqueBase) ||
+        guidanceKind != GuidanceKind::ErrorGuidance) {
+      terminateStateOnTargetError(*bound, ReachWithError::NullPointerException);
+    } else {
+      terminateStateEarly(*bound, "", StateTerminationType::SilentExit);
+    }
+  }
+  if (!branches.second)
+    return;
+  ExecutionState &state = *branches.second;
 
   // fast path: single in-bounds resolution
   IDType idFastResult;
@@ -4708,9 +5252,11 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   } else {
     solver->setTimeout(coreSolverTimeout);
 
-    if (!state.addressSpace.resolveOne(state, solver, address, targetType, idFastResult, success)) {
+    if (!state.addressSpace.resolveOne(state, solver, address, targetType,
+                                       idFastResult, success, haltExecution)) {
       address = toConstant(state, address, "resolveOne failure");
-      success = state.addressSpace.resolveOne(cast<ConstantExpr>(address), targetType, idFastResult);
+      success = state.addressSpace.resolveOne(cast<ConstantExpr>(address),
+                                              targetType, idFastResult);
     }
 
     solver->setTimeout(time::Span());
@@ -4723,7 +5269,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     if (MaxSymArraySize && mo->size >= MaxSymArraySize) {
       address = toConstant(state, address, "max-sym-array-size");
     }
-    
+
     ref<Expr> offset = mo->getOffsetExpr(address);
     ref<Expr> check = mo->getBoundsCheckOffset(offset, bytes);
     check = optimizer.optimizeExpr(check, true);
@@ -4768,6 +5314,10 @@ void Executor::executeMemoryOperation(ExecutionState &state,
 
       return;
     }
+  } else if (isa<ConstantExpr>(address) &&
+             guidanceKind == GuidanceKind::ErrorGuidance) {
+    terminateStateOnTargetError(state, ReachWithError::UseAfterFree);
+    return;
   }
 
   // we are on an error path (no resolution, multiple resolution, one
@@ -4777,96 +5327,95 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   ResolutionList rl;
   ResolutionList rlSkipped;
 
-  solver->setTimeout(coreSolverTimeout);
-  bool incomplete = state.addressSpace.resolve(state, solver, address, targetType, rl,
-                                               rlSkipped, 0, coreSolverTimeout);
-  solver->setTimeout(time::Span());
-
-  // XXX there is some query wasteage here. who cares?
-
+  bool incomplete = false;
+  ExecutionState *unbound = &state;
   ref<Expr> checkOutOfBounds = ConstantExpr::create(1, Expr::Bool);
-  
-  std::vector<ref<Expr>> resolveConditions;
-  std::vector<IDType> resolvedMemoryObjects;
-
-  for (ResolutionList::iterator i = rl.begin(), ie = rl.end(); i != ie; ++i) {
-    const MemoryObject *mo = state.addressSpace.findObject(*i).first;
-    ref<Expr> inBounds = mo->getBoundsCheckPointer(address, bytes);
-    ref<Expr> outOfBound = NotExpr::create(inBounds);
-    if (state.isGEPExpr(address)) {
-      inBounds = AndExpr::create(inBounds, mo->getBoundsCheckPointer(base, 1));
-      inBounds =
-          AndExpr::create(inBounds, mo->getBoundsCheckPointer(base, size));
-      outOfBound = AndExpr::create(outOfBound, mo->getBoundsCheckPointer(base));
-    }
-
-    bool mayBeInBounds;
+  if (guidanceKind != GuidanceKind::ErrorGuidance) {
     solver->setTimeout(coreSolverTimeout);
-    bool success = solver->mayBeTrue(state.constraints, inBounds, mayBeInBounds,
-                                     state.queryMetaData);
+    incomplete =
+        state.addressSpace.resolve(state, solver, address, targetType, rl,
+                                   rlSkipped, 0, coreSolverTimeout);
     solver->setTimeout(time::Span());
-    if (!success) {
-      terminateStateOnSolverError(state, "Query timed out (resolve)");
-      return;
-    }
 
-    if (mayBeInBounds) {
-      resolveConditions.push_back(inBounds);
-      resolvedMemoryObjects.push_back(mo->id);
-    }
-    checkOutOfBounds = AndExpr::create(outOfBound, checkOutOfBounds);
-  }
+    // XXX there is some query wasteage here. who cares?
 
-  // Fictive condition just to keep state for unbound case.
-  resolveConditions.push_back(ConstantExpr::create(1, Expr::Bool));
+    ref<Expr> checkOutOfBounds = ConstantExpr::create(1, Expr::Bool);
 
-  std::vector<ExecutionState *> statesForMemoryOperation;
-  branch(state, resolveConditions, statesForMemoryOperation, BranchType::MemOp);
+    std::vector<ref<Expr>> resolveConditions;
+    std::vector<IDType> resolvedMemoryObjects;
 
-  for (unsigned int i = 0; i < resolvedMemoryObjects.size(); ++i) {
-    ExecutionState *bound = statesForMemoryOperation[i];
-    ObjectPair op = bound->addressSpace.findObject(resolvedMemoryObjects[i]);
-    const MemoryObject *mo = op.first;
-    const ObjectState *os = op.second;
-
-    bound->addPointerResolution(base, address, mo);
-
-    /* FIXME: Notice, that here we are creating a new instance of object
-    for every memory operation in order to handle type changes. This might
-    waste too much memory as we do now always modify something. To fix this
-    we can ask memory if we will make anything, and create a copy if
-    required. */
-    ObjectState *wos = bound->addressSpace.getWriteable(mo, os);
-
-    if (isWrite) {
-      wos->getDynamicType()->handleMemoryAccess(
-          targetType, mo->getOffsetExpr(address),
-          ConstantExpr::alloc(size, Context::get().getPointerWidth()),
-          true);
-      if (wos->readOnly) {
-        terminateStateOnError(*bound, "memory error: object read only",
-                              StateTerminationType::ReadOnly);
-      } else {
-        wos->write(mo->getOffsetExpr(address), value);
+    for (ResolutionList::iterator i = rl.begin(), ie = rl.end(); i != ie; ++i) {
+      const MemoryObject *mo = state.addressSpace.findObject(*i).first;
+      ref<Expr> inBounds = mo->getBoundsCheckPointer(address, bytes);
+      ref<Expr> outOfBound = NotExpr::create(inBounds);
+      if (state.isGEPExpr(address)) {
+        inBounds =
+            AndExpr::create(inBounds, mo->getBoundsCheckPointer(base, 1));
+        inBounds =
+            AndExpr::create(inBounds, mo->getBoundsCheckPointer(base, size));
+        outOfBound =
+            AndExpr::create(outOfBound, mo->getBoundsCheckPointer(base));
       }
-    } else {
-      wos->getDynamicType()->handleMemoryAccess(
-          targetType, mo->getOffsetExpr(address),
-          ConstantExpr::alloc(size, Context::get().getPointerWidth()), false);
-      ref<Expr> result = wos->read(mo->getOffsetExpr(address), type);
-      bindLocal(target, *bound, result);
-    }
-  }
 
-  ExecutionState *unbound = statesForMemoryOperation.back();
-  StatePair branches =
-      fork(*unbound, Expr::createIsZero(base), true, BranchType::MemOp);
-  ExecutionState *bound = branches.first;
-  if (bound) {
-    terminateStateOnError(*bound, "memory error: null pointer exception",
-                          StateTerminationType::Ptr);
+      bool mayBeInBounds;
+      solver->setTimeout(coreSolverTimeout);
+      bool success = solver->mayBeTrue(state.constraints, inBounds,
+                                       mayBeInBounds, state.queryMetaData);
+      solver->setTimeout(time::Span());
+      if (!success) {
+        terminateStateOnSolverError(state, "Query timed out (resolve)");
+        return;
+      }
+
+      if (mayBeInBounds) {
+        resolveConditions.push_back(inBounds);
+        resolvedMemoryObjects.push_back(mo->id);
+      }
+      checkOutOfBounds = AndExpr::create(outOfBound, checkOutOfBounds);
+    }
+
+    // Fictive condition just to keep state for unbound case.
+    resolveConditions.push_back(ConstantExpr::create(1, Expr::Bool));
+
+    std::vector<ExecutionState *> statesForMemoryOperation;
+    branch(state, resolveConditions, statesForMemoryOperation,
+           BranchType::MemOp);
+
+    for (unsigned int i = 0; i < resolvedMemoryObjects.size(); ++i) {
+      ExecutionState *bound = statesForMemoryOperation[i];
+      ObjectPair op = bound->addressSpace.findObject(resolvedMemoryObjects[i]);
+      const MemoryObject *mo = op.first;
+      const ObjectState *os = op.second;
+
+      bound->addPointerResolution(base, address, mo);
+
+      /* FIXME: Notice, that here we are creating a new instance of object
+      for every memory operation in order to handle type changes. This might
+      waste too much memory as we do now always modify something. To fix this
+      we can ask memory if we will make anything, and create a copy if
+      required. */
+      ObjectState *wos = bound->addressSpace.getWriteable(mo, os);
+
+      if (isWrite) {
+        wos->getDynamicType()->handleMemoryAccess(
+            targetType, mo->getOffsetExpr(address),
+            ConstantExpr::alloc(size, Context::get().getPointerWidth()), true);
+        if (wos->readOnly) {
+          terminateStateOnError(*bound, "memory error: object read only",
+                                StateTerminationType::ReadOnly);
+        } else {
+          wos->write(mo->getOffsetExpr(address), value);
+        }
+      } else {
+        wos->getDynamicType()->handleMemoryAccess(
+            targetType, mo->getOffsetExpr(address),
+            ConstantExpr::alloc(size, Context::get().getPointerWidth()), false);
+        ref<Expr> result = wos->read(mo->getOffsetExpr(address), type);
+        bindLocal(target, *bound, result);
+      }
+    }
+    unbound = statesForMemoryOperation.back();
   }
-  unbound = branches.second;
 
   // XXX should we distinguish out of bounds and overlapped cases?
   if (unbound) {
@@ -4911,7 +5460,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
 
       if (bound) {
         p = bound->addressSpace.findObject(idLazyInitialization);
-        
+
         mo = p.first;
         bound->addPointerResolution(base, address, mo);
 
@@ -4939,7 +5488,8 @@ void Executor::executeMemoryOperation(ExecutionState &state,
                                        mayBeOutOfBound, unbound->queryMetaData);
       solver->setTimeout(time::Span());
       if (!success) {
-        terminateStateOnSolverError(*unbound, "Query timed out (executeMemoryOperation)");
+        terminateStateOnSolverError(*unbound,
+                                    "Query timed out (executeMemoryOperation)");
         return;
       }
       if (mayBeOutOfBound) {
@@ -4954,10 +5504,9 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   }
 }
 
-IDType Executor::lazyInitializeObject(ExecutionState &state,
-                                             ref<Expr> address,
-                                             KInstruction *target,
-                                             KType *targetType, uint64_t size) {
+IDType Executor::lazyInitializeObject(ExecutionState &state, ref<Expr> address,
+                                      KInstruction *target, KType *targetType,
+                                      uint64_t size) {
   assert(!isa<ConstantExpr>(address));
   const llvm::Value *allocSite = target ? target->inst : nullptr;
   std::pair<ref<const MemoryObject>, ref<Expr>> moBasePair;
@@ -4969,7 +5518,7 @@ IDType Executor::lazyInitializeObject(ExecutionState &state,
   const Array *lazyInstantiationSize = makeArray(
       state, Expr::createPointer(Context::get().getPointerWidth() / CHAR_BIT),
       "lazy_instantiation_size",
-      SourceBuilder::lazyInitializationMakeSymbolic());
+      SourceBuilder::lazyInitializationSymbolic());
   ref<Expr> sizeExpr = Expr::createTempRead(lazyInstantiationSize,
                                             Context::get().getPointerWidth());
   addConstraint(state, UgeExpr::create(sizeExpr, Expr::createPointer(size)));
@@ -5009,7 +5558,7 @@ IDType Executor::lazyInitializeObject(ExecutionState &state,
 
   addConstraint(state, EqExpr::create(mo->addressExpr, address));
   executeMakeSymbolic(state, mo, targetType, name,
-                      SourceBuilder::lazyInitializationMakeSymbolic(), false);
+                      SourceBuilder::lazyInitializationSymbolic(), false);
   return mo->id;
 }
 
@@ -5157,10 +5706,17 @@ void Executor::executeMakeSymbolic(ExecutionState &state,
 
 /***/
 
-void Executor::runFunctionAsMain(Function *f,
-				 int argc,
-				 char **argv,
-				 char **envp) {
+ExecutionState *Executor::formState(Function *f) {
+  ExecutionState *state = new ExecutionState(
+      kmodule->functionMap[f], kmodule->functionMap[f]->blockMap[&*f->begin()]);
+  initializeGlobals(*state);
+  return state;
+}
+
+ExecutionState *Executor::formState(Function *f,
+                                    int argc,
+                                    char **argv,
+                                    char **envp) {
   std::vector<ref<Expr> > arguments;
 
   // force deterministic initialization of memory objects
@@ -5235,6 +5791,7 @@ void Executor::runFunctionAsMain(Function *f,
                      /*allocSite=*/state->pc->inst, /*alignment=*/8);
         if (!arg)
           klee_error("Could not allocate memory for function arguments");
+
         ObjectState *os = bindObjectInState(
             *state, arg, typeSystemManager->getWrappedType(argumentType),
             false);
@@ -5248,6 +5805,79 @@ void Executor::runFunctionAsMain(Function *f,
   }
   
   initializeGlobals(*state);
+  return state;
+}
+
+void Executor::clearGlobal() {
+  globalObjects.clear();
+  globalAddresses.clear();
+}
+
+void Executor::clearMemory() {
+  // hack to clear memory objects
+  delete memory;
+  memory = new MemoryManager(NULL);
+}
+
+void Executor:: prepareSymbolicValue(ExecutionState &state, KInstruction *target) {
+  Instruction *allocSite = target->inst;
+  uint64_t size = kmodule->targetData->getTypeStoreSize(allocSite->getType());
+  uint64_t width = kmodule->targetData->getTypeSizeInBits(allocSite->getType());
+  ref<Expr> result = makeSymbolicValue(allocSite, state, size, width, "symbolic_value");
+  bindLocal(target, state, result);
+  if (isa<AllocaInst>(allocSite)) {
+      AllocaInst *ai = cast<AllocaInst>(allocSite);
+      unsigned elementSize =
+        kmodule->targetData->getTypeStoreSize(ai->getAllocatedType());
+      ref<Expr> size = Expr::createPointer(elementSize);
+      if (ai->isArrayAllocation()) {
+        ref<Expr> count = eval(target, 0, state).value;
+        count = Expr::createZExtToPointerWidth(count);
+        size = MulExpr::create(size, count);
+      }
+      lazyInitializeObject(state, result, target,
+                              typeSystemManager->getWrappedType(ai->getType()),
+                              elementSize);
+  }
+}
+
+void Executor:: prepareSymbolicRegister(ExecutionState &state, StackFrame &sf, unsigned regNum) {
+  KInstruction *allocInst = sf.kf->registerToInstructionMap[regNum];
+  prepareSymbolicValue(state, allocInst);
+}
+
+void Executor::prepareSymbolicArgs(ExecutionState &state, KFunction *kf) {
+  for (auto ai = kf->function->arg_begin(), ae = kf->function->arg_end(); ai != ae; ai++) {
+    Argument *arg = *&ai;
+    uint64_t size = kmodule->targetData->getTypeStoreSize(arg->getType());
+    uint64_t width = kmodule->targetData->getTypeSizeInBits(arg->getType());
+    ref<Expr> result = makeSymbolicValue(arg, state, size, width, "symbolic_arg");
+    bindArgument(state.stack.back().kf, arg->getArgNo(), state, result);
+  }
+}
+
+ref<Expr> Executor::makeSymbolicValue(Value *value, ExecutionState &state, uint64_t size, Expr::Width width, const std::string &name) {
+  MemoryObject *mo = 
+    memory->allocate(size, true, /*isGlobal=*/false,
+                     value, /*allocationAlignment=*/8);
+  const Array *array = makeArray(state, Expr::createPointer(size), name,
+                                 SourceBuilder::symbolicValue());
+  state.addSymbolic(mo, array,
+                    typeSystemManager->getWrappedType(value->getType()));
+  assert(value && "Attempted to make symbolic value from nullptr Value");
+  ObjectState *os = bindObjectInState(
+      state, mo, typeSystemManager->getWrappedType(value->getType()), false,
+      array);
+  ref<Expr> result = os->read(0, width);
+  return result;
+}
+
+void Executor::runFunctionAsMain(Function *f,
+               int argc,
+               char **argv,
+               char **envp) {
+  guidanceKind = GuidanceKind::NoGuidance;
+  ExecutionState *state = formState(f, argc, argv, envp);
 
   if (pathWriter)
     state->pathOS = pathWriter->open();
@@ -5257,20 +5887,151 @@ void Executor::runFunctionAsMain(Function *f,
   if (statsTracker)
     statsTracker->framePushed(*state, 0);
 
-  processTree = std::make_unique<PTree>(state);
+  processForest = std::make_unique<PForest>();
+  processForest->addRoot(state);
   bindModuleConstants(llvm::APFloat::rmNearestTiesToEven);
-  run(*state);
-  processTree = nullptr;
+  std::vector<ExecutionState *> states;
+  states.push_back(state);
+  run(states);
+  processForest = nullptr;
 
-  // hack to clear memory objects
-  delete memory;
-  memory = new MemoryManager(NULL);
-
-  globalObjects.clear();
-  globalAddresses.clear();
+  clearMemory();
+  clearGlobal();
 
   if (statsTracker)
     statsTracker->done();
+}
+
+void Executor::runFunctionGuided(Function *fn, int argc, char **argv,
+                                 char **envp) {
+  guidanceKind = GuidanceKind::CoverageGuidance;
+  ExecutionState *state = formState(fn, argc, argv, envp);
+  state->popFrame();
+  bindModuleConstants(llvm::APFloat::rmNearestTiesToEven);
+  KFunction *kf = kmodule->functionMap[fn];
+  ExecutionState *initialState = state->withKFunction(kf);
+  prepareSymbolicArgs(*initialState, kf);
+  runGuided(*initialState, kf);
+  clearMemory();
+  clearGlobal();
+}
+
+ExecutionState *Executor::prepareStateForPOSIX(KInstIterator &caller, ExecutionState *state) {
+  Function *mainFn = kmodule->module->getFunction("__klee_posix_wrapped_main");
+
+  assert(mainFn && "klee_posix_wrapped_main not found");
+  KBlock *target = kmodule->functionMap[mainFn]->entryKBlock;
+
+  if (pathWriter)
+    state->pathOS = pathWriter->open();
+  if (symPathWriter)
+    state->symPathOS = symPathWriter->open();
+
+  if (statsTracker)
+    statsTracker->framePushed(*state, 0);
+
+  processForest = std::make_unique<PForest>();
+  processForest->addRoot(state);
+  ExecutionState *original = state->copy();
+  ExecutionState *initialState = nullptr;
+  state->targetForest.add(Target::create(target));
+  targetedRun(*state, target, &initialState);
+  state = initialState;
+  if (state) {
+    auto frame = state->stack.back();
+    caller = frame.caller;
+    state->popFrame();
+    delete original;
+  } else {
+    state = original;
+    state->popFrame();
+  }
+
+  processForest = nullptr;
+
+  if (statsTracker)
+    statsTracker->done();
+
+  return state;
+}
+
+void Executor::prepareTargetedExecution(ExecutionState *initialState, ref<TargetForest> whitelist) {
+  initialState->targetForest = *whitelist->deep_copy();
+}
+
+void Executor::runThroughLocationsInternal(ExecutionState *state, PathForest *paths) {
+  KInstIterator caller;
+  if (kmodule->WithPOSIXRuntime()) {
+    state = prepareStateForPOSIX(caller, state);
+  } else {
+    state->popFrame();
+  }
+
+  auto prepTargets = targetedExecutionManager.prepareTargets(kmoduleOrig.get(), kmodule.get(), paths);
+  if (prepTargets.empty()) {
+    klee_warning("No targets found in --error-guided mode");
+    return;
+  }
+
+  std::vector<ExecutionState *> initialStates;
+
+  for (auto &startBlockAndWhiteList : prepTargets) {
+    auto kf = startBlockAndWhiteList.first;
+    if (startBlockAndWhiteList.second->empty()) {
+      klee_warning("No targets found for %s", kf->function->getName().str().c_str());
+      continue;
+    }
+    auto whitelist = startBlockAndWhiteList.second;
+    targets.emplace(kf, TargetedHaltsOnTraces(whitelist));
+    ExecutionState *initialState = state->withStackFrame(caller, kf);
+    prepareSymbolicArgs(*initialState, kf);
+    prepareTargetedExecution(initialState, whitelist);
+    initialStates.push_back(initialState);
+  }
+  runGuided(initialStates);
+  delete state;
+}
+
+void Executor::runThroughLocations(llvm::Function *f, int argc, char **argv,
+                                   char **envp, PathForest *paths) {
+  if (paths->empty()) {
+    klee_warning("No targets found in --error-guided mode");
+    return;
+  }
+  guidanceKind = GuidanceKind::ErrorGuidance;
+  MockAllExternalCalls = true;
+  ExternCallsCanReturnNull = true;
+  ForkPartialValidity = true;
+  AlignSymbolicPointers = false;
+  ExecutionState *state = formState(f, argc, argv, envp);
+  bindModuleConstants(llvm::APFloat::rmNearestTiesToEven);
+
+  runThroughLocationsInternal(state, paths);
+
+  clearMemory();
+  clearGlobal();
+}
+
+void Executor::runMainAsGuided(Function *mainFn, int argc, char **argv,
+                               char **envp) {
+  guidanceKind = GuidanceKind::CoverageGuidance;
+  ExecutionState *state = formState(mainFn, argc, argv, envp);
+  bindModuleConstants(llvm::APFloat::rmNearestTiesToEven);
+  KFunction *kf = kmodule->functionMap[mainFn];
+  runGuided(*state, kf);
+  clearMemory();
+  clearGlobal();
+}
+
+void Executor::runMainWithTarget(Function *mainFn, BasicBlock *target, int argc,
+                                 char **argv, char **envp) {
+  ExecutionState *state = formState(mainFn, argc, argv, envp);
+  bindModuleConstants(llvm::APFloat::rmNearestTiesToEven);
+  KFunction *kf = kmodule->functionMap[mainFn];
+  KBlock *kb = kmodule->functionMap[target->getParent()]->blockMap[target];
+  runWithTarget(*state, kf, kb);
+  clearMemory();
+  clearGlobal();
 }
 
 unsigned Executor::getPathStreamID(const ExecutionState &state) {
@@ -5379,7 +6140,11 @@ void Executor::setInitializationGraph(const ExecutionState &state,
       for (const auto &offset : innerTypeOffset.second) {
         ref<Expr> address = Expr::createTempRead(
             symbolic.array, Context::get().getPointerWidth(), offset);
-        ref<ConstantExpr> constantAddress = model.evaluate(address);
+        ref<Expr> addressInModel = model.evaluate(address);
+        if (!isa<ConstantExpr>(addressInModel)) {
+          continue;
+        }
+        ref<ConstantExpr> constantAddress = cast<ConstantExpr>(addressInModel);
         IDType idResult;
 
         if (state.resolveOnSymbolics(constantAddress, idResult)) {
@@ -5664,17 +6429,17 @@ int *Executor::getErrnoLocation(const ExecutionState &state) const {
 }
 
 
-void Executor::dumpPTree() {
-  if (!::dumpPTree) return;
+void Executor::dumpPForest() {
+  if (!::dumpPForest) return;
 
   char name[32];
-  snprintf(name, sizeof(name),"ptree%08d.dot", (int) stats::instructions);
+  snprintf(name, sizeof(name),"pforest%08d.dot", (int) stats::instructions);
   auto os = interpreterHandler->openOutputFile(name);
   if (os) {
-    processTree->dump(*os);
+    processForest->dump(*os);
   }
 
-  ::dumpPTree = 0;
+  ::dumpPForest = 0;
 }
 
 void Executor::dumpStates() {

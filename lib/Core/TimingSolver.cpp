@@ -88,8 +88,27 @@ bool TimingSolver::tryGetUnique(const ConstraintSet &constraints, ref<Expr> e,
 
     metaData.queryCost += timer.delta();
   }
-  
+
   return true;
+}
+
+Solver::PartialValidity TimingSolver::evaluate(const ConstraintSet &constraints,
+                                               ref<Expr> expr,
+                                               SolverQueryMetaData &metaData) {
+  // Fast path, to avoid timer and OS overhead.
+  if (ConstantExpr *CE = dyn_cast<ConstantExpr>(expr)) {
+    return CE->isTrue() ? Solver::MustBeTrue : Solver::MustBeFalse;
+  }
+
+  TimerStatIncrementer timer(stats::solverTime);
+
+  if (simplifyExprs)
+    expr = ConstraintManager::simplifyExpr(constraints, expr);
+
+  auto validity = solver->evaluate(Query(constraints, expr));
+
+  metaData.queryCost += timer.delta();
+  return validity;
 }
 
 bool TimingSolver::mustBeTrue(const ConstraintSet &constraints, ref<Expr> expr,

@@ -1,0 +1,130 @@
+{
+    "errors": [
+        {
+            "category": "NULL pointer deference",
+            "id": 1,
+            "trace": [
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/klee_verifier_scripts/NullReturn_Scene_BadCase04.c",
+                        "reportLine": 42,
+                        "function": "TestBad4",
+                        "instructionOffset": 2,
+                        "column": 25,
+                        "instructionOpcode": 56
+                    },
+                    "event": {
+                        "kind": "NoOp"
+                    }
+                },
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/klee_verifier_scripts/NullReturn_Scene_BadCase04.c",
+                        "reportLine": 43,
+                        "function": "TestBad4",
+                        "instructionOffset": 4,
+                        "column": 18,
+                        "instructionOpcode": 32
+                    },
+                    "event": {
+                        "kind": "EnterCall",
+                        "function": "HelpTestBad4"
+                    }
+                },
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/klee_verifier_scripts/NullReturn_Scene_BadCase04.c",
+                        "reportLine": 32,
+                        "function": "HelpTestBad4",
+                        "instructionOffset": 3,
+                        "column": 12,
+                        "instructionOpcode": 32
+                    },
+                    "event": {
+                        "kind": "NoOp"
+                    }
+                },
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/klee_verifier_scripts/NullReturn_Scene_BadCase04.c",
+                        "reportLine": 32,
+                        "function": "HelpTestBad4",
+                        "instructionOffset": 3,
+                        "column": 12,
+                        "instructionOpcode": 32
+                    },
+                    "event": {
+                        "kind": "Error",
+                        "error": {
+                            "sort": "NullDereference",
+                            "target": "buf"
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "category": "NULL pointer deference",
+            "id": 2,
+            "trace": [
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/klee_verifier_scripts/NullReturn_Scene_BadCase04.c",
+                        "reportLine": 42,
+                        "function": "TestBad4",
+                        "instructionOffset": 2,
+                        "column": 25,
+                        "instructionOpcode": 56
+                    },
+                    "event": {
+                        "kind": "NoOp"
+                    }
+                },
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/klee_verifier_scripts/NullReturn_Scene_BadCase04.c",
+                        "reportLine": 43,
+                        "function": "TestBad4",
+                        "instructionOffset": 4,
+                        "column": 18,
+                        "instructionOpcode": 32
+                    },
+                    "event": {
+                        "kind": "EnterCall",
+                        "function": "HelpTestBad4"
+                    }
+                },
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/klee_verifier_scripts/NullReturn_Scene_BadCase04.c",
+                        "reportLine": 32,
+                        "function": "HelpTestBad4",
+                        "instructionOffset": 3,
+                        "column": 12,
+                        "instructionOpcode": 32
+                    },
+                    "event": {
+                        "kind": "NoOp"
+                    }
+                },
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/klee_verifier_scripts/NullReturn_Scene_BadCase04.c",
+                        "reportLine": 32,
+                        "function": "HelpTestBad4",
+                        "instructionOffset": 3,
+                        "column": 5,
+                        "instructionOpcode": 56
+                    },
+                    "event": {
+                        "kind": "Error",
+                        "error": {
+                            "sort": "NullDereference",
+                            "target": "buf"
+                        }
+                    }
+                }
+            ]
+        }
+    ]
+}

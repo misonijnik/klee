@@ -37,6 +37,7 @@
 
 #include <cerrno>
 #include <sstream>
+#include <time.h>
 
 using namespace llvm;
 using namespace klee;
@@ -56,6 +57,11 @@ cl::opt<bool>
                               "condition given to klee_assume() rather than "
                               "emitting an error (default=false)"),
                      cl::cat(TerminationCat));
+
+cl::opt<bool> CheckOutOfMemory("check-out-of-memory", cl::init(false),
+                               cl::desc("Enable out-of-memory checking during "
+                                        "memory allocation (default=false)"),
+                               cl::cat(ExecCat));
 } // namespace
 
 /// \todo Almost all of the demands in this file should be replaced
@@ -88,6 +94,7 @@ static SpecialFunctionHandler::HandlerInfo handlerInfo[] = {
   add("calloc", handleCalloc, true),
   add("free", handleFree, false),
   add("klee_assume", handleAssume, false),
+  add("klee_sleep", handleSleep, false),
   add("klee_check_memory_access", handleCheckMemoryAccess, false),
   add("klee_get_valuef", handleGetValue, true),
   add("klee_get_valued", handleGetValue, true),
@@ -139,6 +146,8 @@ static SpecialFunctionHandler::HandlerInfo handlerInfo[] = {
 
   // operator new[](unsigned long)
   add("_Znam", handleNewArray, true),
+  // operator new[](unsigned long, std::nothrow_t const&)
+  add("_ZnamRKSt9nothrow_t", handleNewNothrowArray, true),
   // operator new(unsigned long)
   add("_Znwm", handleNew, true),
 
@@ -469,7 +478,8 @@ void SpecialFunctionHandler::handleNew(ExecutionState &state,
   // XXX should type check args
   assert(arguments.size()==1 && "invalid number of arguments to new");
   executor.executeAlloc(state, arguments[0], false, target,
-                        executor.typeSystemManager->handleAlloc(arguments[0]));
+                        executor.typeSystemManager->handleAlloc(arguments[0]),
+                        false, nullptr, 0, CheckOutOfMemory);
 }
 
 void SpecialFunctionHandler::handleDelete(ExecutionState &state,
@@ -489,7 +499,18 @@ void SpecialFunctionHandler::handleNewArray(ExecutionState &state,
   // XXX should type check args
   assert(arguments.size()==1 && "invalid number of arguments to new[]");
   executor.executeAlloc(state, arguments[0], false, target,
-                        executor.typeSystemManager->handleAlloc(arguments[0]));
+                        executor.typeSystemManager->handleAlloc(arguments[0]),
+                        false, nullptr, 0, CheckOutOfMemory);
+}
+
+void SpecialFunctionHandler::handleNewNothrowArray(ExecutionState &state,
+                              KInstruction *target,
+                              std::vector<ref<Expr> > &arguments) {
+  // XXX should type check args
+  assert(arguments.size()==2 && "invalid number of arguments to new[](unsigned long, std::nothrow_t const&)");
+  executor.executeAlloc(state, arguments[0], false, target,
+                        executor.typeSystemManager->handleAlloc(arguments[0]),
+                        false, nullptr, 0, CheckOutOfMemory);
 }
 
 void SpecialFunctionHandler::handleDeleteArray(ExecutionState &state,
@@ -506,7 +527,8 @@ void SpecialFunctionHandler::handleMalloc(ExecutionState &state,
   // XXX should type check args
   assert(arguments.size()==1 && "invalid number of arguments to malloc");
   executor.executeAlloc(state, arguments[0], false, target,
-                        executor.typeSystemManager->handleAlloc(arguments[0]));
+                        executor.typeSystemManager->handleAlloc(arguments[0]),
+                        false, nullptr, 0, CheckOutOfMemory);
 }
 
 void SpecialFunctionHandler::handleMemalign(ExecutionState &state,
@@ -580,6 +602,12 @@ void SpecialFunctionHandler::handleEhTypeid(ExecutionState &state,
 }
 #endif // SUPPORT_KLEE_EH_CXX
 
+void SpecialFunctionHandler::handleSleep(ExecutionState &state,
+                            KInstruction *target,
+                            std::vector<ref<Expr> > &arguments) {
+  nanosleep((const struct timespec[]){{1, 0}}, NULL);
+}
+
 void SpecialFunctionHandler::handleAssume(ExecutionState &state,
                             KInstruction *target,
                             std::vector<ref<Expr> > &arguments) {
@@ -596,7 +624,7 @@ void SpecialFunctionHandler::handleAssume(ExecutionState &state,
   assert(success && "FIXME: Unhandled solver failure");
   if (res) {
     if (SilentKleeAssume) {
-      executor.terminateState(state);
+      executor.terminateState(state, StateTerminationType::SilentExit);
     } else {
       executor.terminateStateOnUserError(
           state, "invalid klee_assume call (provably false)");
@@ -799,7 +827,8 @@ void SpecialFunctionHandler::handleCalloc(ExecutionState &state,
   ref<Expr> size = MulExpr::create(arguments[0],
                                    arguments[1]);
   executor.executeAlloc(state, size, false, target,
-                        executor.typeSystemManager->handleAlloc(size), true);
+                        executor.typeSystemManager->handleAlloc(size), true,
+                        nullptr, 0, CheckOutOfMemory);
 }
 
 void SpecialFunctionHandler::handleRealloc(ExecutionState &state,
@@ -824,7 +853,8 @@ void SpecialFunctionHandler::handleRealloc(ExecutionState &state,
 
     if (zeroPointer.first) { // address == 0
       executor.executeAlloc(*zeroPointer.first, size, false, target,
-                            executor.typeSystemManager->handleAlloc(size));
+                            executor.typeSystemManager->handleAlloc(size),
+                            false, nullptr, 0, CheckOutOfMemory);
     } 
     if (zeroPointer.second) { // address != 0
       Executor::ExactResolutionList rl;
@@ -838,7 +868,7 @@ void SpecialFunctionHandler::handleRealloc(ExecutionState &state,
         executor.executeAlloc(*it->second, size, false, target,
                               executor.typeSystemManager->handleRealloc(
                                   os->getDynamicType(), size),
-                              false, os);
+                              false, os, 0, CheckOutOfMemory);
       }
     }
   }

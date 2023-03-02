@@ -15,13 +15,16 @@
 #include "klee/Module/KCallable.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/IR/CFG.h"
 
+#include <deque>
 #include <map>
 #include <memory>
 #include <set>
-#include <vector>
-#include <unordered_set>
+#include <string>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 namespace llvm {
   class BasicBlock;
@@ -147,7 +150,7 @@ namespace klee {
 
     unsigned getArgRegister(unsigned index) const { return index; }
 
-    llvm::StringRef getName() const override { return function->getName(); }
+    llvm::StringRef getName() const override { return function ? function->getName() : ""; }
 
     llvm::FunctionType *getFunctionType() const override {
       return function->getFunctionType();
@@ -178,6 +181,8 @@ namespace klee {
 
 
   class KModule {
+  private:
+    bool withPosixRuntime;
   public:
     std::unique_ptr<llvm::Module> module;
     std::unique_ptr<llvm::DataLayout> targetData;
@@ -204,6 +209,7 @@ namespace klee {
     // Functions which are part of KLEE runtime
     std::set<const llvm::Function*> internalFunctions;
 
+    // Mark function with functionName as part of the KLEE runtime
     void addInternalFunction(const char* functionName);
     // Replace std functions with KLEE intrinsics
     void replaceFunction(const std::unique_ptr<llvm::Module> &m, const char *original,
@@ -223,6 +229,7 @@ namespace klee {
     /// @param forceSourceOutput true if assembly.ll should be created
     ///
     // FIXME: ihandler should not be here
+    void manifestFunctions(std::vector<llvm::Function *> &declarations);
     void manifest(InterpreterHandler *ih, bool forceSourceOutput);
 
     /// Link the provided modules together as one KLEE module.
@@ -251,6 +258,8 @@ namespace klee {
     KBlock *getKBlock(llvm::BasicBlock *bb);
 
     bool inMainModule(llvm::Function *f);
+
+    bool WithPOSIXRuntime() { return withPosixRuntime; }
   };
 } // End klee namespace
 

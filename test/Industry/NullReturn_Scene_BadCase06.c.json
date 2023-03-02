@@ -1,0 +1,128 @@
+{
+    "errors": [
+        {
+            "category": "NULL pointer deference",
+            "id": 26,
+            "trace": [
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/src-bc-reports/sources/secbrella/SecB_NullReturns/BadCase/NullReturn_Scene_BadCase06.c",
+                        "reportLine": 47,
+                        "function": "TestBad6",
+                        "instructionOffset": 5,
+                        "column": 25,
+                        "instructionOpcode": 56
+                    },
+                    "event": {
+                        "kind": "NoOp"
+                    }
+                },
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/src-bc-reports/sources/secbrella/SecB_NullReturns/BadCase/NullReturn_Scene_BadCase06.c",
+                        "reportLine": 49,
+                        "function": "TestBad6",
+                        "instructionOffset": 7,
+                        "column": 24,
+                        "instructionOpcode": 32
+                    },
+                    "event": {
+                        "kind": "NoOp"
+                    }
+                },
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/src-bc-reports/sources/secbrella/SecB_NullReturns/BadCase/NullReturn_Scene_BadCase06.c",
+                        "reportLine": 49,
+                        "function": "TestBad6",
+                        "instructionOffset": 9,
+                        "column": 11,
+                        "instructionOpcode": 56
+                    },
+                    "event": {
+                        "kind": "NoOp"
+                    }
+                },
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/src-bc-reports/sources/secbrella/SecB_NullReturns/BadCase/NullReturn_Scene_BadCase06.c",
+                        "reportLine": 51,
+                        "function": "TestBad6",
+                        "instructionOffset": 11,
+                        "column": 5,
+                        "instructionOpcode": 32
+                    },
+                    "event": {
+                        "kind": "Error",
+                        "error": {
+                            "sort": "NullDereference",
+                            "target": "buf"
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "category": "NULL pointer deference",
+            "id": 27,
+            "trace": [
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/src-bc-reports/sources/secbrella/SecB_NullReturns/BadCase/NullReturn_Scene_BadCase06.c",
+                        "reportLine": 47,
+                        "function": "TestBad6",
+                        "instructionOffset": 5,
+                        "column": 25,
+                        "instructionOpcode": 56
+                    },
+                    "event": {
+                        "kind": "NoOp"
+                    }
+                },
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/src-bc-reports/sources/secbrella/SecB_NullReturns/BadCase/NullReturn_Scene_BadCase06.c",
+                        "reportLine": 49,
+                        "function": "TestBad6",
+                        "instructionOffset": 7,
+                        "column": 24,
+                        "instructionOpcode": 32
+                    },
+                    "event": {
+                        "kind": "NoOp"
+                    }
+                },
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/src-bc-reports/sources/secbrella/SecB_NullReturns/BadCase/NullReturn_Scene_BadCase06.c",
+                        "reportLine": 49,
+                        "function": "TestBad6",
+                        "instructionOffset": 9,
+                        "column": 11,
+                        "instructionOpcode": 56
+                    },
+                    "event": {
+                        "kind": "NoOp"
+                    }
+                },
+                {
+                    "location": {
+                        "file": "/mnt/d/dev/klee-test/src-bc-reports/sources/secbrella/SecB_NullReturns/BadCase/NullReturn_Scene_BadCase06.c",
+                        "reportLine": 51,
+                        "function": "TestBad6",
+                        "instructionOffset": 11,
+                        "column": 5,
+                        "instructionOpcode": 32
+                    },
+                    "event": {
+                        "kind": "Error",
+                        "error": {
+                            "sort": "NullDereference",
+                            "target": "buf"
+                        }
+                    }
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,38 @@
+{
+    "errors": [
+        {
+            "category": "NULL pointer deference",
+            "id": 1,
+            "trace": [
+                {
+                    "location": {
+                        "file": "if2.c",
+                        "reportLine": 2,
+                        "function": "main",
+                        "column": 8,
+                        "instructionOpcode": 33
+                    },
+                    "event": {
+                        "kind": "NoOp"
+                    }
+                },
+                {
+                    "location": {
+                        "file": "if2.c",
+                        "reportLine": 8,
+                        "function": "main",
+                        "column": 10,
+                        "instructionOpcode": 32
+                    },
+                    "event": {
+                        "kind": "Error",
+                        "error": {
+                            "sort": "NullDereference",
+                            "target": "p"
+                        }
+                    }
+                }
+            ]
+        }
+    ]
+}

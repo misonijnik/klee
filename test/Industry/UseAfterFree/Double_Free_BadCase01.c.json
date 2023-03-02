@@ -1,0 +1,52 @@
+{
+  "errors": [
+    {
+      "category": "Indicator_of_Poor_Code_Quality",
+      "id": 41,
+      "trace": [
+        {
+          "location": {
+            "file": "/mnt/d/dev/klee-test/klee_verifier_scripts/tests/secb_suit/src/SecB_UseAfterFree/BadCase/Double_Free_BadCase01.c",
+            "reportLine": 26,
+            "function": "DoubleFreeBad01",
+            "instructionOffset": 2,
+            "column": 23,
+            "instructionOpcode": 56
+          },
+          "event": {
+            "kind": "NoOp"
+          }
+        },
+        {
+          "location": {
+            "file": "/mnt/d/dev/klee-test/klee_verifier_scripts/tests/secb_suit/src/SecB_UseAfterFree/BadCase/Double_Free_BadCase01.c",
+            "reportLine": 33,
+            "function": "DoubleFreeBad01",
+            "instructionOffset": 9,
+            "column": 5,
+            "instructionOpcode": 56
+          },
+          "event": {
+            "kind": "NoOp"
+          }
+        },
+        {
+          "location": {
+            "file": "/mnt/d/dev/klee-test/klee_verifier_scripts/tests/secb_suit/src/SecB_UseAfterFree/BadCase/Double_Free_BadCase01.c",
+            "reportLine": 36,
+            "function": "DoubleFreeBad01",
+            "instructionOffset": 11,
+            "column": 5,
+            "instructionOpcode": 56
+          },
+          "event": {
+            "kind": "Error",
+            "error": {
+              "sort": "DoubleFree"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

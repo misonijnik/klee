@@ -194,7 +194,7 @@ injectStaticConstructorsAndDestructors(Module *m,
   GlobalVariable *ctors = m->getNamedGlobal("llvm.global_ctors");
   GlobalVariable *dtors = m->getNamedGlobal("llvm.global_dtors");
 
-  if (!ctors && !dtors)
+  if ((!ctors && !dtors) || entryFunction.empty())
     return;
 
   Function *mainFn = m->getFunction(entryFunction);
@@ -234,7 +234,8 @@ bool KModule::link(std::vector<std::unique_ptr<llvm::Module>> &modules,
                    const std::string &entryPoint) {
   auto numRemainingModules = modules.size();
   // Add the currently active module to the list of linkables
-  modules.push_back(std::move(module));
+  if (module)
+    modules.push_back(std::move(module));
   std::string error;
   module = std::unique_ptr<llvm::Module>(
       klee::linkModules(modules, entryPoint, error));
@@ -283,6 +284,7 @@ void KModule::instrument(const Interpreter::ModuleOptions &opts) {
 
   pm.add(new IntrinsicCleanerPass(*targetData, opts.WithFPRuntime));
   pm.run(*module);
+  withPosixRuntime = opts.WithPOSIXRuntime;
 }
 
 void KModule::optimiseAndPrepare(
@@ -328,7 +330,8 @@ void KModule::optimiseAndPrepare(
   // going to be unresolved. We really need to handle the intrinsics
   // directly I think?
   legacy::PassManager pm3;
-  pm3.add(createCFGSimplificationPass());
+  if (opts.Simplify)
+    pm3.add(createCFGSimplificationPass());
   switch(SwitchType) {
   case eSwitchTypeInternal: break;
   case eSwitchTypeSimple: pm3.add(new LowerSwitchPass()); break;
@@ -348,28 +351,8 @@ void KModule::optimiseAndPrepare(
   pm3.run(*module);
 }
 
-void KModule::manifest(InterpreterHandler *ih, bool forceSourceOutput) {
-  if (OutputSource || forceSourceOutput) {
-    std::unique_ptr<llvm::raw_fd_ostream> os(ih->openOutputFile("assembly.ll"));
-    assert(os && !os->has_error() && "unable to open source output");
-    *os << *module;
-  }
-
-  if (OutputModule) {
-    std::unique_ptr<llvm::raw_fd_ostream> f(ih->openOutputFile("final.bc"));
-#if LLVM_VERSION_CODE >= LLVM_VERSION(7, 0)
-    WriteBitcodeToFile(*module, *f);
-#else
-    WriteBitcodeToFile(module.get(), *f);
-#endif
-  }
-
-  /* Build shadow structures */
-
-  infos = std::unique_ptr<InstructionInfoTable>(
-      new InstructionInfoTable(*module.get()));
-
-  std::vector<Function *> declarations;
+void KModule::manifestFunctions(std::vector<Function *> &declarations) {
+  infos = std::unique_ptr<InstructionInfoTable>(new InstructionInfoTable(*module.get()));
 
   for (auto &Function : *module) {
     if (Function.isDeclaration()) {
@@ -391,6 +374,28 @@ void KModule::manifest(InterpreterHandler *ih, bool forceSourceOutput) {
     functionMap.insert(std::make_pair(&Function, kf.get()));
     functions.push_back(std::move(kf));
   }
+}
+
+void KModule::manifest(InterpreterHandler *ih, bool forceSourceOutput) {
+  if (OutputSource || forceSourceOutput) {
+    std::unique_ptr<llvm::raw_fd_ostream> os(ih->openOutputFile("assembly.ll"));
+    assert(os && !os->has_error() && "unable to open source output");
+    *os << *module;
+  }
+
+  if (OutputModule) {
+    std::unique_ptr<llvm::raw_fd_ostream> f(ih->openOutputFile("final.bc"));
+#if LLVM_VERSION_CODE >= LLVM_VERSION(7, 0)
+    WriteBitcodeToFile(*module, *f);
+#else
+    WriteBitcodeToFile(module.get(), *f);
+#endif
+  }
+
+  /* Build shadow structures */
+
+  std::vector<Function *> declarations;
+  manifestFunctions(declarations);
 
   /* Compute various interesting properties */
 
@@ -427,7 +432,7 @@ void KModule::checkModule() {
 
   legacy::PassManager pm;
   if (!DontVerify)
-    pm.add(createVerifierPass());
+    pm.add(createVerifierPass(false));
   pm.add(operandTypeCheckPass);
   pm.run(*module);
 

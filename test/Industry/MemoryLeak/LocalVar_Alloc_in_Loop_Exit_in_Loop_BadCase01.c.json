@@ -1,0 +1,75 @@
+{
+  "errors": [
+    {
+      "category": "Indicator_of_Poor_Code_Quality",
+      "id": 22,
+      "trace": [
+        {
+          "location": {
+            "file": "/mnt/d/dev/klee-test/klee_verifier_scripts/tests/secb_suit/src/SecB_MemoryLeak/BadCase/LocalVar_Alloc_in_Loop_Exit_in_Loop_BadCase01.c",
+            "reportLine": 34,
+            "function": "ResourceLeak_bad01",
+            "instructionOffset": 22,
+            "column": 32,
+            "instructionOpcode": 56
+          },
+          "event": {
+            "kind": "NoOp"
+          }
+        },
+        {
+          "location": {
+            "file": "/mnt/d/dev/klee-test/klee_verifier_scripts/tests/secb_suit/src/SecB_MemoryLeak/BadCase/LocalVar_Alloc_in_Loop_Exit_in_Loop_BadCase01.c",
+            "reportLine": 33,
+            "function": "ResourceLeak_bad01",
+            "instructionOffset": 21,
+            "column": 5,
+            "instructionOpcode": 2
+          },
+          "event": {
+            "kind": "NoOp"
+          }
+        },
+        {
+          "location": {
+            "file": "/mnt/d/dev/klee-test/klee_verifier_scripts/tests/secb_suit/src/SecB_MemoryLeak/BadCase/LocalVar_Alloc_in_Loop_Exit_in_Loop_BadCase01.c",
+            "reportLine": 43,
+            "function": "ResourceLeak_bad01",
+            "instructionOffset": 47,
+            "column": 5,
+            "instructionOpcode": 2
+          },
+          "event": {
+            "kind": "NoOp"
+          }
+        },
+        {
+          "location": {
+            "file": "/mnt/d/dev/klee-test/klee_verifier_scripts/tests/secb_suit/src/SecB_MemoryLeak/BadCase/LocalVar_Alloc_in_Loop_Exit_in_Loop_BadCase01.c",
+            "reportLine": 44,
+            "function": "ResourceLeak_bad01",
+            "instructionOffset": 53,
+            "column": 9,
+            "instructionOpcode": 56
+          },
+          "event": {
+            "kind": "NoOp"
+          }
+        },
+        {
+          "location": {
+            "file": "/mnt/d/dev/klee-test/klee_verifier_scripts/tests/secb_suit/src/SecB_MemoryLeak/BadCase/LocalVar_Alloc_in_Loop_Exit_in_Loop_BadCase01.c",
+            "reportLine": 44,
+            "function": "ResourceLeak_bad01",
+            "instructionOffset": 53,
+            "column": 9,
+            "instructionOpcode": 56
+          },
+          "event": {
+            "kind": "NoOp"
+          }
+        }
+      ]
+    }
+  ]
+}
