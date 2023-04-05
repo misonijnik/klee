@@ -54,7 +54,8 @@ private:
     unsigned operator()(const CacheEntry &ce) const {
       unsigned result = ce.query->hash();
 
-      for (auto const &constraint : ce.constraints) {
+      assert(ce.constraints.symcretes().empty());
+      for (auto const &constraint : ce.constraints.cs()) {
         result ^= constraint->hash();
       }
 

@@ -11,10 +11,11 @@ int main() {
   int n = klee_int("n");
 
   char *s1 = (char *)malloc(n);
+  // CHECK: NegativeIndexArray.c:[[@LINE+2]]: memory error: null pointer exception
   // CHECK: NegativeIndexArray.c:[[@LINE+1]]: memory error: out of bound pointer
   s1[-1] = 10;
 }
 
 // CHECK: KLEE: done: completed paths = 0
 // CHECK: KLEE: done: partially completed paths = 2
-// CHECK: KLEE: done: generated tests = 1
+// CHECK: KLEE: done: generated tests = 2

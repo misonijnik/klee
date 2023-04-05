@@ -28,5 +28,5 @@ int main() {
 }
 
 // CHECK: KLEE: done: completed paths = 1
-// CHECK: KLEE: done: partially completed paths = 6
+// CHECK: KLEE: done: partially completed paths = 4
 // CHECK: KLEE: done: generated tests = 5

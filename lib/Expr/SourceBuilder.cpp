@@ -4,34 +4,62 @@
 
 using namespace klee;
 
-ref<SymbolicSource> SourceBuilder::constantSource =
-    ref<SymbolicSource>(new ConstantSource());
-ref<SymbolicSource> SourceBuilder::makeSymbolicSource =
-    ref<SymbolicSource>(new MakeSymbolicSource());
-ref<SymbolicSource> SourceBuilder::lazyInitializationMakeSymbolicSource =
-    ref<SymbolicSource>(new LazyInitializationSymbolicSource());
+ref<SymbolicSource>
+SourceBuilder::constant(const std::string &name,
+                        const std::vector<ref<ConstantExpr>> &constantValues) {
+  ref<SymbolicSource> r(new ConstantSource(name, constantValues));
+  r->computeHash();
+  return r;
+}
 
-ref<SymbolicSource> SourceBuilder::constant() {
-  return SourceBuilder::constantSource;
+ref<SymbolicSource> SourceBuilder::symbolicSizeConstant(unsigned defaultValue) {
+  ref<SymbolicSource> r(new SymbolicSizeConstantSource(defaultValue));
+  r->computeHash();
+  return r;
 }
 
 ref<SymbolicSource>
-SourceBuilder::constantWithSymbolicSize(unsigned defaultValue) {
-  return new ConstantWithSymbolicSizeSource(defaultValue);
+SourceBuilder::symbolicSizeConstantAddress(unsigned defaultValue,
+                                           unsigned version) {
+  ref<SymbolicSource> r(
+      new SymbolicSizeConstantAddressSource(defaultValue, version));
+  r->computeHash();
+  return r;
 }
 
-ref<SymbolicSource> SourceBuilder::makeSymbolic() {
-  return SourceBuilder::makeSymbolicSource;
+ref<SymbolicSource> SourceBuilder::makeSymbolic(const std::string &name,
+                                                unsigned version) {
+  ref<SymbolicSource> r(new MakeSymbolicSource(name, version));
+  r->computeHash();
+  return r;
 }
 
-ref<SymbolicSource> SourceBuilder::symbolicAddress() {
-  return new SymbolicAddressSource();
+ref<SymbolicSource>
+SourceBuilder::lazyInitializationAddress(ref<Expr> pointer) {
+  ref<SymbolicSource> r(new LazyInitializationAddressSource(pointer));
+  r->computeHash();
+  return r;
 }
 
-ref<SymbolicSource> SourceBuilder::symbolicSize() {
-  return new SymbolicSizeSource();
+ref<SymbolicSource> SourceBuilder::lazyInitializationSize(ref<Expr> pointer) {
+  ref<SymbolicSource> r(new LazyInitializationSizeSource(pointer));
+  r->computeHash();
+  return r;
 }
 
-ref<SymbolicSource> SourceBuilder::lazyInitializationMakeSymbolic() {
-  return SourceBuilder::lazyInitializationMakeSymbolicSource;
+ref<SymbolicSource>
+SourceBuilder::lazyInitializationContent(ref<Expr> pointer) {
+  ref<SymbolicSource> r(new LazyInitializationContentSource(pointer));
+  r->computeHash();
+  return r;
+}
+
+ref<SymbolicSource> SourceBuilder::argument(const llvm::Argument &_allocSite,
+                                            int _index) {
+  return new ArgumentSource(_allocSite, _index);
+}
+
+ref<SymbolicSource>
+SourceBuilder::instruction(const llvm::Instruction &_allocSite, int _index) {
+  return new InstructionSource(_allocSite, _index);
 }

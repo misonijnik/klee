@@ -12,6 +12,7 @@
 #include "ExecutionState.h"
 
 #include "klee/Config/Version.h"
+#include "klee/Expr/Constraints.h"
 #include "klee/Solver/Solver.h"
 #include "klee/Statistics/Statistics.h"
 #include "klee/Statistics/TimerStatIncrementer.h"
@@ -36,7 +37,7 @@ bool TimingSolver::evaluate(const ConstraintSet &constraints, ref<Expr> expr,
   TimerStatIncrementer timer(stats::solverTime);
 
   if (simplifyExprs)
-    expr = ConstraintManager::simplifyExpr(constraints, expr);
+    expr = Simplificator::simplifyExpr(constraints, expr);
 
   ref<SolverResponse> queryResult;
   ref<SolverResponse> negatedQueryResult;
@@ -107,7 +108,7 @@ bool TimingSolver::mustBeTrue(const ConstraintSet &constraints, ref<Expr> expr,
   TimerStatIncrementer timer(stats::solverTime);
 
   if (simplifyExprs)
-    expr = ConstraintManager::simplifyExpr(constraints, expr);
+    expr = Simplificator::simplifyExpr(constraints, expr);
 
   ValidityCore validityCore;
 
@@ -160,7 +161,7 @@ bool TimingSolver::getValue(const ConstraintSet &constraints, ref<Expr> expr,
   TimerStatIncrementer timer(stats::solverTime);
 
   if (simplifyExprs)
-    expr = ConstraintManager::simplifyExpr(constraints, expr);
+    expr = Simplificator::simplifyExpr(constraints, expr);
 
   bool success = solver->getValue(Query(constraints, expr), result);
 
@@ -182,7 +183,7 @@ bool TimingSolver::getMinimalUnsignedValue(const ConstraintSet &constraints,
   TimerStatIncrementer timer(stats::solverTime);
 
   if (simplifyExprs)
-    expr = ConstraintManager::simplifyExpr(constraints, expr);
+    expr = Simplificator::simplifyExpr(constraints, expr);
 
   bool success =
       solver->getMinimalUnsignedValue(Query(constraints, expr), result);
@@ -228,7 +229,7 @@ bool TimingSolver::evaluate(const ConstraintSet &constraints, ref<Expr> expr,
   TimerStatIncrementer timer(stats::solverTime);
 
   if (simplifyExprs)
-    expr = ConstraintManager::simplifyExpr(constraints, expr);
+    expr = Simplificator::simplifyExpr(constraints, expr);
 
   bool success = solver->evaluate(Query(constraints, expr), queryResult,
                                   negatedQueryResult);
@@ -251,7 +252,7 @@ bool TimingSolver::getValidityCore(const ConstraintSet &constraints,
   TimerStatIncrementer timer(stats::solverTime);
 
   if (simplifyExprs)
-    expr = ConstraintManager::simplifyExpr(constraints, expr);
+    expr = Simplificator::simplifyExpr(constraints, expr);
 
   bool success =
       solver->getValidityCore(Query(constraints, expr), validityCore, result);

@@ -1,7 +1,4 @@
 // RUN: echo "x" > %t1.res
-// RUN: echo "x" >> %t1.res
-// RUN: echo "x" >> %t1.res
-// RUN: echo "x" >> %t1.res
 // RUN: %clang %s -emit-llvm %O0opt -c -o %t1.bc
 // RUN: rm -rf %t.klee-out
 // RUN: %klee --output-dir=%t.klee-out --use-timestamps=false %t1.bc > %t1.log

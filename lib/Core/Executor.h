@@ -24,6 +24,7 @@
 #include "klee/Core/TerminationTypes.h"
 #include "klee/Expr/ArrayCache.h"
 #include "klee/Expr/ArrayExprOptimizer.h"
+#include "klee/Expr/Constraints.h"
 #include "klee/Expr/SourceBuilder.h"
 #include "klee/Expr/SymbolicSource.h"
 #include "klee/Module/Cell.h"
@@ -91,8 +92,6 @@ class StatsTracker;
 class TimingSolver;
 class TreeStreamWriter;
 class TypeManager;
-class MergeHandler;
-class MergingSearcher;
 template <class T> class ref;
 
 /// \todo Add a context object to keep track of data only live
@@ -104,8 +103,13 @@ class Executor : public Interpreter {
   friend class WeightedRandomSearcher;
   friend class SpecialFunctionHandler;
   friend class StatsTracker;
-  friend class MergeHandler;
   friend klee::Searcher *klee::constructUserSearcher(Executor &executor);
+
+  struct ComposeResult {
+    bool success;
+    PathConstraints composed;
+    Conflict conflict;
+  };
 
 public:
   typedef std::pair<ExecutionState *, ExecutionState *> StatePair;
@@ -223,10 +227,6 @@ private:
   /// Optimizes expressions
   ExprOptimizer optimizer;
 
-  /// Points to the merging searcher of the searcher chain,
-  /// `nullptr` if merging is disabled
-  MergingSearcher *mergingSearcher = nullptr;
-
   /// Typeids used during exception handling
   std::vector<ref<Expr>> eh_typeids;
 
@@ -330,6 +330,33 @@ private:
   void executeCall(ExecutionState &state, KInstruction *ki, llvm::Function *f,
                    std::vector<ref<Expr>> &arguments);
 
+  bool resolveMemoryObjects(ExecutionState &state, ref<Expr> address,
+                            KType *targetType, KInstruction *target,
+                            unsigned bytes,
+                            std::vector<IDType> &mayBeResolvedMemoryObjects,
+                            bool &mayBeOutOfBound, bool &incomplete);
+
+  bool checkResolvedMemoryObjects(
+      ExecutionState &state, ref<Expr> address, KType *targetType,
+      KInstruction *target, unsigned bytes,
+      const std::vector<IDType> &mayBeResolvedMemoryObjects,
+      std::vector<IDType> &resolvedMemoryObjects,
+      std::vector<ref<Expr>> &resolveConditions, ref<Expr> &checkOutOfBounds,
+      bool &mayBeOutOfBound);
+
+  bool collectConcretizations(ExecutionState &state,
+                              const std::vector<ref<Expr>> &resolveConditions,
+                              const std::vector<IDType> &resolvedMemoryObjects,
+                              ref<Expr> checkOutOfBounds, ref<Expr> &guard,
+                              std::vector<Assignment> &resolveConcretizations,
+                              bool &mayBeInBounds);
+
+  void collectReads(ExecutionState &state, ref<Expr> address, KType *targetType,
+                    Expr::Width type, unsigned bytes,
+                    const std::vector<IDType> &resolvedMemoryObjects,
+                    const std::vector<Assignment> &resolveConcretizations,
+                    std::vector<ref<Expr>> &results);
+
   // do address resolution / object binding / out of bounds checking
   // and perform the operation
   void executeMemoryOperation(ExecutionState &state, bool isWrite,
@@ -340,9 +367,11 @@ private:
   IDType lazyInitializeObject(ExecutionState &state, ref<Expr> address,
                               KInstruction *target, KType *targetType,
                               uint64_t size);
+
   void executeMakeSymbolic(ExecutionState &state, const MemoryObject *mo,
-                           KType *type, const std::string &name,
-                           const ref<SymbolicSource> source, bool isLocal);
+                           KType *type, const ref<SymbolicSource> source,
+                           bool isLocal);
+
   void updateStateWithSymcretes(ExecutionState &state,
                                 const Assignment &assignment);
 
@@ -373,18 +402,59 @@ private:
   // Used for testing.
   ref<Expr> replaceReadWithSymbolic(ExecutionState &state, ref<Expr> e);
 
-  const Cell &eval(KInstruction *ki, unsigned index,
-                   ExecutionState &state) const;
+  const Cell &eval(const KInstruction *ki, unsigned index,
+                   ExecutionState &state, StackFrame &sf,
+                   bool isSymbolic = true);
 
-  Cell &getArgumentCell(ExecutionState &state, KFunction *kf, unsigned index) {
-    return state.stack.back().locals[kf->getArgRegister(index)];
+  ref<Expr> readArgument(ExecutionState &state, StackFrame &frame,
+                         const KFunction *kf, unsigned index) {
+    ref<Expr> arg = frame.locals[kf->getArgRegister(index)].value;
+    if (!arg) {
+      prepareSymbolicArg(state, frame, index);
+    }
+    return frame.locals[kf->getArgRegister(index)].value;
   }
 
-  Cell &getDestCell(ExecutionState &state, KInstruction *target) {
-    return state.stack.back().locals[target->dest];
+  ref<Expr> readDest(ExecutionState &state, StackFrame &frame,
+                     const KInstruction *target) {
+    unsigned index = target->dest;
+    ref<Expr> reg = frame.locals[index].value;
+    if (!reg) {
+      prepareSymbolicRegister(state, frame, index);
+    }
+    return frame.locals[index].value;
   }
 
-  void bindLocal(KInstruction *target, ExecutionState &state, ref<Expr> value);
+  Cell &getArgumentCell(const StackFrame &frame, const KFunction *kf,
+                        unsigned index) {
+    return frame.locals[kf->getArgRegister(index)];
+  }
+
+  Cell &getDestCell(const StackFrame &frame, const KInstruction *target) {
+    return frame.locals[target->dest];
+  }
+
+  const Cell &eval(const KInstruction *ki, unsigned index,
+                   ExecutionState &state, bool isSymbolic = true);
+
+  Cell &getArgumentCell(const ExecutionState &state, const KFunction *kf,
+                        unsigned index) {
+    return getArgumentCell(state.stack.back(), kf, index);
+  }
+
+  Cell &getDestCell(const ExecutionState &state, const KInstruction *target) {
+    return getDestCell(state.stack.back(), target);
+  }
+
+  void bindLocal(const KInstruction *target, StackFrame &frame,
+                 ref<Expr> value);
+
+  void bindArgument(KFunction *kf, unsigned index, StackFrame &frame,
+                    ref<Expr> value);
+
+  void bindLocal(const KInstruction *target, ExecutionState &state,
+                 ref<Expr> value);
+
   void bindArgument(KFunction *kf, unsigned index, ExecutionState &state,
                     ref<Expr> value);
 
@@ -395,17 +465,17 @@ private:
                                            llvm::APFloat::roundingMode rm,
                                            const KInstruction *ki = NULL);
 
-  /// Evaluates an LLVM float comparison. the operands are two float
-  /// expressions.
-  ref<klee::Expr> evaluateFCmp(unsigned int predicate, ref<klee::Expr> left,
-                               ref<klee::Expr> right) const;
-
   /// Evaluates an LLVM constant.  The optional argument ki is the
   /// instruction where this constant was encountered, or NULL if
   /// not applicable/unavailable.
   ref<klee::ConstantExpr> evalConstant(const llvm::Constant *c,
                                        llvm::APFloat::roundingMode rm,
                                        const KInstruction *ki = NULL);
+
+  /// Evaluates an LLVM float comparison. the operands are two float
+  /// expressions.
+  ref<klee::Expr> evaluateFCmp(unsigned int predicate, ref<klee::Expr> left,
+                               ref<klee::Expr> right) const;
 
   /// Return a unique constant value for the given expression in the
   /// given state, if it has one (i.e. it provably only has a single
@@ -481,9 +551,9 @@ private:
   /// bindModuleConstants - Initialize the module constant table.
   void bindModuleConstants(const llvm::APFloat::roundingMode &rm);
 
-  const Array *makeArray(ExecutionState &state, ref<Expr> size,
-                         const std::string &name,
-                         const ref<SymbolicSource> source);
+  uint64_t updateNameVersion(ExecutionState &state, const std::string &name);
+
+  const Array *makeArray(ref<Expr> size, const ref<SymbolicSource> source);
 
   template <typename SqType, typename TypeIt>
   void computeOffsetsSeqTy(KGEPInstruction *kgepi,
@@ -514,6 +584,7 @@ private:
   /// Only for debug purposes; enable via debugger or klee-control
   void dumpStates();
   void dumpPTree();
+  ComposeResult compose(ExecutionState *state, PathConstraints *pob);
 
 public:
   Executor(llvm::LLVMContext &ctx, const InterpreterOptions &opts,
@@ -552,6 +623,21 @@ public:
   void runFunctionAsMain(llvm::Function *f, int argc, char **argv,
                          char **envp) override;
 
+  /*** Isolated execution ***/
+
+  ref<Expr> makeSymbolicValue(llvm::Value *value, ExecutionState &state);
+
+  void prepareSymbolicValue(ExecutionState &state, StackFrame &frame,
+                            KInstruction *target);
+
+  void prepareSymbolicRegister(ExecutionState &state, StackFrame &frame,
+                               unsigned index);
+
+  void prepareSymbolicArg(ExecutionState &state, StackFrame &frame,
+                          unsigned index);
+
+  void prepareSymbolicArgs(ExecutionState &state, StackFrame &frame);
+
   /*** Runtime options ***/
 
   void setHaltExecution(bool value) override { haltExecution = value; }
@@ -588,8 +674,6 @@ public:
   /// Returns the errno location in memory of the state
   int *getErrnoLocation(const ExecutionState &state) const;
 
-  MergingSearcher *getMergingSearcher() const { return mergingSearcher; };
-  void setMergingSearcher(MergingSearcher *ms) { mergingSearcher = ms; };
   void executeStep(ExecutionState &state);
 };
 

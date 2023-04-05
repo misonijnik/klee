@@ -146,7 +146,7 @@ private:
     if (!head) {
       // FIXME: We need to do something (assert, mangle, etc.) so that printing
       // distinct arrays with the same name doesn't fail.
-      PC << updates.root->name;
+      PC << updates.root->getName();
       return;
     }
 
@@ -196,7 +196,7 @@ private:
     if (openedList)
       PC << ']';
 
-    PC << " @ " << updates.root->name;
+    PC << " @ " << updates.root->getName();
   }
 
   void printWidth(PrintContext &PC, ref<Expr> e) {
@@ -476,7 +476,7 @@ namespace {
 
 struct ArrayPtrsByName {
   bool operator()(const Array *a1, const Array *a2) const {
-    return a1->name < a2->name;
+    return a1->getName() < a2->getName();
   }
 };
 } // namespace
@@ -488,7 +488,7 @@ void ExprPPrinter::printQuery(
     bool printArrayDecls) {
   PPrinter p(os);
 
-  for (const auto &constraint : constraints)
+  for (const auto &constraint : constraints.cs())
     p.scan(constraint);
   p.scan(q);
 
@@ -508,27 +508,33 @@ void ExprPPrinter::printQuery(
                                               ie = sortedArray.end();
          it != ie; ++it) {
       const Array *A = *it;
-      PC << "array " << A->name << "[" << A->size << "]"
+      PC << "array " << A->getName() << "[" << A->size << "]"
          << " : w" << A->domain << " -> w" << A->range << " = ";
       if (A->isSymbolicArray()) {
         PC << "symbolic";
       } else {
-        ref<ConstantExpr> sizeConstantExpr = cast<ConstantExpr>(
-            constraints.getConcretization().evaluate(A->size));
-        PC << "[";
-        for (unsigned i = 0, e = sizeConstantExpr->getZExtValue(); i != e;
-             ++i) {
-          if (i)
-            PC << " ";
-          if (ref<ConstantWithSymbolicSizeSource>
-                  constantWithSymbolicSizeSource =
-                      dyn_cast<ConstantWithSymbolicSizeSource>(A->source)) {
-            PC << constantWithSymbolicSizeSource->defaultValue;
-          } else {
-            PC << A->constantValues[i];
+        if (ref<ConstantExpr> sizeConstantExpr =
+                dyn_cast<ConstantExpr>(constraints.concretization().evaluate(
+                    Simplificator::simplifyExpr(constraints, A->size)))) {
+          PC << "[";
+          for (unsigned i = 0, e = sizeConstantExpr->getZExtValue(); i != e;
+               ++i) {
+            if (i)
+              PC << " ";
+            if (ref<SymbolicSizeConstantSource> symbolicSizeConstantSource =
+                    dyn_cast<SymbolicSizeConstantSource>(A->source)) {
+              PC << symbolicSizeConstantSource->defaultValue;
+            } else if (ref<ConstantSource> constantSource =
+                           dyn_cast<ConstantSource>(A->source)) {
+              PC << constantSource->constantValues[i];
+            }
           }
+          PC << "]";
+        } else {
+          PC << "[ *of symbolic size";
+          PC << A->size;
+          PC << "* ]";
         }
-        PC << "]";
       }
       PC.breakLine();
     }
@@ -538,7 +544,8 @@ void ExprPPrinter::printQuery(
 
   // Ident at constraint list;
   unsigned indent = PC.pos;
-  for (auto it = constraints.begin(), ie = constraints.end(); it != ie;) {
+  for (auto it = constraints.cs().begin(), ie = constraints.cs().end();
+       it != ie;) {
     p.print(*it, PC);
     ++it;
     if (it != ie)
@@ -546,7 +553,7 @@ void ExprPPrinter::printQuery(
   }
   PC << ']';
 
-  p.printSeparator(PC, constraints.empty(), indent - 1);
+  p.printSeparator(PC, constraints.cs().empty(), indent - 1);
   p.print(q, PC);
 
   // Print expressions to obtain values for, if any.
@@ -569,7 +576,7 @@ void ExprPPrinter::printQuery(
     PC.breakLine(indent - 1);
     PC << '[';
     for (const Array *const *it = evalArraysBegin; it != evalArraysEnd; ++it) {
-      PC << (*it)->name;
+      PC << (*it)->getName();
       if (it + 1 != evalArraysEnd)
         PC.breakLine(indent);
     }

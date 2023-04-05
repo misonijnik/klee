@@ -12,6 +12,7 @@
 #include "klee/Expr/ArrayCache.h"
 #include "klee/Expr/Constraints.h"
 #include "klee/Expr/ExprBuilder.h"
+#include "klee/Expr/ExprHashMap.h"
 #include "klee/Expr/ExprPPrinter.h"
 #include "klee/Expr/Parser/Lexer.h"
 #include "klee/Expr/SourceBuilder.h"
@@ -511,14 +512,12 @@ exit:
   const Array *Root;
   if (!Values.empty())
     Root = TheArrayCache.CreateArray(
-        Label->Name,
         ConstantExpr::create(Size.get(), sizeof(uint64_t) * CHAR_BIT),
-        SourceBuilder::constant(), &Values[0], &Values[0] + Values.size());
+        SourceBuilder::constant(Label->Name, Values));
   else
     Root = TheArrayCache.CreateArray(
-        Label->Name,
         ConstantExpr::create(Size.get(), sizeof(uint64_t) * CHAR_BIT),
-        SourceBuilder::makeSymbolic());
+        SourceBuilder::makeSymbolic(Label->Name, 0));
   ArrayDecl *AD =
       new ArrayDecl(Label, Size.get(), DomainType.get(), RangeType.get(), Root);
 
@@ -1329,7 +1328,7 @@ VersionResult ParserImpl::ParseVersionSpecifier() {
     // FIXME: I'm not sure if this is right. Do we need a unique array here?
     Res = VersionResult(true,
                         UpdateList(TheArrayCache.CreateArray(
-                                       "", 0, SourceBuilder::makeSymbolic()),
+                                       0, SourceBuilder::makeSymbolic("", 0)),
                                    NULL));
   }
 
@@ -1614,17 +1613,26 @@ ParserImpl::~ParserImpl() {
 Decl::Decl(DeclKind _Kind) : Kind(_Kind) {}
 
 void ArrayDecl::dump() {
-  llvm::outs() << "array " << Root->name << "[" << Root->size << "]"
+  llvm::outs() << "array " << Root->getName() << "[" << Root->size << "]"
                << " : " << 'w' << Domain << " -> " << 'w' << Range << " = ";
 
   if (Root->isSymbolicArray()) {
     llvm::outs() << "symbolic\n";
   } else {
     llvm::outs() << '[';
-    for (unsigned i = 0, e = Root->constantValues.size(); i != e; ++i) {
-      if (i)
-        llvm::outs() << " ";
-      llvm::outs() << Root->constantValues[i];
+    if (ref<ConstantSource> constantSource =
+            dyn_cast<ConstantSource>(Root->source)) {
+      for (unsigned i = 0, e = constantSource->constantValues.size(); i != e;
+           ++i) {
+        if (i)
+          llvm::outs() << " ";
+        llvm::outs() << constantSource->constantValues[i];
+      }
+    }
+    if (ref<SymbolicSizeConstantSource> symbolicSizeConstantSource =
+            dyn_cast<SymbolicSizeConstantSource>(Root->source)) {
+      llvm::outs() << "symbolic " << symbolicSizeConstantSource->defaultValue
+                   << " \n";
     }
     llvm::outs() << "]\n";
   }
@@ -1633,6 +1641,10 @@ void ArrayDecl::dump() {
 void QueryCommand::dump() {
   const ExprHandle *ValuesBegin = 0, *ValuesEnd = 0;
   const Array *const *ObjectsBegin = 0, *const *ObjectsEnd = 0;
+  ExprOrderedSet constraints;
+  for (auto i : Constraints) {
+    constraints.insert(i);
+  }
   if (!Values.empty()) {
     ValuesBegin = &Values[0];
     ValuesEnd = ValuesBegin + Values.size();
@@ -1641,9 +1653,9 @@ void QueryCommand::dump() {
     ObjectsBegin = &Objects[0];
     ObjectsEnd = ObjectsBegin + Objects.size();
   }
-  ExprPPrinter::printQuery(llvm::outs(), ConstraintSet(Constraints), Query,
-                           ValuesBegin, ValuesEnd, ObjectsBegin, ObjectsEnd,
-                           false);
+  ExprPPrinter::printQuery(llvm::outs(), ConstraintSet(constraints, {}, {}),
+                           Query, ValuesBegin, ValuesEnd, ObjectsBegin,
+                           ObjectsEnd, false);
 }
 
 // Public parser API

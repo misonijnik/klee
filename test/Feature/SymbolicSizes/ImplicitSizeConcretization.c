@@ -13,6 +13,7 @@ int main() {
   if (n >= 5) {
     char *c1 = (char *)malloc(n);
     char *c2 = (char *)malloc(9 - n);
+    // CHECK: ImplicitSizeConcretization.c:[[@LINE+2]]: memory error: null pointer exception
     // CHECK: ImplicitSizeConcretization.c:[[@LINE+1]]: memory error: out of bound pointer
     c2[3] = 10;
     if (n >= 6) {
@@ -25,5 +26,5 @@ int main() {
 }
 
 // CHECK: KLEE: done: completed paths = 2
-// CHECK: KLEE: done: partially completed paths = 3
-// CHECK: KLEE: done: generated tests = 3
+// CHECK: KLEE: done: partially completed paths = 2
+// CHECK: KLEE: done: generated tests = 4

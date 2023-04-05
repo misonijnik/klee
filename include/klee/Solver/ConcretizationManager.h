@@ -12,20 +12,26 @@ struct CacheEntryHash;
 struct Query;
 
 class ConcretizationManager {
+  using cs_entry = ConstraintSet::constraints_ty;
+  using sm_entry = ConstraintSet::symcretes_ty;
+
 private:
   struct CacheEntry {
   public:
-    CacheEntry(const ConstraintSet &c, ref<Expr> q)
-        : constraints(c), query(q) {}
+    CacheEntry(const cs_entry &c, const sm_entry &s, ref<Expr> q)
+        : constraints(c), symcretes(s), query(q) {}
 
     CacheEntry(const CacheEntry &ce)
-        : constraints(ce.constraints), query(ce.query) {}
+        : constraints(ce.constraints), symcretes(ce.symcretes),
+          query(ce.query) {}
 
-    ConstraintSet constraints;
+    cs_entry constraints;
+    sm_entry symcretes;
     ref<Expr> query;
 
     bool operator==(const CacheEntry &b) const {
-      return constraints == b.constraints && *query.get() == *b.query.get();
+      return constraints == b.constraints && symcretes == b.symcretes &&
+             query == b.query;
     }
   };
 
@@ -45,7 +51,6 @@ private:
   typedef std::unordered_map<CacheEntry, const Assignment, CacheEntryHash>
       concretizations_map;
   concretizations_map concretizations;
-
   bool simplifyExprs;
 
 public:

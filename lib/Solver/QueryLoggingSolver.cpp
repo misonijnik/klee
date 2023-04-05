@@ -186,7 +186,7 @@ bool QueryLoggingSolver::computeInitialValues(
            i != e; ++i, ++values_it) {
         const Array *array = *i;
         SparseStorage<unsigned char> &data = *values_it;
-        logBuffer << queryCommentSign << "     " << array->name << " = [";
+        logBuffer << queryCommentSign << "     " << array->getName() << " = [";
         ref<ConstantExpr> arrayConstantSize =
             dyn_cast<ConstantExpr>(solutionAssignment.evaluate(array->size));
         assert(arrayConstantSize &&
@@ -233,7 +233,7 @@ bool QueryLoggingSolver::check(const Query &query,
            i != e; ++i) {
         const Array *array = i->first;
         const SparseStorage<unsigned char> &data = i->second;
-        logBuffer << queryCommentSign << "     " << array->name << " = [";
+        logBuffer << queryCommentSign << "     " << array->getName() << " = [";
         ref<ConstantExpr> arrayConstantSize =
             dyn_cast<ConstantExpr>(solutionAssignment.evaluate(array->size));
         assert(arrayConstantSize &&
@@ -252,8 +252,8 @@ bool QueryLoggingSolver::check(const Query &query,
       result->tryGetValidityCore(validityCore);
       logBuffer << queryCommentSign << "   ValidityCore:\n";
 
-      printQuery(
-          Query(ConstraintSet(validityCore.constraints), validityCore.expr));
+      printQuery(Query(ConstraintSet(validityCore.constraints, {}, {true}),
+                       validityCore.expr));
     }
   }
   logBuffer << "\n";
@@ -281,8 +281,8 @@ bool QueryLoggingSolver::computeValidityCore(const Query &query,
   if (isValid) {
     logBuffer << queryCommentSign << "   ValidityCore:\n";
 
-    printQuery(
-        Query(ConstraintSet(validityCore.constraints), validityCore.expr));
+    printQuery(Query(ConstraintSet(validityCore.constraints, {}, {true}),
+                     validityCore.expr));
   }
 
   logBuffer << "\n";

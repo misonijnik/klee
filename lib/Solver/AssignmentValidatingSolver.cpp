@@ -65,7 +65,8 @@ void AssignmentValidatingSolver::validateAssigment(
   // we can't compute a constant and flag this as a problem.
   Assignment assignment(objects, values, /*_allowFreeValues=*/true);
   // Check computed assignment satisfies query
-  for (const auto &constraint : query.constraints) {
+  assert(!query.containsSymcretes());
+  for (const auto &constraint : query.constraints.cs()) {
     ref<Expr> constraintEvaluated = assignment.evaluate(constraint);
     ConstantExpr *CE = dyn_cast<ConstantExpr>(constraintEvaluated);
     if (CE == NULL) {
@@ -140,7 +141,9 @@ bool AssignmentValidatingSolver::check(const Query &query,
   }
 
   ExprHashSet expressions;
-  expressions.insert(query.constraints.begin(), query.constraints.end());
+  assert(!query.containsSymcretes());
+  expressions.insert(query.constraints.cs().begin(),
+                     query.constraints.cs().end());
   expressions.insert(query.expr);
 
   std::vector<const Array *> objects;
@@ -168,8 +171,9 @@ void AssignmentValidatingSolver::dumpAssignmentQuery(
   auto constraints = assignment.createConstraintsFromAssignment();
 
   // Add Constraints from `query`
-  for (const auto &constraint : query.constraints)
-    constraints.push_back(constraint);
+  assert(!query.containsSymcretes());
+  for (const auto &constraint : query.constraints.cs())
+    constraints.addConstraint(constraint, {});
 
   Query augmentedQuery(constraints, query.expr);
 

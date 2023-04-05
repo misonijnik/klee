@@ -10,97 +10,128 @@
 #ifndef KLEE_CONSTRAINTS_H
 #define KLEE_CONSTRAINTS_H
 
+#include "klee/ADT/Ref.h"
+
 #include "klee/Expr/Assignment.h"
 #include "klee/Expr/Expr.h"
 #include "klee/Expr/ExprHashMap.h"
+#include "klee/Expr/ExprUtil.h"
+#include "klee/Expr/Path.h"
+#include "klee/Expr/Symcrete.h"
 
 #include <set>
+#include <vector>
 
 namespace klee {
 
 class MemoryObject;
+struct KInstruction;
 
 /// Resembles a set of constraints that can be passed around
 ///
 class ConstraintSet {
-  friend class ConstraintManager;
-
 public:
-  using constraints_ty = std::vector<ref<Expr>>;
-  using iterator = constraints_ty::iterator;
-  using const_iterator = constraints_ty::const_iterator;
+  using constraints_ty = ExprOrderedSet;
+  using symcretes_ty = std::set<ref<Symcrete>>;
 
-  using constraint_iterator = const_iterator;
-
-  bool empty() const;
-  constraint_iterator begin() const;
-  constraint_iterator end() const;
-  size_t size() const noexcept;
-
-  explicit ConstraintSet(constraints_ty cs);
-  explicit ConstraintSet(ExprHashSet cs);
+  ConstraintSet(constraints_ty cs, symcretes_ty symcretes,
+                Assignment concretization);
   ConstraintSet();
 
-  void push_back(const ref<Expr> &e);
-  void updateConcretization(const Assignment &symcretes);
+  void addConstraint(const ref<Expr> &e, const Assignment &delta);
+  void addSymcrete(ref<Symcrete> s, const Assignment &concretization);
+
+  void rewriteConcretization(const Assignment &a);
   ConstraintSet withExpr(ref<Expr> e) const;
 
   std::vector<const Array *> gatherArrays() const;
-  std::vector<const Array *> gatherSymcreteArrays() const;
-
-  std::set<ref<Expr>> asSet() const;
-  const Assignment &getConcretization() const;
+  std::vector<const Array *> gatherSymcretizedArrays() const;
 
   bool operator==(const ConstraintSet &b) const {
-    return constraints == b.constraints;
+    return _constraints == b._constraints && _symcretes == b._symcretes;
   }
 
   bool operator<(const ConstraintSet &b) const {
-    return constraints < b.constraints;
+    return _constraints < b._constraints || _symcretes < b._symcretes;
   }
 
   void dump() const;
 
+  const constraints_ty &cs() const;
+  const symcretes_ty &symcretes() const;
+  const Assignment &concretization() const;
+
 private:
-  constraints_ty constraints;
-  Assignment concretization;
+  constraints_ty _constraints;
+  symcretes_ty _symcretes;
+  Assignment _concretization;
 };
 
-class ExprVisitor;
-
-/// Manages constraints, e.g. optimisation
-class ConstraintManager {
+class PathConstraints {
 public:
-  /// Create constraint manager that modifies constraints
-  /// \param constraints
-  explicit ConstraintManager(ConstraintSet &constraints);
+  void advancePath(KInstruction *ki);
+  void addConstraint(const ref<Expr> &e, const Assignment &delta);
+  void addSymcrete(ref<Symcrete> s, const Assignment &concretization);
+  void rewriteConcretization(const Assignment &a);
 
-  /// Simplify expression expr based on constraints
-  /// \param constraints set of constraints used for simplification
-  /// \param expr to simplify
-  /// \return simplified expression
-  static ref<Expr> simplifyExpr(const ConstraintSet &constraints,
-                                const ref<Expr> &expr,
-                                ExprHashSet &conflictExpressions,
-                                Expr::States &result);
+  const ConstraintSet &cs() const;
+  const Path &path() const;
+
+  static PathConstraints concat(const PathConstraints &l,
+                                const PathConstraints &r);
+
+private:
+  Path _path;
+  ConstraintSet::constraints_ty original;
+  ConstraintSet constraints;
+  std::map<ref<Expr>, Path::PathIndex> pathIndexes;
+  ExprHashMap<ExprHashSet> simplificationMap;
+};
+
+struct Conflict {
+  Path path;
+  ConstraintSet::constraints_ty core;
+  std::map<ref<Expr>, Path::PathIndex> pathIndexes;
+
+  Conflict() = default;
+};
+
+struct TargetedConflict {
+  friend class ref<TargetedConflict>;
+
+private:
+  /// @brief Required by klee::ref-managed objects
+  class ReferenceCounter _refCount;
+
+public:
+  Conflict conflict;
+  KBlock *target;
+
+  TargetedConflict(Conflict &_conflict, KBlock *_target)
+      : conflict(_conflict), target(_target) {}
+};
+
+class Simplificator {
+public:
+  static ref<Expr>
+  simplifyExpr(const ConstraintSet::constraints_ty &constraints,
+               const ref<Expr> &expr);
+
   static ref<Expr> simplifyExpr(const ConstraintSet &constraints,
                                 const ref<Expr> &expr);
 
-  /// Add constraint to the referenced constraint set
-  /// \param constraint
-  void addConstraint(const ref<Expr> &constraint);
-  void addConstraint(const ref<Expr> &constraint, const Assignment &symcretes);
+  static void splitAnds(ref<Expr> e, std::vector<ref<Expr>> &exprs);
+
+  Simplificator(const ConstraintSet &constraints) : constraints(constraints) {}
+
+  ConstraintSet simplify();
+
+  ExprHashMap<ExprOrderedSet> &getSimplificationMap();
 
 private:
-  /// Rewrite set of constraints using the visitor
-  /// \param visitor constraint rewriter
-  /// \return true iff any constraint has been changed
-  bool rewriteConstraints(ExprVisitor &visitor);
-
-  /// Add constraint to the set of constraints
-  void addConstraintInternal(const ref<Expr> &constraint);
-
-  ConstraintSet &constraints;
+  bool simplificationDone = false;
+  const ConstraintSet &constraints;
+  ExprHashMap<ExprOrderedSet> simplificationMap;
 };
 
 } // namespace klee

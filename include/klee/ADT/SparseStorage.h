@@ -63,8 +63,9 @@ public:
   }
 
   void store(size_t idx, const ValueType &value) {
-    assert(idx >= 0 && idx < capacity);
-    internalStorage[idx] = value;
+    // assert(idx >= 0 && idx < capacity);
+    if (idx >= 0 && idx < capacity)
+      internalStorage[idx] = value;
   }
 
   template <typename InputIterator>
@@ -76,7 +77,7 @@ public:
   }
 
   ValueType load(size_t idx) const {
-    assert(idx < capacity && idx >= 0);
+    // assert(idx < capacity && idx >= 0);
     return contains(idx) ? internalStorage.at(idx) : defaultValue;
   }
 

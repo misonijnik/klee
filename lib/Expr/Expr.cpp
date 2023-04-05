@@ -1433,23 +1433,25 @@ ref<Expr> NotOptimizedExpr::create(ref<Expr> src) {
 
 /***/
 
-Array::Array(const std::string &_name, ref<Expr> _size,
-             ref<SymbolicSource> _source,
-             const ref<ConstantExpr> *constantValuesBegin,
-             const ref<ConstantExpr> *constantValuesEnd, Expr::Width _domain,
+Array::Array(ref<Expr> _size, ref<SymbolicSource> _source, Expr::Width _domain,
              Expr::Width _range)
-    : name(_name), size(_size), source(_source), domain(_domain), range(_range),
-      constantValues(constantValuesBegin, constantValuesEnd) {
+    : size(_size), source(_source), domain(_domain), range(_range) {
   ref<ConstantExpr> constantSize = dyn_cast<ConstantExpr>(size);
-  assert((!isa<ConstantSource>(_source) ||
-          constantValues.size() == constantSize->getZExtValue()) &&
-         "Invalid size for constant array!");
+  assert(
+      (!isa<ConstantSource>(_source) ||
+       cast<ConstantSource>(_source)->size() == constantSize->getZExtValue()) &&
+      "Invalid size for constant array!");
   computeHash();
 #ifndef NDEBUG
-  for (const ref<ConstantExpr> *it = constantValuesBegin;
-       it != constantValuesEnd; ++it)
-    assert((*it)->getWidth() == getRange() &&
-           "Invalid initial constant value!");
+  if (isa<ConstantSource>(_source)) {
+    for (const ref<ConstantExpr> *
+             it = cast<ConstantSource>(_source)->constantValues.data(),
+            *end = cast<ConstantSource>(_source)->constantValues.data() +
+                   cast<ConstantSource>(_source)->constantValues.size();
+         it != end; ++it)
+      assert((*it)->getWidth() == getRange() &&
+             "Invalid initial constant value!");
+  }
 #endif // NDEBUG
 }
 
@@ -1457,9 +1459,8 @@ Array::~Array() {}
 
 unsigned Array::computeHash() {
   unsigned res = 0;
-  for (unsigned i = 0, e = name.size(); i != e; ++i)
-    res = (res * Expr::MAGIC_HASH_CONSTANT) + name[i];
   res = (res * Expr::MAGIC_HASH_CONSTANT) + size->hash();
+  res = (res * Expr::MAGIC_HASH_CONSTANT) + source->hash();
   hashValue = res;
   return hashValue;
 }
@@ -1491,10 +1492,12 @@ ref<Expr> ReadExpr::create(const UpdateList &ul, ref<Expr> index) {
     // No updates with symbolic index to a constant array have been found
     if (ConstantExpr *CE = dyn_cast<ConstantExpr>(index)) {
       assert(CE->getWidth() <= 64 && "Index too large");
+      ref<ConstantSource> constantSource =
+          cast<ConstantSource>(ul.root->source);
       uint64_t concreteIndex = CE->getZExtValue();
-      uint64_t size = ul.root->constantValues.size();
+      uint64_t size = constantSource->constantValues.size();
       if (concreteIndex < size) {
-        return ul.root->constantValues[concreteIndex];
+        return constantSource->constantValues[concreteIndex];
       }
     }
   }
@@ -2059,16 +2062,19 @@ static ref<Expr> TryConstArrayOpt(const ref<ConstantExpr> &cl, ReadExpr *rd) {
   // for now, just assume standard "flushing" of a concrete array,
   // where the concrete array has one update for each index, in order
   ref<Expr> res = ConstantExpr::alloc(0, Expr::Bool);
-  for (unsigned i = 0, e = rd->updates.root->constantValues.size(); i != e;
-       ++i) {
-    if (cl == rd->updates.root->constantValues[i]) {
-      // Arbitrary maximum on the size of disjunction.
-      if (++numMatches > 100)
-        return EqExpr_create(cl, rd);
+  if (ref<ConstantSource> constantSource =
+          dyn_cast<ConstantSource>(rd->updates.root->source)) {
+    for (unsigned i = 0, e = constantSource->constantValues.size(); i != e;
+         ++i) {
+      if (cl == constantSource->constantValues[i]) {
+        // Arbitrary maximum on the size of disjunction.
+        if (++numMatches > 100)
+          return EqExpr_create(cl, rd);
 
-      ref<Expr> mayBe = EqExpr::create(
-          rd->index, ConstantExpr::alloc(i, rd->index->getWidth()));
-      res = OrExpr::create(res, mayBe);
+        ref<Expr> mayBe = EqExpr::create(
+            rd->index, ConstantExpr::alloc(i, rd->index->getWidth()));
+        res = OrExpr::create(res, mayBe);
+      }
     }
   }
 

@@ -561,9 +561,7 @@ public:
 
 class Array {
 public:
-  // Name of the array
-  const std::string name;
-
+  // Size of the array
   ref<Expr> size;
 
   /// This represents the reason why this array was created as well as some
@@ -574,11 +572,6 @@ public:
   /// Range is the size (in bits) of the number stored there (array of bytes ->
   /// 8)
   const Expr::Width domain, range;
-
-  /// constantValues - The constant initial values for this array, or empty for
-  /// a symbolic array. If non-empty, this size of this array is equivalent to
-  /// the array size.
-  const std::vector<ref<ConstantExpr>> constantValues;
 
 private:
   unsigned hashValue;
@@ -598,20 +591,18 @@ private:
   /// when printing expressions. When expressions are printed the output will
   /// not parse correctly since two arrays with the same name cannot be
   /// distinguished once printed.
-  Array(const std::string &_name, ref<Expr> _size,
-        const ref<SymbolicSource> source,
-        const ref<ConstantExpr> *constantValuesBegin = 0,
-        const ref<ConstantExpr> *constantValuesEnd = 0,
+public:
+  Array(ref<Expr> _size, const ref<SymbolicSource> source,
         Expr::Width _domain = Expr::Int32, Expr::Width _range = Expr::Int8);
 
 public:
   bool isSymbolicArray() const { return !isConstantArray(); }
   bool isConstantArray() const {
     return isa<ConstantSource>(source) ||
-           isa<ConstantWithSymbolicSizeSource>(source);
+           isa<SymbolicSizeConstantSource>(source);
   }
 
-  const std::string getName() const { return name; }
+  const std::string getName() const { return source->toString(); }
   ref<Expr> getSize() const { return size; }
   Expr::Width getDomain() const { return domain; }
   Expr::Width getRange() const { return range; }

@@ -10,14 +10,14 @@ using namespace klee;
 Assignment ConcretizationManager::get(const ConstraintSet &set,
                                       ref<Expr> query) {
   if (simplifyExprs) {
-    query = ConstraintManager::simplifyExpr(set, query);
+    query = Simplificator::simplifyExpr(set, query);
   }
-  CacheEntry ce(set, query);
+  CacheEntry ce(set.cs(), set.symcretes(), query);
   concretizations_map::iterator it = concretizations.find(ce);
   if (it != concretizations.end()) {
     return it->second;
-  } else if (!set.empty()) {
-    assert(0);
+  } else {
+    assert(set.cs().empty() && set.symcretes().empty());
   }
 
   return Assignment(true);
@@ -26,9 +26,9 @@ Assignment ConcretizationManager::get(const ConstraintSet &set,
 bool ConcretizationManager::contains(const ConstraintSet &set,
                                      ref<Expr> query) {
   if (simplifyExprs) {
-    query = ConstraintManager::simplifyExpr(set, query);
+    query = Simplificator::simplifyExpr(set, query);
   }
-  CacheEntry ce(set, query);
+  CacheEntry ce(set.cs(), set.symcretes(), query);
   concretizations_map::iterator it = concretizations.find(ce);
   return it != concretizations.end();
 }
@@ -36,8 +36,9 @@ bool ConcretizationManager::contains(const ConstraintSet &set,
 void ConcretizationManager::add(const Query &query, const Assignment &assign) {
   ref<Expr> expr = query.expr;
   if (simplifyExprs) {
-    expr = ConstraintManager::simplifyExpr(query.constraints, expr);
+    expr = Simplificator::simplifyExpr(query.constraints, expr);
   }
-  CacheEntry ce(query.constraints, query.expr);
+  CacheEntry ce(query.constraints.cs(), query.constraints.symcretes(),
+                query.expr);
   concretizations.insert(std::make_pair(ce, assign));
 }

@@ -214,7 +214,8 @@ char *Z3SolverImpl::getConstraintLog(const Query &query) {
     break;
   }
   ConstantArrayFinder constant_arrays_in_query;
-  for (auto const &constraint : query.constraints) {
+  assert(!query.containsSymcretes());
+  for (auto const &constraint : query.constraints.cs()) {
     assumptions.push_back(temp_builder->construct(constraint));
     constant_arrays_in_query.visit(constraint);
   }
@@ -305,7 +306,9 @@ bool Z3SolverImpl::computeInitialValues(
 
 bool Z3SolverImpl::check(const Query &query, ref<SolverResponse> &result) {
   ExprHashSet expressions;
-  expressions.insert(query.constraints.begin(), query.constraints.end());
+  assert(!query.containsSymcretes());
+  expressions.insert(query.constraints.cs().begin(),
+                     query.constraints.cs().end());
   expressions.insert(query.expr);
 
   std::vector<const Array *> objects;
@@ -341,6 +344,8 @@ bool Z3SolverImpl::internalRunSolver(
     std::vector<SparseStorage<unsigned char>> *values,
     ValidityCore *validityCore, bool &hasSolution) {
 
+  assert(!query.containsSymcretes());
+
   if (ProduceUnsatCore && validityCore) {
     enableUnsatCore();
   } else {
@@ -373,7 +378,7 @@ bool Z3SolverImpl::internalRunSolver(
       expr_to_track;
   std::unordered_set<Z3ASTHandle, Z3ASTHandleHash, Z3ASTHandleCmp> exprs;
 
-  for (auto const &constraint : query.constraints) {
+  for (auto const &constraint : query.constraints.cs()) {
     Z3ASTHandle z3Constraint = builder->construct(constraint);
     if (ProduceUnsatCore && validityCore) {
       Z3ASTHandle p =
@@ -461,7 +466,7 @@ bool Z3SolverImpl::internalRunSolver(
 
   ConstraintSet allConstraints = query.constraints.withExpr(query.expr);
   std::unordered_map<const Array *, ExprHashSet> usedArrayBytes;
-  for (auto constraint : allConstraints) {
+  for (auto constraint : allConstraints.cs()) {
     std::vector<ref<ReadExpr>> reads;
     findReads(constraint, true, reads);
     for (auto readExpr : reads) {
@@ -475,7 +480,7 @@ bool Z3SolverImpl::internalRunSolver(
   runStatusCode = handleSolverResponse(theSolver, satisfiable, objects, values,
                                        usedArrayBytes, hasSolution);
   if (ProduceUnsatCore && validityCore && satisfiable == Z3_L_FALSE) {
-    ExprHashSet unsatCore;
+    ExprOrderedSet unsatCore;
     Z3_ast_vector z3_unsat_core =
         Z3_solver_get_unsat_core(builder->ctx, theSolver);
     Z3_ast_vector_inc_ref(builder->ctx, z3_unsat_core);

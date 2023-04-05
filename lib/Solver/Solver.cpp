@@ -303,29 +303,22 @@ std::pair<ref<Expr>, ref<Expr>> Solver::getRange(const Query &query,
 std::vector<const Array *> Query::gatherArrays() const {
   std::vector<const Array *> arrays = constraints.gatherArrays();
   findObjects(expr, arrays);
-  return arrays;
-}
 
-std::vector<const Array *> Query::gatherSymcreteArrays() const {
-  std::unordered_set<const Array *> arrays;
-  for (const Array *array :
-       ConstraintSet(std::vector<ref<Expr>>{expr}).gatherSymcreteArrays()) {
-    arrays.insert(array);
-  }
-  for (const Array *array : constraints.gatherSymcreteArrays()) {
-    arrays.insert(array);
-  }
-  return std::vector<const Array *>(arrays.begin(), arrays.end());
+  std::unordered_set<const Array *> arraysSet;
+  arraysSet.insert(arrays.begin(), arrays.end());
+
+  return std::vector<const Array *>(arraysSet.begin(), arraysSet.end());
 }
 
 bool Query::containsSymcretes() const {
-  return !gatherSymcreteArrays().empty();
+  return !constraints.symcretes().empty();
 }
 
 void Query::dump() const {
   llvm::errs() << "Constraints [\n";
-  for (const auto &constraint : constraints)
-    constraint->dump();
+
+  for (const auto &constraint : constraints.cs())
+    constraint->dump(); // TODO
 
   llvm::errs() << "]\n";
   llvm::errs() << "Query [\n";
@@ -334,5 +327,5 @@ void Query::dump() const {
 }
 
 void ValidityCore::dump() const {
-  Query(ConstraintSet(constraints), expr).dump();
+  Query(ConstraintSet(constraints, {}, {true}), expr).dump();
 }

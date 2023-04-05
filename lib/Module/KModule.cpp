@@ -650,6 +650,7 @@ KBlock::KBlock(
 
     Instruction *inst = &*it;
     handleKInstruction(instructionToRegisterMap, inst, km, ki);
+    ki->index = i;
     instructions[i++] = ki;
     registerToInstructionMap[instructionToRegisterMap[&*it]] = ki;
   }

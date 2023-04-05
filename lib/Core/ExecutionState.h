@@ -11,7 +11,6 @@
 #define KLEE_EXECUTIONSTATE_H
 
 #include "AddressSpace.h"
-#include "MergeHandler.h"
 #include "Target.h"
 
 #include "klee/ADT/ImmutableSet.h"
@@ -163,6 +162,25 @@ struct Symbolic {
   }
 };
 
+struct Resolution {
+  IDType memoryObjectID;
+  ref<Expr> offset;
+  Resolution(IDType memoryObjectID, ref<Expr> offset)
+      : memoryObjectID(memoryObjectID), offset(offset) {}
+  Resolution &operator=(const Resolution &other) = default;
+
+  friend bool operator==(const Resolution &lhs, const Resolution &rhs) {
+    return lhs.memoryObjectID == rhs.memoryObjectID && lhs.offset == rhs.offset;
+  }
+};
+
+struct ResolutionCompare {
+  bool operator()(Resolution a, Resolution b) const {
+    return a.memoryObjectID < b.memoryObjectID ||
+           (a.memoryObjectID == b.memoryObjectID && a.offset < b.offset);
+  }
+};
+
 // typedef std::pair<ref<const MemoryObject>, const Array *> Symbolic;
 typedef std::pair<llvm::BasicBlock *, llvm::BasicBlock *> Transition;
 
@@ -194,9 +212,11 @@ public:
   /// @brief Stack representing the current instruction stream
   stack_ty stack;
 
+  int stackBalance;
+
   /// @brief Remember from which Basic Block control flow arrived
   /// (i.e. to select the right phi values)
-  std::uint32_t incomingBBIndex;
+  std::int32_t incomingBBIndex;
 
   // Overall state of the state - Data specific
 
@@ -213,7 +233,7 @@ public:
   AddressSpace addressSpace;
 
   /// @brief Constraints collected so far
-  ConstraintSet constraints;
+  PathConstraints constraints;
 
   /// Statistics and information
 
@@ -240,22 +260,15 @@ public:
   // FIXME: Move to a shared list structure (not critical).
   std::vector<Symbolic> symbolics;
 
-  /// @brief Ordered listof symbolic sizes: used to generate test cases.
-  std::vector<const Array *> symbolicSizes;
-
   /// @brief map from memory accesses to accessed objects and access offsets.
-  ExprHashMap<std::pair<IDType, ref<Expr>>> resolvedPointers;
+  ExprHashMap<std::set<Resolution, ResolutionCompare>> resolvedPointers;
 
   /// @brief A set of boolean expressions
   /// the user has requested be true of a counterexample.
   ImmutableSet<ref<Expr>> cexPreferences;
 
   /// @brief Set of used array names for this state.  Used to avoid collisions.
-  std::set<std::string> arrayNames;
-
-  /// @brief The objects handling the klee_open_merge calls this state ran
-  /// through
-  std::vector<ref<MergeHandler>> openMergeStack;
+  std::map<std::string, uint64_t> arrayNames;
 
   /// @brief The numbers of times this state has run through
   /// Executor::stepInstruction
@@ -287,11 +300,21 @@ public:
   /// @brief Disables forking for this state. Set by user code
   bool forkDisabled = false;
 
+  bool isolated = false;
+
+  /// @brief Index of current symbolic in case of pre-loaded symbolics.
+  size_t symbolicCounter;
+
+  /// Needed for composition
+  ref<Expr> returnValue;
+
   /// @brief The targets that the state must achieve
   std::set<Target> targets;
 
   ExprHashMap<std::pair<ref<Expr>, llvm::Type *>> gepExprBases;
-  ExprHashMap<ref<Expr>> gepExprOffsets;
+
+  unsigned backwardStepsLeftCounter;
+  unsigned failedBackwardStepsCounter;
 
 public:
 #ifdef KLEE_UNITTEST
@@ -310,6 +333,10 @@ public:
   ~ExecutionState();
 
   ExecutionState *branch();
+  // ExecutionState *withKFunction(KFunction *kf) const;
+  // ExecutionState *withKBlock(KBlock *kb) const;
+  ExecutionState *withKInstruction(KInstruction *ki) const;
+  ExecutionState *copy() const;
 
   bool inSymbolics(const MemoryObject *mo) const;
 
@@ -325,15 +352,12 @@ public:
                std::pair<ref<const MemoryObject>, ref<Expr>> &resolution) const;
 
   void removePointerResolutions(const MemoryObject *mo);
-  void addPointerResolution(ref<Expr> address, ref<Expr> base,
-                            const MemoryObject *mo);
+  void addPointerResolution(ref<Expr> address, const MemoryObject *mo);
   bool resolveOnSymbolics(const ref<ConstantExpr> &addr, IDType &result) const;
 
-  void addConstraint(ref<Expr> e);
   void addConstraint(ref<Expr> e, const Assignment &c);
   void addCexPreference(const ref<Expr> &cond);
 
-  bool merge(const ExecutionState &b);
   void dumpStack(llvm::raw_ostream &out) const;
 
   std::uint32_t getID() const { return id; };

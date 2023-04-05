@@ -30,6 +30,8 @@ class ArrayCache;
 typedef uint64_t IDType;
 
 class MemoryManager {
+  friend class AddressManager;
+
 private:
   typedef std::set<MemoryObject *> objects_ty;
   objects_ty objects;
@@ -50,10 +52,9 @@ public:
    * memory.
    */
   MemoryObject *allocate(uint64_t size, bool isLocal, bool isGlobal,
-                         const llvm::Value *allocSite, size_t alignment,
-                         ref<Expr> addressExpr = ref<Expr>(),
+                         bool isLazyInitialiazed, const llvm::Value *allocSite,
+                         size_t alignment, ref<Expr> addressExpr = ref<Expr>(),
                          ref<Expr> sizeExpr = ref<Expr>(),
-                         ref<Expr> lazyInitializationSource = ref<Expr>(),
                          unsigned timestamp = 0, IDType id = 0);
   MemoryObject *allocateFixed(uint64_t address, uint64_t size,
                               const llvm::Value *allocSite);

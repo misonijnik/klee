@@ -10,8 +10,12 @@
 #include "klee/Expr/Constraints.h"
 
 #include "klee/Expr/Assignment.h"
+#include "klee/Expr/Expr.h"
+#include "klee/Expr/ExprHashMap.h"
 #include "klee/Expr/ExprUtil.h"
 #include "klee/Expr/ExprVisitor.h"
+#include "klee/Expr/Path.h"
+#include "klee/Expr/Symcrete.h"
 #include "klee/Module/KModule.h"
 #include "klee/Support/OptionCategories.h"
 
@@ -55,85 +59,158 @@ public:
 
 class ExprReplaceVisitor2 : public ExprVisitor {
 private:
-  ExprHashMap<ref<Expr>> &replacements;
-  ExprHashSet &conflictExpressions;
-  Expr::States &result;
+  const std::map<ref<Expr>, ref<Expr>> &replacements;
 
 public:
-  explicit ExprReplaceVisitor2(ExprHashMap<ref<Expr>> &_replacements,
-                               ExprHashSet &_conflictExpressions,
-                               Expr::States &_result)
-
-      : ExprVisitor(true), replacements(_replacements),
-        conflictExpressions(_conflictExpressions), result(_result) {}
+  explicit ExprReplaceVisitor2(
+      const std::map<ref<Expr>, ref<Expr>> &_replacements)
+      : ExprVisitor(true), replacements(_replacements) {}
 
   Action visitExprPost(const Expr &e) override {
     auto it = replacements.find(ref<Expr>(const_cast<Expr *>(&e)));
     if (it != replacements.end()) {
-      ref<Expr> equality = EqExpr::create(it->first, it->second);
-      conflictExpressions.insert(equality);
       return Action::changeTo(it->second);
     }
     return Action::doChildren();
   }
-
-  ref<Expr> findConflict(const ref<Expr> &e) {
-    ref<Expr> eSimplified = visit(e);
-    result = Expr::States::Undefined;
-    if (eSimplified->getWidth() != Expr::Bool ||
-        !isa<ConstantExpr>(*eSimplified)) {
-      conflictExpressions.clear();
-      return eSimplified;
-    }
-
-    if (eSimplified->isTrue() == true) {
-      result = Expr::States::True;
-    }
-    if (eSimplified->isFalse() == true) {
-      result = Expr::States::False;
-    }
-
-    return eSimplified;
-  }
 };
 
-bool ConstraintManager::rewriteConstraints(ExprVisitor &visitor) {
-  ConstraintSet old;
-  Assignment concretization = constraints.getConcretization();
-  bool changed = false;
+ConstraintSet::ConstraintSet(constraints_ty cs, symcretes_ty symcretes,
+                             Assignment concretization)
+    : _constraints(cs), _symcretes(symcretes), _concretization(concretization) {
+}
 
-  std::swap(constraints, old);
-  for (auto &ce : old) {
-    ref<Expr> e = visitor.visit(ce);
+ConstraintSet::ConstraintSet() : _concretization(Assignment(true)) {}
 
-    if (e != ce) {
-      addConstraintInternal(e); // enable further reductions
-      changed = true;
-    } else {
-      constraints.push_back(ce);
+void ConstraintSet::addConstraint(const ref<Expr> &e, const Assignment &delta) {
+  _constraints.insert(e);
+  for (auto i : delta.bindings) {
+    _concretization.bindings[i.first] = i.second;
+  }
+}
+
+IDType Symcrete::idCounter = 0;
+
+void ConstraintSet::addSymcrete(ref<Symcrete> s,
+                                const Assignment &concretization) {
+  _symcretes.insert(s);
+  for (auto i : s->dependentArrays()) {
+    _concretization.bindings[i] = concretization.bindings.at(i);
+  }
+}
+
+void ConstraintSet::rewriteConcretization(const Assignment &a) {
+  for (auto i : a.bindings) {
+    if (concretization().bindings.count(i.first)) {
+      _concretization.bindings[i.first] = i.second;
     }
   }
-
-  constraints.updateConcretization(concretization);
-  return changed;
 }
 
-ref<Expr> ConstraintManager::simplifyExpr(const ConstraintSet &constraints,
-                                          const ref<Expr> &e) {
-  ExprHashSet cE;
-  Expr::States r;
-  return simplifyExpr(constraints, e, cE, r);
+/**
+ * @brief Copies the current constraint set and adds expression e.
+ *
+ * Ideally, this function should accept variadic arguments pack
+ * and unpack them with fold expressions, but this feature availible only
+ * from C++17.
+ *
+ * @return copied and modified constraint set.
+ */
+ConstraintSet ConstraintSet::withExpr(ref<Expr> e) const {
+  ConstraintSet newConstraintSet = *this;
+  newConstraintSet.addConstraint(e, {});
+  return newConstraintSet;
 }
 
-ref<Expr> ConstraintManager::simplifyExpr(const ConstraintSet &constraints,
-                                          const ref<Expr> &e,
-                                          ExprHashSet &conflictExpressions,
-                                          Expr::States &result) {
+void ConstraintSet::dump() const {
+  llvm::errs() << "Constraints [\n";
+  for (const auto &constraint : _constraints)
+    constraint->dump();
 
-  if (isa<ConstantExpr>(e))
-    return e;
+  llvm::errs() << "]\n";
+}
 
-  ExprHashMap<ref<Expr>> equalities;
+const ConstraintSet::constraints_ty &ConstraintSet::cs() const {
+  return _constraints;
+}
+
+const ConstraintSet::symcretes_ty &ConstraintSet::symcretes() const {
+  return _symcretes;
+}
+
+const Path &PathConstraints::path() const { return _path; }
+
+const Assignment &ConstraintSet::concretization() const {
+  return _concretization;
+}
+
+const ConstraintSet &PathConstraints::cs() const { return constraints; }
+
+void PathConstraints::advancePath(KInstruction *ki) { _path.advance(ki); }
+
+void PathConstraints::addConstraint(const ref<Expr> &e,
+                                    const Assignment &delta) {
+  auto expr = Simplificator::simplifyExpr(constraints, e);
+  if (auto ce = dyn_cast<ConstantExpr>(expr)) {
+    assert(ce->isTrue() && "Attempt to add invalid constraint");
+    return;
+  }
+  original.insert(expr);
+  pathIndexes.insert({expr, _path.getCurrentIndex()});
+  constraints.addConstraint(expr, delta);
+  auto simplificator = Simplificator(constraints);
+  constraints = simplificator.simplify();
+  ExprHashMap<ExprHashSet> newMap;
+  for (auto i : simplificator.getSimplificationMap()) {
+    ExprHashSet newSet;
+    for (auto j : i.second) {
+      for (auto k : simplificationMap[j]) {
+        newSet.insert(k);
+      }
+    }
+    newMap.insert({i.first, newSet});
+  }
+  simplificationMap = newMap;
+}
+
+void PathConstraints::addSymcrete(ref<Symcrete> s,
+                                  const Assignment &concretization) {
+  constraints.addSymcrete(s, concretization);
+}
+
+void PathConstraints::rewriteConcretization(const Assignment &a) {
+  constraints.rewriteConcretization(a);
+}
+
+PathConstraints PathConstraints::concat(const PathConstraints &l,
+                                        const PathConstraints &r) {
+  // TODO : How to handle symcretes and concretization?
+  PathConstraints path = l;
+  path._path = Path::concat(l._path, r._path);
+  auto offset = l._path.KBlockSize();
+  for (const auto &i : r.original) {
+    path.original.insert(i);
+    auto index = r.pathIndexes.at(i);
+    index.block += offset;
+    path.pathIndexes.insert({i, index});
+  }
+  for (const auto &i : r.constraints.cs()) {
+    path.constraints.addConstraint(i, {});
+    if (r.simplificationMap.count(i)) {
+      path.simplificationMap.insert({i, r.simplificationMap.at(i)});
+    }
+  }
+  // Run the simplificator on the newly constructed set?
+  return path;
+}
+
+ref<Expr>
+Simplificator::simplifyExpr(const ConstraintSet::constraints_ty &constraints,
+                            const ref<Expr> &expr) {
+  if (isa<ConstantExpr>(expr))
+    return expr;
+
+  std::map<ref<Expr>, ref<Expr>> equalities;
 
   for (auto &constraint : constraints) {
     if (const EqExpr *ee = dyn_cast<EqExpr>(constraint)) {
@@ -149,142 +226,123 @@ ref<Expr> ConstraintManager::simplifyExpr(const ConstraintSet &constraints,
     }
   }
 
-  return ExprReplaceVisitor2(equalities, conflictExpressions, result)
-      .findConflict(e);
+  return ExprReplaceVisitor2(equalities).visit(expr);
 }
 
-void ConstraintManager::addConstraintInternal(const ref<Expr> &e) {
-  // rewrite any known equalities and split Ands into different conjuncts
+ref<Expr> Simplificator::simplifyExpr(const ConstraintSet &constraints,
+                                      const ref<Expr> &expr) {
+  return simplifyExpr(constraints.cs(), expr);
+}
 
-  switch (e->getKind()) {
-  case Expr::Constant:
-    assert(cast<ConstantExpr>(e)->isTrue() &&
-           "attempt to add invalid (false) constraint");
-    break;
+ConstraintSet Simplificator::simplify() {
+  assert(!simplificationDone);
+  using EqualityMap = ExprHashMap<std::pair<ref<Expr>, ref<Expr>>>;
+  EqualityMap equalities;
+  bool changed = true;
+  ExprHashMap<ExprOrderedSet> map;
+  ConstraintSet::constraints_ty current;
+  ConstraintSet::constraints_ty next = constraints.cs();
 
-    // split to enable finer grained independence and other optimizations
-  case Expr::And: {
-    BinaryExpr *be = cast<BinaryExpr>(e);
-    addConstraintInternal(be->left);
-    addConstraintInternal(be->right);
-    break;
-  }
-
-  case Expr::Eq: {
-    if (RewriteEqualities) {
-      // XXX: should profile the effects of this and the overhead.
-      // traversing the constraints looking for equalities is hardly the
-      // slowest thing we do, but it is probably nicer to have a
-      // ConstraintSet ADT which efficiently remembers obvious patterns
-      // (byte-constant comparison).
-      BinaryExpr *be = cast<BinaryExpr>(e);
+  for (auto e : next) {
+    if (e->getKind() == Expr::Eq) {
+      auto be = cast<BinaryExpr>(e);
       if (isa<ConstantExpr>(be->left)) {
-        ExprReplaceVisitor visitor(be->right, be->left);
-        rewriteConstraints(visitor);
+        equalities.insert({e, {be->right, be->left}});
       }
     }
-    constraints.push_back(e);
-    break;
   }
 
-  default:
-    constraints.push_back(e);
-    break;
+  while (changed) {
+    changed = false;
+    std::vector<EqualityMap::value_type> newEqualitites;
+    for (auto eq : equalities) {
+      auto visitor = ExprReplaceVisitor(eq.second.first, eq.second.second);
+      current = next;
+      next.clear();
+      for (auto expr : current) {
+        ref<Expr> simplifiedExpr;
+        if (expr != eq.first && RewriteEqualities) {
+          simplifiedExpr = visitor.visit(expr);
+        } else {
+          simplifiedExpr = expr;
+        }
+        if (simplifiedExpr != expr) {
+          changed = true;
+          ExprOrderedSet mapEntry;
+          if (auto ce = dyn_cast<ConstantExpr>(simplifiedExpr)) {
+            assert(ce->isTrue() && "Constraint simplified to false");
+            continue;
+          }
+          if (map.count(expr)) {
+            mapEntry = map.at(expr);
+          }
+          mapEntry.insert(eq.first);
+          std::vector<ref<Expr>> simplifiedExprs;
+          splitAnds(simplifiedExpr, simplifiedExprs);
+          for (auto simplifiedExpr : simplifiedExprs) {
+            if (simplifiedExpr->getKind() == Expr::Eq) {
+              auto be = cast<BinaryExpr>(simplifiedExpr);
+              if (isa<ConstantExpr>(be->left)) {
+                newEqualitites.push_back(
+                    {simplifiedExpr, {be->right, be->left}});
+              }
+            }
+          }
+          for (auto simplifiedExpr : simplifiedExprs) {
+            for (auto i : mapEntry) {
+              map[simplifiedExpr].insert(i);
+            }
+            next.insert(simplifiedExpr);
+          }
+        } else {
+          next.insert(expr);
+        }
+      }
+    }
+    for (auto equality : newEqualitites) {
+      equalities.insert(equality);
+    }
   }
+
+  for (auto entry : map) {
+    if (next.count(entry.first)) {
+      simplificationMap.insert(entry);
+    }
+  }
+  simplificationDone = true;
+  return ConstraintSet(next, constraints.symcretes(),
+                       constraints.concretization());
 }
 
-void ConstraintManager::addConstraint(const ref<Expr> &e) {
-  ref<Expr> simplified = simplifyExpr(constraints, e);
-  addConstraintInternal(simplified);
+ExprHashMap<ExprOrderedSet> &Simplificator::getSimplificationMap() {
+  assert(simplificationDone);
+  return simplificationMap;
 }
 
-void ConstraintManager::addConstraint(const ref<Expr> &e,
-                                      const Assignment &symcretes) {
-  addConstraint(e);
-  constraints.updateConcretization(symcretes);
-}
-
-ConstraintManager::ConstraintManager(ConstraintSet &_constraints)
-    : constraints(_constraints) {}
-
-bool ConstraintSet::empty() const { return constraints.empty(); }
-
-klee::ConstraintSet::constraint_iterator ConstraintSet::begin() const {
-  return constraints.begin();
-}
-
-klee::ConstraintSet::constraint_iterator ConstraintSet::end() const {
-  return constraints.end();
-}
-
-size_t ConstraintSet::size() const noexcept { return constraints.size(); }
-
-ConstraintSet::ConstraintSet(constraints_ty cs)
-    : constraints(std::move(cs)), concretization(Assignment(true)) {}
-
-ConstraintSet::ConstraintSet(ExprHashSet cs)
-    : constraints(), concretization(Assignment(true)) {
-  constraints.insert(constraints.end(), cs.begin(), cs.end());
-}
-
-ConstraintSet::ConstraintSet()
-    : constraints(), concretization(Assignment(true)) {}
-
-void ConstraintSet::push_back(const ref<Expr> &e) { constraints.push_back(e); }
-
-void ConstraintSet::updateConcretization(const Assignment &c) {
-  concretization = c;
-}
-
-/**
- * @brief Copies the current constraint set and adds expression e.
- *
- * Ideally, this function should accept variadic arguments pack
- * and unpack them with fold expressions, but this feature availible only
- * from C++17.
- *
- * @return copied and modified constraint set.
- */
-ConstraintSet ConstraintSet::withExpr(ref<Expr> e) const {
-  ConstraintSet newConstraintSet = *this;
-  newConstraintSet.push_back(e);
-  return newConstraintSet;
-}
-
-void ConstraintSet::dump() const {
-  llvm::errs() << "Constraints [\n";
-  for (const auto &constraint : constraints)
-    constraint->dump();
-
-  llvm::errs() << "]\n";
+void Simplificator::splitAnds(ref<Expr> e, std::vector<ref<Expr>> &exprs) {
+  if (auto ce = dyn_cast<ConstantExpr>(e)) {
+    assert(ce->isTrue() && "Expression simplified to false");
+    return;
+  }
+  if (auto andExpr = dyn_cast<AndExpr>(e)) {
+    splitAnds(andExpr->getKid(0), exprs);
+    splitAnds(andExpr->getKid(1), exprs);
+  } else {
+    exprs.push_back(e);
+  }
 }
 
 std::vector<const Array *> ConstraintSet::gatherArrays() const {
   std::vector<const Array *> arrays;
-  findObjects(constraints.begin(), constraints.end(), arrays);
+  findObjects(_constraints.begin(), _constraints.end(), arrays);
   return arrays;
 }
 
-std::vector<const Array *> ConstraintSet::gatherSymcreteArrays() const {
+std::vector<const Array *> ConstraintSet::gatherSymcretizedArrays() const {
   std::unordered_set<const Array *> arrays;
-  // TODO: this can be replaced with LLVM library function llvm::copy_if
-  // from LLVM X (>6) version?
-  for (const Array *array : gatherArrays()) {
-    if (array->source->isSymcrete()) {
-      arrays.insert(array);
-    }
+  for (const ref<Symcrete> &symcrete : _symcretes) {
+    arrays.insert(symcrete->dependentArrays().begin(),
+                  symcrete->dependentArrays().end());
   }
   return std::vector<const Array *>(arrays.begin(), arrays.end());
-}
-
-std::set<ref<Expr>> ConstraintSet::asSet() const {
-  std::set<ref<Expr>> ret;
-  for (auto i : constraints) {
-    ret.insert(i);
-  }
-  return ret;
-}
-
-const Assignment &ConstraintSet::getConcretization() const {
-  return concretization;
 }

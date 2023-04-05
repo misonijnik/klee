@@ -47,6 +47,7 @@ target_link_libraries(kleaverSolver PUBLIC
   kleeBasic
   kleaverExpr
   kleeSupport
+  kleeModule
   ${KLEE_SOLVER_LIBRARIES})
 
 install(TARGETS kleaverSolver

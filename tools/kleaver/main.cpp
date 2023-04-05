@@ -12,6 +12,7 @@
 #include "klee/Expr/Constraints.h"
 #include "klee/Expr/Expr.h"
 #include "klee/Expr/ExprBuilder.h"
+#include "klee/Expr/ExprHashMap.h"
 #include "klee/Expr/ExprPPrinter.h"
 #include "klee/Expr/ExprSMTLIBPrinter.h"
 #include "klee/Expr/ExprVisitor.h"
@@ -220,8 +221,13 @@ static bool EvaluateInputAST(const char *Filename, const MemoryBuffer *MB,
       assert("FIXME: Support counterexample query commands!");
       if (QC->Values.empty() && QC->Objects.empty()) {
         bool result;
-        if (S->mustBeTrue(Query(ConstraintSet(QC->Constraints), QC->Query),
-                          result)) {
+        ExprOrderedSet constraints;
+        for (auto i : QC->Constraints) {
+          constraints.insert(i);
+        }
+        if (S->mustBeTrue(
+                Query(ConstraintSet(constraints, {}, {true}), QC->Query),
+                result)) {
           llvm::outs() << (result ? "VALID" : "INVALID");
         } else {
           llvm::outs() << "FAIL (reason: "
@@ -237,8 +243,13 @@ static bool EvaluateInputAST(const char *Filename, const MemoryBuffer *MB,
         assert(QC->Query->isFalse() &&
                "FIXME: Support counterexamples with non-trivial query!");
         ref<ConstantExpr> result;
-        if (S->getValue(Query(ConstraintSet(QC->Constraints), QC->Values[0]),
-                        result)) {
+        ExprOrderedSet constraints;
+        for (auto i : QC->Constraints) {
+          constraints.insert(i);
+        }
+        if (S->getValue(
+                Query(ConstraintSet(constraints, {}, {true}), QC->Values[0]),
+                result)) {
           llvm::outs() << "INVALID\n";
           llvm::outs() << "\tExpr 0:\t" << result;
         } else {
@@ -250,14 +261,19 @@ static bool EvaluateInputAST(const char *Filename, const MemoryBuffer *MB,
       } else {
         std::vector<SparseStorage<unsigned char>> result;
 
+        ExprOrderedSet constraints;
+        for (auto i : QC->Constraints) {
+          constraints.insert(i);
+        }
+
         if (S->getInitialValues(
-                Query(ConstraintSet(QC->Constraints), QC->Query), QC->Objects,
-                result)) {
+                Query(ConstraintSet(constraints, {}, {true}), QC->Query),
+                QC->Objects, result)) {
           llvm::outs() << "INVALID\n";
           Assignment solutionAssugnment(QC->Objects, result);
           for (unsigned i = 0, e = result.size(); i != e; ++i) {
-            llvm::outs() << "\tArray " << i << ":\t" << QC->Objects[i]->name
-                         << "[";
+            llvm::outs() << "\tArray " << i << ":\t"
+                         << QC->Objects[i]->getName() << "[";
             ref<ConstantExpr> arrayConstantSize = dyn_cast<ConstantExpr>(
                 solutionAssugnment.evaluate(QC->Objects[i]->size));
             assert(arrayConstantSize &&
@@ -359,7 +375,12 @@ static bool printInputAsSMTLIBv2(const char *Filename, const MemoryBuffer *MB,
        * constraint in the constraint set is set to NULL and
        * will later cause a NULL pointer dereference.
        */
-      ConstraintSet constraintM(QC->Constraints);
+      ExprOrderedSet constraints;
+      for (auto i : QC->Constraints) {
+        constraints.insert(i);
+      }
+
+      ConstraintSet constraintM(constraints, {}, {true});
       Query query(constraintM, QC->Query);
       printer.setQuery(query);
 

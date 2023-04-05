@@ -60,7 +60,6 @@ public:
   }
   /// Get all arrays that figure in the query
   std::vector<const Array *> gatherArrays() const;
-  std::vector<const Array *> gatherSymcreteArrays() const;
 
   bool containsSymcretes() const;
 
@@ -74,7 +73,7 @@ public:
 
 struct ValidityCore {
 public:
-  typedef ExprHashSet constraints_typ;
+  typedef ExprOrderedSet constraints_typ;
   constraints_typ constraints;
   ref<Expr> expr;
 

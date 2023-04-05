@@ -200,7 +200,7 @@ MetaSMTBuilder<SolverContext>::getInitialArray(const Array *root) {
   bool hashed = _arr_hash.lookupArrayExpr(root, array_expr);
 
   if (!hashed) {
-    if (isa<ConstantWithSymbolicSizeSource>(root->source)) {
+    if (isa<SymbolicSizeConstantSource>(root->source)) {
       llvm::report_fatal_error("MetaSMT does not support constant arrays or "
                                "quantifiers to instantiate "
                                "constant array of symbolic size!");

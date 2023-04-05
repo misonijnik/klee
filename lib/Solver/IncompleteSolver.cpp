@@ -135,7 +135,8 @@ bool StagedSolverImpl::computeInitialValues(
 
 bool StagedSolverImpl::check(const Query &query, ref<SolverResponse> &result) {
   ExprHashSet expressions;
-  expressions.insert(query.constraints.begin(), query.constraints.end());
+  expressions.insert(query.constraints.cs().begin(),
+                     query.constraints.cs().end());
   expressions.insert(query.expr);
 
   std::vector<const Array *> objects;

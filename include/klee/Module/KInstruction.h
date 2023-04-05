@@ -43,6 +43,9 @@ struct KInstruction {
   unsigned dest;
   KBlock *parent;
 
+  // Instruction index in the basic block
+  unsigned index;
+
 public:
   KInstruction() = default;
   explicit KInstruction(const KInstruction &ki);

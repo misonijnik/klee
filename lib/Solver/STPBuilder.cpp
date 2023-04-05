@@ -428,7 +428,7 @@ ExprHandle STPBuilder::constructSDivByConstant(ExprHandle expr_n,
     // STP uniques arrays by name, so we make sure the name is unique by
     // using the size of the array hash as a counter.
     std::string unique_id = llvm::utostr(_arr_hash._array_hash.size());
-    std::string unique_name = root->name + unique_id;
+    std::string unique_name = root->getName() + unique_id;
 
     if (isa<ConstantWithSymbolicSizeSource>(root->source)) {
       llvm::report_fatal_error(

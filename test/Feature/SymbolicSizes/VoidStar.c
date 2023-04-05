@@ -19,7 +19,7 @@ void foo(void *s) {
   ((char *)s)[1] = 'a';
   // CHECK: VoidStar.c:[[@LINE+1]]: memory error: out of bound pointer
   struct Node *node = ((struct Node *)s)->next;
-  // CHECK-NOT: VoidStar.c:[[@LINE+1]]: memory error: out of bound pointer
+  // CHECK: VoidStar.c:[[@LINE+1]]: memory error: out of bound pointer
   node->x = 20;
 }
 
@@ -32,5 +32,5 @@ int main() {
 }
 
 // CHECK: KLEE: done: completed paths = 1
-// CHECK: KLEE: done: partially completed paths = 4
-// CHECK: KLEE: done: generated tests = 5
+// CHECK: KLEE: done: partially completed paths = 5
+// CHECK: KLEE: done: generated tests = 6
