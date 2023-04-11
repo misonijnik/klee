@@ -4375,11 +4375,12 @@ bool shouldExitOn(StateTerminationType reason) {
 void Executor::reportStateOnTargetError(ExecutionState &state,
                                         ReachWithError error) {
   if (guidanceKind == GuidanceKind::ErrorGuidance) {
-    bool reportedTruePositive =
-        targetedExecutionManager.reportTruePositive(state, error);
-    if (!reportedTruePositive) {
-      targetedExecutionManager.reportFalseNegative(state, error);
-    }
+    // TODO: uncomment when `targetedExecutionManager` will be added
+    // bool reportedTruePositive =
+    //     targetedExecutionManager.reportTruePositive(state, error);
+    // if (!reportedTruePositive) {
+    //   targetedExecutionManager.reportFalseNegative(state, error);
+    // }
   }
 }
 
