@@ -81,6 +81,7 @@ public:
                         // with this factor
   std::set<ref<Symcrete>>
       symcretes; // All symcretes associated with this factor
+  std::set<std::string> uninterpretedFunctions;
 
   IndependentElementSet();
   IndependentElementSet(ref<Expr> e);

@@ -386,7 +386,6 @@ public:
     return 0;
   }
 };
-
 } // namespace klee
 
 #endif /* KLEE_SYMBOLICSOURCE_H */

@@ -252,6 +252,34 @@ Z3ASTHandle Z3Builder::getInitialArray(const Array *root) {
       array_expr = buildConstantArray(unique_name.c_str(), root->getDomain(),
                                       root->getRange(),
                                       symbolicSizeConstantSource->defaultValue);
+    } else if (ref<MockDeterministicSource> mockDeterministicSource =
+                   dyn_cast<MockDeterministicSource>(root->source)) {
+      size_t num_args = mockDeterministicSource->args.size();
+      std::vector<Z3ASTHandle> argsHandled(num_args);
+      std::vector<Z3SortHandle> argsSortHandled(num_args);
+      std::vector<Z3_ast> args(num_args);
+      std::vector<Z3_sort> argsSort(num_args);
+      for (size_t i = 0; i < num_args; i++) {
+        ref<Expr> kid = mockDeterministicSource->args[i];
+        int kidWidth = kid->getWidth();
+        argsHandled[i] = construct(kid, &kidWidth);
+        args[i] = argsHandled[i];
+        argsSortHandled[i] = Z3SortHandle(Z3_get_sort(ctx, args[i]), ctx);
+        argsSort[i] = argsSortHandled[i];
+      }
+
+      Z3SortHandle domainSort = getBvSort(root->getDomain());
+      Z3SortHandle rangeSort = getBvSort(root->getRange());
+      Z3SortHandle retValSort = getArraySort(domainSort, rangeSort);
+
+      Z3FuncDeclHandle func;
+      func = Z3FuncDeclHandle(
+          Z3_mk_func_decl(
+              ctx, Z3_mk_string_symbol(ctx, mockDeterministicSource->name.c_str()),
+              num_args, argsSort.data(),
+              retValSort),
+          ctx);
+      array_expr = Z3ASTHandle(Z3_mk_app(ctx, func, num_args, args.data()), ctx);
     } else {
       array_expr =
           buildArray(unique_name.c_str(), root->getDomain(), root->getRange());
@@ -293,6 +321,9 @@ Z3ASTHandle Z3Builder::getArrayForUpdate(const Array *root,
   if (!un) {
     return (getInitialArray(root));
   } else {
+    if (isa<MockDeterministicSource>(root->source)) {
+      klee_error("Updates applied to mock array %s are not allowed", root->getName().c_str());
+    }
     // FIXME: This really needs to be non-recursive.
     Z3ASTHandle un_expr;
     bool hashed = _arr_hash.lookupUpdateNodeExpr(un, un_expr);

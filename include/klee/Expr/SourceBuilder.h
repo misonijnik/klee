@@ -1,6 +1,7 @@
 #ifndef KLEE_SOURCEBUILDER_H
 #define KLEE_SOURCEBUILDER_H
 
+#include "llvm/IR/Function.h"
 #include "klee/ADT/Ref.h"
 #include "klee/Expr/SymbolicSource.h"
 

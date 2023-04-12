@@ -33,6 +33,7 @@
 #include "klee/Config/Version.h"
 #include "klee/Config/config.h"
 #include "klee/Core/Interpreter.h"
+#include "klee/Core/MockBuilder.h"
 #include "klee/Expr/ArrayExprOptimizer.h"
 #include "klee/Expr/Assignment.h"
 #include "klee/Expr/Constraints.h"
@@ -253,6 +254,30 @@ cl::opt<bool> AllExternalWarnings(
     cl::desc("Issue a warning everytime an external call is made, "
              "as opposed to once per function (default=false)"),
     cl::cat(ExtCallsCat));
+
+enum class MockStrategy {
+  None,          // No mocks are generated
+  Naive,         // For each function call new symbolic value is generated
+  Deterministic, // Each function is treated as uninterpreted function in SMT.
+                 // Compatible with Z3 solver only
+};
+
+cl::opt<MockStrategy> MockStrategy(
+    "mock-strategy", cl::init(MockStrategy::None),
+    cl::desc("Specify strategy for mocking external calls"),
+    cl::values(
+        clEnumValN(MockStrategy::None, "none",
+                   "External calls are not mocked (default)"),
+        clEnumValN(MockStrategy::Naive, "naive",
+                   "Every time external function is called, new symbolic value "
+                   "is generated for its return value"),
+        clEnumValN(
+            MockStrategy::Deterministic, "deterministic",
+            "NOTE: this option is compatible with Z3 solver only. Each "
+            "external function is treated as a deterministic "
+            "function. Therefore, when function is called many times "
+            "with equal arguments, every time equal values will be returned.")),
+    cl::init(MockStrategy::None), cl::cat(ExtCallsCat));
 
 /*** Seeding options ***/
 
@@ -489,6 +514,11 @@ Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
       haltExecution(false), ivcEnabled(false),
       debugLogBuffer(debugBufferString) {
 
+  if (CoreSolverToUse != Z3_SOLVER &&
+      MockStrategy == MockStrategy::Deterministic) {
+    klee_error("Deterministic mocks can be generated with Z3 solver only.\n");
+  }
+
   const time::Span maxTime{MaxTime};
   if (maxTime)
     timers.add(std::make_unique<Timer>(maxTime, [&] {
@@ -549,7 +579,8 @@ Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
 llvm::Module *
 Executor::setModule(std::vector<std::unique_ptr<llvm::Module>> &modules,
                     const ModuleOptions &opts,
-                    const std::vector<std::string> &mainModuleFunctions) {
+                    const std::vector<std::string> &mainModuleFunctions,
+                    const std::set<std::string> &ignoredExternals) {
   assert(!kmodule && !modules.empty() &&
          "can only register one module"); // XXX gross
 
@@ -5545,7 +5576,7 @@ void Executor::executeMakeMock(ExecutionState &state, KInstruction *target,
     source = SourceBuilder::mockDeterministic(name, args, width);
     break;
   }
-  executeMakeSymbolic(state, mo, type, name, source, true);
+  executeMakeSymbolic(state, mo, type, source, true);
   const ObjectState *os = state.addressSpace.findObject(mo->id).second;
   auto result = os->read(0, width);
   bindLocal(target, state, result);

@@ -20,6 +20,7 @@ klee_add_component(kleeCore
   ImpliedValue.cpp
   Memory.cpp
   MemoryManager.cpp
+  MockBuilder.cpp
   PTree.cpp
   Searcher.cpp
   SeedInfo.cpp

@@ -371,6 +371,8 @@ private:
   void executeMakeSymbolic(ExecutionState &state, const MemoryObject *mo,
                            KType *type, const ref<SymbolicSource> source,
                            bool isLocal);
+  void executeMakeMock(ExecutionState &state, KInstruction *target,
+                       std::vector<ref<Expr>> &arguments);
 
   void updateStateWithSymcretes(ExecutionState &state,
                                 const Assignment &assignment);
@@ -614,7 +616,8 @@ public:
   llvm::Module *
   setModule(std::vector<std::unique_ptr<llvm::Module>> &modules,
             const ModuleOptions &opts,
-            const std::vector<std::string> &mainModuleFunctions) override;
+            const std::vector<std::string> &mainModuleFunctions,
+            const std::set<std::string> &ignoredExternals) override;
 
   void useSeeds(const std::vector<struct KTest *> *seeds) override {
     usingSeeds = seeds;
