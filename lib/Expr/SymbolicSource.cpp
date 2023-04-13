@@ -1,4 +1,5 @@
 #include "klee/Expr/SymbolicSource.h"
+#include "klee/Expr/Expr.h"
 
 #include "klee/Expr/Expr.h"
 
@@ -59,7 +60,7 @@ unsigned LazyInitializationSource::computeHash() {
 
 std::string LazyInitializationSource::toString() const {
   return "LI(" + pointer->toString() + ")<" + getName() + ">";
-};
+}
 
 std::string ArgumentSource::toString() const {
   std::string repr = allocSite.getParent()->getName().str();
@@ -79,6 +80,28 @@ std::string InstructionSource::toString() const {
   size_t index = label_stream.str().find('=');
   repr += label_stream.str().substr(2, index - 3);
   return repr + "<" + llvm::itostr(index) + ">";
+}
+
+unsigned MockDeterministicSource::computeHash() {
+  unsigned res =
+      (getKind() * SymbolicSource::MAGIC_HASH_CONSTANT) + returnTypeWidth;
+  for (unsigned i = 0, e = name.size(); i != e; ++i) {
+    res = (res * SymbolicSource::MAGIC_HASH_CONSTANT) + name[i];
+  }
+  for (unsigned i = 0, e = args.size(); i != e; ++i) {
+    res = (res * SymbolicSource::MAGIC_HASH_CONSTANT) + args[i]->hash();
+  }
+  hashValue = res;
+  return hashValue;
+}
+
+std::string MockDeterministicSource::toString() const {
+  std::string res = name + "(";
+  for (unsigned i = 0, e = args.size(); i != e; ++i) {
+    res = i + 1 == e ? res + args[i]->toString() : res + args[i]->toString() + ", ";
+  }
+  res = res + ")<" + getName() + ">";
+  return res;
 }
 
 } // namespace klee

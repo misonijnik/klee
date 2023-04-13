@@ -809,10 +809,11 @@ static const char *modelledExternals[] = {
     "klee_check_memory_access", "klee_define_fixed_object", "klee_get_errno",
     "klee_get_valuef", "klee_get_valued", "klee_get_valuel", "klee_get_valuell",
     "klee_get_value_i32", "klee_get_value_i64", "klee_get_obj_size",
-    "klee_is_symbolic", "klee_make_symbolic", "klee_mark_global",
-    "klee_prefer_cex", "klee_posix_prefer_cex", "klee_print_expr",
-    "klee_print_range", "klee_report_error", "klee_set_forking",
-    "klee_silent_exit", "klee_warning", "klee_warning_once", "klee_stack_trace",
+    "klee_is_symbolic", "klee_make_symbolic", "klee_make_mock",
+    "klee_mark_global", "klee_prefer_cex", "klee_posix_prefer_cex",
+    "klee_print_expr", "klee_print_range", "klee_report_error",
+    "klee_set_forking", "klee_silent_exit", "klee_warning", "klee_warning_once",
+    "klee_stack_trace",
 #ifdef SUPPORT_KLEE_EH_CXX
     "_klee_eh_Unwind_RaiseException_impl", "klee_eh_typeid_for",
 #endif
@@ -885,29 +886,13 @@ static const char *dontCareExternals[] = {
 #endif
 
     // static information, pretty ok to return
-    "getegid",
-    "geteuid",
-    "getgid",
-    "getuid",
-    "getpid",
-    "gethostname",
-    "getpgrp",
-    "getppid",
-    "getpagesize",
-    "getpriority",
-    "getgroups",
-    "getdtablesize",
-    "getrlimit",
-    "getrlimit64",
-    "getcwd",
-    "getwd",
-    "gettimeofday",
-    "uname",
+    "getegid", "geteuid", "getgid", "getuid", "getpid", "gethostname",
+    "getpgrp", "getppid", "getpagesize", "getpriority", "getgroups",
+    "getdtablesize", "getrlimit", "getrlimit64", "getcwd", "getwd",
+    "gettimeofday", "uname",
 
     // fp stuff we just don't worry about yet
-    "frexp",
-    "ldexp",
-};
+    "frexp", "ldexp", "llvm.dbg.label"};
 
 // Extra symbols we aren't going to warn about with klee-libc
 static const char *dontCareKlee[] = {

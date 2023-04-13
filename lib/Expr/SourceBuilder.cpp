@@ -63,3 +63,10 @@ ref<SymbolicSource>
 SourceBuilder::instruction(const llvm::Instruction &_allocSite, int _index) {
   return new InstructionSource(_allocSite, _index);
 }
+
+ref<SymbolicSource>
+SourceBuilder::mockDeterministic(std::string name, std::vector<ref<Expr>> args,
+                                 unsigned returnTypeWidth) {
+  return new MockDeterministicSource(std::move(name), std::move(args),
+                                     returnTypeWidth);
+}

@@ -25,6 +25,9 @@ public:
                                       int _index);
   static ref<SymbolicSource> instruction(const llvm::Instruction &_allocSite,
                                          int _index);
+  static ref<SymbolicSource> mockDeterministic(const std::string &name,
+                                               const std::vector<ref<Expr>> &_args,
+                                               unsigned _returnTypeWidth);
 };
 
 }; // namespace klee

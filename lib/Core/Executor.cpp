@@ -573,6 +573,66 @@ Executor::setModule(std::vector<std::unique_ptr<llvm::Module>> &modules,
     kmodule->instrument(opts);
   }
 
+  if (ExternalCalls == ExternalCallPolicy::All &&
+      MockStrategy != MockStrategy::None) {
+    // TODO: move this to function
+    std::map<std::string, llvm::Type *> externals;
+    for (const auto &f : kmodule->module->functions()) {
+      if (f.isDeclaration() && !f.use_empty() &&
+          !ignoredExternals.count(f.getName().str()))
+        externals.insert(std::make_pair(f.getName(), f.getFunctionType()));
+    }
+
+    for (const auto &global : kmodule->module->globals()) {
+      if (global.isDeclaration() &&
+          !ignoredExternals.count(global.getName().str()))
+        externals.insert(
+            std::make_pair(global.getName(), global.getValueType()));
+    }
+
+    for (const auto &alias : kmodule->module->aliases()) {
+      auto it = externals.find(alias.getName().str());
+      if (it != externals.end()) {
+        externals.erase(it);
+      }
+    }
+
+    llvm::Function *mainFn = kmodule->module->getFunction(opts.EntryPoint);
+    if (!mainFn) {
+      klee_error("Entry function '%s' not found in module.",
+                 opts.EntryPoint.c_str());
+    }
+    mainFn->setName("__klee_mock_wrapped_main");
+    MockBuilder builder(kmodule->module.get(), opts.EntryPoint,
+                        mainFn->getName().str(), externals);
+    std::unique_ptr<llvm::Module> mockModule = builder.build();
+
+    if (!mockModule) {
+      klee_error("Unable to generate mocks");
+    }
+
+    // TODO: change this to bc file
+    std::unique_ptr<llvm::raw_fd_ostream> f(
+        interpreterHandler->openOutputFile("externals.ll"));
+    *f << *mockModule;
+
+    std::vector<std::unique_ptr<llvm::Module>> mockModules;
+    mockModules.push_back(std::move(mockModule));
+    kmodule->link(mockModules, "");
+
+    for (auto &global : kmodule->module->globals()) {
+      if (global.isDeclaration()) {
+        llvm::Constant *zeroInitializer =
+            llvm::Constant::getNullValue(global.getValueType());
+        if (!zeroInitializer) {
+          klee_error("Unable to get zero initializer for '%s'",
+                     global.getName().str().c_str());
+        }
+        global.setInitializer(zeroInitializer);
+      }
+    }
+  }
+
   // 3.) Optimise and prepare for KLEE
 
   // Create a list of functions that should be preserved if used
@@ -5451,6 +5511,44 @@ void Executor::executeMakeSymbolic(ExecutionState &state,
       }
     }
   }
+}
+
+void Executor::executeMakeMock(ExecutionState &state, KInstruction *target,
+                               std::vector<ref<Expr>> &arguments) {
+  KFunction *kf = target->parent->parent;
+  std::string name = "@call_" + kf->getName().str();
+  uint64_t width = kmodule->targetData->getTypeSizeInBits(kf->function->getReturnType());
+  KType *type = typeSystemManager->getWrappedType(llvm::PointerType::get(
+      kf->function->getReturnType(), kmodule->targetData->getAllocaAddrSpace()));
+
+  IDType moID;
+  bool success = state.addressSpace.resolveOne(cast<ConstantExpr>(arguments[0]),
+                                               type, moID);
+  assert(success && "memory object for mock should already be allocated");
+  const MemoryObject *mo = state.addressSpace.findObject(moID).first;
+  assert(mo && "memory object for mock should already be allocated");
+  mo->setName(name);
+
+  ref<SymbolicSource> source;
+  switch (MockStrategy) {
+  case MockStrategy::None:
+    klee_error("klee_make_mock is not allowed when mock strategy is none");
+    break;
+  case MockStrategy::Naive:
+    source = SourceBuilder::makeSymbolic("mock_naive", updateNameVersion(state, "mock_naive"));
+    break;
+  case MockStrategy::Deterministic:
+    std::vector<ref<Expr>> args(kf->numArgs);
+    for (size_t i = 0; i < kf->numArgs; i++) {
+      args[i] = getArgumentCell(state, kf, i).value;
+    }
+    source = SourceBuilder::mockDeterministic(name, args, width);
+    break;
+  }
+  executeMakeSymbolic(state, mo, type, name, source, true);
+  const ObjectState *os = state.addressSpace.findObject(mo->id).second;
+  auto result = os->read(0, width);
+  bindLocal(target, state, result);
 }
 
 /***/

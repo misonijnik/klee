@@ -8,9 +8,11 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <string>
+#include <vector>
 
 namespace klee {
 
+class Expr;
 class Array;
 class Expr;
 class ConstantExpr;
@@ -33,7 +35,8 @@ public:
     LazyInitializationAddress,
     LazyInitializationSize,
     Instruction,
-    Argument
+    Argument,
+    MockDeterministic
   };
 
 public:
@@ -342,6 +345,46 @@ public:
   const llvm::Value &value() const override { return allocSite; }
 
   virtual std::string toString() const override;
+};
+
+class MockDeterministicSource : public SymbolicSource {
+public:
+  const std::string name;
+  const std::vector<ref<Expr>> args;
+  const unsigned returnTypeWidth;
+
+  MockDeterministicSource(const std::string &_name,
+                          const std::vector<ref<Expr>> &_args,
+                          unsigned _returnTypeWidth)
+      : name(_name), args(_args), returnTypeWidth(_returnTypeWidth) {}
+
+  Kind getKind() const override { return Kind::MockDeterministic; }
+  std::string getName() const override { return "mock"; }
+
+  static bool classof(const SymbolicSource *S) {
+    return S->getKind() == Kind::MockDeterministic;
+  }
+
+  virtual unsigned computeHash() override;
+  virtual std::string toString() const override;
+
+  virtual int internalCompare(const SymbolicSource &b) const override {
+    if (getKind() != b.getKind()) {
+      return getKind() < b.getKind() ? -1 : 1;
+    }
+    const MockDeterministicSource &mdb =
+        static_cast<const MockDeterministicSource &>(b);
+    if (name != mdb.name) {
+      return name < mdb.name ? -1 : 1;
+    }
+    if (returnTypeWidth != mdb.returnTypeWidth) {
+      return returnTypeWidth < mdb.returnTypeWidth ? -1 : 1;
+    }
+    if (args != mdb.args) {
+      return args < mdb.args ? -1 : 1;
+    }
+    return 0;
+  }
 };
 
 } // namespace klee
