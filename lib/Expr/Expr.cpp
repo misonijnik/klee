@@ -1652,6 +1652,10 @@ ref<Expr> NotExpr::create(const ref<Expr> &e) {
   if (ConstantExpr *CE = dyn_cast<ConstantExpr>(e))
     return CE->Not();
 
+  if (NotExpr *NE = dyn_cast<NotExpr>(e)) {
+    return NE->expr;
+  }
+
   return NotExpr::alloc(e);
 }
 
