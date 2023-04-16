@@ -14,7 +14,7 @@ The following flags should be used when calling klee binary.
 
 | KLEE flag | Description |
 |-----------|-------------|
-| --execution-mode=error-guided | Enables symbolic execution guidance by input errors from off-the-shelf static analyzer |
+| --use-guided-search=error | Enables symbolic execution guidance by input errors from off-the-shelf static analyzer |
 | --mock-external-calls | All external calls will be treated symbolically |
 | --posix-runtime | POSIX environment is emulated |
 | --libc=klee | **To UtBotTeam: why not uclibc?** |
