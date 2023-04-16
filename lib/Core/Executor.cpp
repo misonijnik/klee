@@ -4653,7 +4653,7 @@ MemoryObject *Executor::allocate(ExecutionState &state, ref<Expr> size,
       lazyInitializationSource
           ? SourceBuilder::lazyInitializationAddress(lazyInitializationSource)
           : SourceBuilder::symbolicSizeConstantAddress(
-                updateNameVersion(state, "const_arr"), 0));
+                0, updateNameVersion(state, "const_arr")));
   ref<Expr> addressExpr =
       Expr::createTempRead(addressArray, pointerWidthInBits);
 

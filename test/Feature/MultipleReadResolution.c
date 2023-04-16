@@ -4,6 +4,12 @@
 // RUN: %klee --output-dir=%t.klee-out --use-timestamps=false %t1.bc > %t1.log
 // RUN: diff %t1.res %t1.log
 
+// RUN: echo "x" >> %t1.res
+// RUN: echo "x" >> %t1.res
+// RUN: echo "x" >> %t1.res
+// RUN: rm -rf %t.klee-out
+// RUN: %klee --output-dir=%t.klee-out --use-timestamps=false --use-merged-pointer-dereference=false %t1.bc > %t1.log
+// RUN: diff %t1.res %t1.log
 #include <stdio.h>
 
 unsigned klee_urange(unsigned start, unsigned end) {
