@@ -430,7 +430,7 @@ ExprHandle STPBuilder::constructSDivByConstant(ExprHandle expr_n,
     std::string unique_id = llvm::utostr(_arr_hash._array_hash.size());
     std::string unique_name = root->getName() + unique_id;
 
-    if (isa<ConstantWithSymbolicSizeSource>(root->source)) {
+    if (isa<SymbolicSizeConstantSource>(root->source)) {
       llvm::report_fatal_error(
           "STP does not support constant arrays or quantifiers to instantiate "
           "constant array of symbolic size!");
