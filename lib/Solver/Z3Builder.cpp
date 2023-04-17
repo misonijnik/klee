@@ -275,11 +275,12 @@ Z3ASTHandle Z3Builder::getInitialArray(const Array *root) {
       Z3FuncDeclHandle func;
       func = Z3FuncDeclHandle(
           Z3_mk_func_decl(
-              ctx, Z3_mk_string_symbol(ctx, mockDeterministicSource->name.c_str()),
-              num_args, argsSort.data(),
-              retValSort),
+              ctx,
+              Z3_mk_string_symbol(ctx, mockDeterministicSource->name.c_str()),
+              num_args, argsSort.data(), retValSort),
           ctx);
-      array_expr = Z3ASTHandle(Z3_mk_app(ctx, func, num_args, args.data()), ctx);
+      array_expr =
+          Z3ASTHandle(Z3_mk_app(ctx, func, num_args, args.data()), ctx);
     } else {
       array_expr =
           buildArray(unique_name.c_str(), root->getDomain(), root->getRange());
@@ -322,7 +323,8 @@ Z3ASTHandle Z3Builder::getArrayForUpdate(const Array *root,
     return (getInitialArray(root));
   } else {
     if (isa<MockDeterministicSource>(root->source)) {
-      klee_error("Updates applied to mock array %s are not allowed", root->getName().c_str());
+      klee_error("Updates applied to mock array %s are not allowed",
+                 root->getName().c_str());
     }
     // FIXME: This really needs to be non-recursive.
     Z3ASTHandle un_expr;

@@ -96,7 +96,8 @@ unsigned MockDeterministicSource::computeHash() {
 std::string MockDeterministicSource::toString() const {
   std::string res = name + "(";
   for (unsigned i = 0, e = args.size(); i != e; ++i) {
-    res = i + 1 == e ? res + args[i]->toString() : res + args[i]->toString() + ", ";
+    res = i + 1 == e ? res + args[i]->toString()
+                     : res + args[i]->toString() + ", ";
   }
   res = res + ")<" + getName() + ">";
   return res;

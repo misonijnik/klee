@@ -112,8 +112,7 @@ IndependentElementSet::IndependentElementSet(ref<Symcrete> s) {
 
 IndependentElementSet::IndependentElementSet(const IndependentElementSet &ies)
     : elements(ies.elements), wholeObjects(ies.wholeObjects), exprs(ies.exprs),
-      uninterpretedFunctions(ies.uninterpretedFunctions) {
-}
+      uninterpretedFunctions(ies.uninterpretedFunctions) {}
 
 IndependentElementSet &
 IndependentElementSet::operator=(const IndependentElementSet &ies) {

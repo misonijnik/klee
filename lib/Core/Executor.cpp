@@ -5548,9 +5548,11 @@ void Executor::executeMakeMock(ExecutionState &state, KInstruction *target,
                                std::vector<ref<Expr>> &arguments) {
   KFunction *kf = target->parent->parent;
   std::string name = "@call_" + kf->getName().str();
-  uint64_t width = kmodule->targetData->getTypeSizeInBits(kf->function->getReturnType());
-  KType *type = typeSystemManager->getWrappedType(llvm::PointerType::get(
-      kf->function->getReturnType(), kmodule->targetData->getAllocaAddrSpace()));
+  uint64_t width =
+      kmodule->targetData->getTypeSizeInBits(kf->function->getReturnType());
+  KType *type = typeSystemManager->getWrappedType(
+      llvm::PointerType::get(kf->function->getReturnType(),
+                             kmodule->targetData->getAllocaAddrSpace()));
 
   IDType moID;
   bool success = state.addressSpace.resolveOne(cast<ConstantExpr>(arguments[0]),
@@ -5566,7 +5568,8 @@ void Executor::executeMakeMock(ExecutionState &state, KInstruction *target,
     klee_error("klee_make_mock is not allowed when mock strategy is none");
     break;
   case MockStrategy::Naive:
-    source = SourceBuilder::makeSymbolic("mock_naive", updateNameVersion(state, "mock_naive"));
+    source = SourceBuilder::makeSymbolic(
+        "mock_naive", updateNameVersion(state, "mock_naive"));
     break;
   case MockStrategy::Deterministic:
     std::vector<ref<Expr>> args(kf->numArgs);

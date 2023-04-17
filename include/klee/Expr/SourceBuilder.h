@@ -1,9 +1,9 @@
 #ifndef KLEE_SOURCEBUILDER_H
 #define KLEE_SOURCEBUILDER_H
 
-#include "llvm/IR/Function.h"
 #include "klee/ADT/Ref.h"
 #include "klee/Expr/SymbolicSource.h"
+#include "llvm/IR/Function.h"
 
 namespace klee {
 
@@ -26,9 +26,10 @@ public:
                                       int _index);
   static ref<SymbolicSource> instruction(const llvm::Instruction &_allocSite,
                                          int _index);
-  static ref<SymbolicSource> mockDeterministic(const std::string &name,
-                                               const std::vector<ref<Expr>> &_args,
-                                               unsigned _returnTypeWidth);
+  static ref<SymbolicSource>
+  mockDeterministic(const std::string &name,
+                    const std::vector<ref<Expr>> &_args,
+                    unsigned _returnTypeWidth);
 };
 
 }; // namespace klee
