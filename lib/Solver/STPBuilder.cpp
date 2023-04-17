@@ -439,17 +439,19 @@ ExprHandle STPBuilder::constructSDivByConstant(ExprHandle expr_n,
     array_expr =
         buildArray(unique_name.c_str(), root->getDomain(), root->getRange());
 
-    if (root->isConstantArray()) {
+    if (ref<ConstantSource> constantSource =
+            dyn_cast<ConstantSource>(root->source)) {
       // FIXME: Flush the concrete values into STP. Ideally we would do this
       // using assertions, which is much faster, but we need to fix the caching
       // to work correctly in that case.
 
       // TODO: usage of `constantValues.size()` seems unconvinient.
-      for (unsigned i = 0, e = root->constantValues.size(); i != e; ++i) {
+      for (unsigned i = 0, e = constantSource->constantValues.size(); i != e;
+           ++i) {
         ::VCExpr prev = array_expr;
         array_expr = vc_writeExpr(
             vc, prev, construct(ConstantExpr::alloc(i, root->getDomain()), 0),
-            construct(root->constantValues[i], 0));
+            construct(constantSource->constantValues[i], 0));
         vc_DeleteExpr(prev);
       }
     }
