@@ -152,9 +152,8 @@ bool ConcretizingSolver::relaxSymcreteConstraints(const Query &query,
         if (isa<SizeSymcrete>(symcrete)) {
           currentlyBrokenSymcretes.insert(symcrete);
 
-          for (const ref<Symcrete> &dependentSymcrete :
-               symcrete->dependentSymcretes()) {
-            currentlyBrokenSymcretes.insert(dependentSymcrete);
+          for (Symcrete &dependentSymcrete : symcrete->dependentSymcretes()) {
+            currentlyBrokenSymcretes.insert(ref<Symcrete>(&dependentSymcrete));
           }
         }
       }
@@ -232,11 +231,11 @@ bool ConcretizingSolver::relaxSymcreteConstraints(const Query &query,
 
     /* TODO: we should be sure that `addressSymcrete` constains only one
      * dependent array. */
-    assert(sizeSymcrete->addressSymcrete->dependentArrays().size() == 1);
+    assert(sizeSymcrete->addressSymcrete.dependentArrays().size() == 1);
     const Array *addressArray =
-        sizeSymcrete->addressSymcrete->dependentArrays().back();
+        sizeSymcrete->addressSymcrete.dependentArrays().back();
     void *address = addressGenerator->allocate(
-        sizeSymcrete->addressSymcrete->symcretized, newSize);
+        sizeSymcrete->addressSymcrete.symcretized, newSize);
     unsigned char *charAddressIterator =
         reinterpret_cast<unsigned char *>(&address);
     SparseStorage<unsigned char> storage(sizeof(address));

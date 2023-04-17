@@ -5430,7 +5430,7 @@ void Executor::updateStateWithSymcretes(ExecutionState &state,
             ->getZExtValue();
 
     MemoryObject *newMO = addressManager->allocateMemoryObject(
-        sizeSymcrete->addressSymcrete->symcretized, newSize);
+        sizeSymcrete->addressSymcrete.symcretized, newSize);
 
     if (!newMO || state.addressSpace.findObject(newMO).second) {
       continue;

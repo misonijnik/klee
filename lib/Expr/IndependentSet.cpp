@@ -59,8 +59,8 @@ IndependentElementSet::IndependentElementSet(ref<Expr> e) {
 IndependentElementSet::IndependentElementSet(ref<Symcrete> s) {
   symcretes.insert(s);
 
-  for (auto i : s->dependentSymcretes()) {
-    symcretes.insert(i);
+  for (Symcrete &dependentSymcrete : s->dependentSymcretes()) {
+    symcretes.insert(ref<Symcrete>(&dependentSymcrete));
   }
 
   // Track all reads in the program.  Determines whether reads are
@@ -79,9 +79,9 @@ IndependentElementSet::IndependentElementSet(ref<Symcrete> s) {
     ref<Symcrete> top = queueSymcretes.front();
     queueSymcretes.pop();
     findReads(top->symcretized, true, reads);
-    for (const ref<Symcrete> &dependentSymcrete : top->dependentSymcretes()) {
-      if (usedSymcretes.insert(dependentSymcrete).second) {
-        queueSymcretes.push(dependentSymcrete);
+    for (Symcrete &dependentSymcrete : top->dependentSymcretes()) {
+      if (usedSymcretes.insert(ref<Symcrete>(&dependentSymcrete)).second) {
+        queueSymcretes.push(ref<Symcrete>(&dependentSymcrete));
       }
     }
   }

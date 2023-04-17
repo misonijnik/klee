@@ -26,7 +26,7 @@ private:
   static IDType idCounter;
   const SymcreteKind symcreteKind;
 
-  std::vector<ref<Symcrete>> _dependentSymcretes;
+  std::vector<std::reference_wrapper<Symcrete>> _dependentSymcretes;
   std::vector<const Array *> _dependentArrays;
 
 public:
@@ -41,13 +41,14 @@ public:
   }
 
   Symcrete(ref<Expr> e) : Symcrete(e, SymcreteKind::SK_COMMON) {}
-  virtual ~Symcrete() = default;
+  // virtual ~Symcrete() = default;
 
   void addDependentSymcrete(ref<Symcrete> dependent) {
-    _dependentSymcretes.push_back(dependent);
+    _dependentSymcretes.push_back(*dependent);
   }
 
-  const std::vector<ref<Symcrete>> &dependentSymcretes() const {
+  const std::vector<std::reference_wrapper<Symcrete>> &
+  dependentSymcretes() const {
     return _dependentSymcretes;
   }
 
@@ -71,11 +72,11 @@ public:
 
 class SizeSymcrete : public Symcrete {
 public:
-  const ref<Symcrete> addressSymcrete;
+  const Symcrete &addressSymcrete;
 
   SizeSymcrete(ref<Expr> s, ref<Symcrete> address)
-      : Symcrete(s, SymcreteKind::SK_SIZE), addressSymcrete(address) {
-    addDependentSymcrete(addressSymcrete);
+      : Symcrete(s, SymcreteKind::SK_SIZE), addressSymcrete(*address) {
+    addDependentSymcrete(address);
   }
 
   static bool classof(const Symcrete *symcrete) {
