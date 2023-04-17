@@ -163,8 +163,6 @@ public:
 };
 
 class MakeSymbolicSource : public SymbolicSource {
-  // private:
-  //   const std::string &fullName;
 public:
   const std::string name;
   const unsigned version;

@@ -90,7 +90,7 @@ int UpdateList::compare(const UpdateList &b) const {
 
 unsigned UpdateList::hash() const {
   unsigned res = 0;
-  res = (res * Expr::MAGIC_HASH_CONSTANT) + root->source->hash();
+  res = (res * Expr::MAGIC_HASH_CONSTANT) + root->hash();
   if (head)
     res = (res * Expr::MAGIC_HASH_CONSTANT) + head->hash();
   return res;
