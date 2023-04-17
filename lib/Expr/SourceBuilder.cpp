@@ -56,17 +56,24 @@ SourceBuilder::lazyInitializationContent(ref<Expr> pointer) {
 
 ref<SymbolicSource> SourceBuilder::argument(const llvm::Argument &_allocSite,
                                             int _index) {
-  return new ArgumentSource(_allocSite, _index);
+  ref<SymbolicSource> r(new ArgumentSource(_allocSite, _index));
+  r->computeHash();
+  return r;
 }
 
 ref<SymbolicSource>
 SourceBuilder::instruction(const llvm::Instruction &_allocSite, int _index) {
-  return new InstructionSource(_allocSite, _index);
+  ref<SymbolicSource> r(new InstructionSource(_allocSite, _index));
+  r->computeHash();
+  return r;
 }
 
 ref<SymbolicSource>
 SourceBuilder::mockDeterministic(const std::string &name,
                                  const std::vector<ref<Expr>> &args,
                                  unsigned returnTypeWidth) {
-  return new MockDeterministicSource(name, args, returnTypeWidth);
+  ref<SymbolicSource> r(
+      new MockDeterministicSource(name, args, returnTypeWidth));
+  r->computeHash();
+  return r;
 }
