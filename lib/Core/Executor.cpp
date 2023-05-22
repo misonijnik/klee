@@ -13,6 +13,7 @@
 #include "CXXTypeSystem/CXXTypeManager.h"
 #include "Context.h"
 #include "CoreStats.h"
+#include "DistanceCalculator.h"
 #include "ExecutionState.h"
 #include "ExternalDispatcher.h"
 #include "GetElementPtrTypeIterator.h"
@@ -446,6 +447,7 @@ Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
       specialFunctionHandler(0), timers{time::Span(TimerInterval)},
       concretizationManager(new ConcretizationManager(EqualitySubstitution)),
       codeGraphDistance(new CodeGraphDistance()),
+      distanceCalculator(new DistanceCalculator(*codeGraphDistance)),
       targetedExecutionManager(*codeGraphDistance), replayKTest(0),
       replayPath(0), usingSeeds(0), atMemoryLimit(false), inhibitForking(false),
       haltExecution(HaltExecution::NotHalt), ivcEnabled(false),
@@ -4182,7 +4184,7 @@ void Executor::targetedRun(ExecutionState &initialState, KBlock *target,
   states.insert(&initialState);
 
   TargetedSearcher *targetedSearcher =
-      new TargetedSearcher(Target::create(target), *codeGraphDistance);
+      new TargetedSearcher(Target::create(target), *distanceCalculator);
   searcher = targetedSearcher;
 
   std::vector<ExecutionState *> newStates(states.begin(), states.end());
@@ -4522,6 +4524,8 @@ void Executor::terminateStateOnExecError(ExecutionState &state,
 void Executor::terminateStateOnSolverError(ExecutionState &state,
                                            const llvm::Twine &message) {
   terminateStateOnError(state, message, StateTerminationType::Solver, "");
+  SetOfStates states = {&state};
+  decreaseConfidenceFromStoppedStates(states, HaltExecution::MaxSolverTime);
 }
 
 // XXX shoot me
