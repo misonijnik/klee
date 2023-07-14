@@ -1050,7 +1050,7 @@ ref<Expr> Executor::maxStaticPctChecks(ExecutionState &current,
     return condition;
 
   StatisticManager &sm = *theStatisticManager;
-  CallPathNode *cpn = current.stack.back().callPathNode;
+  CallPathNode *cpn = current.stack.infoStack().back().callPathNode;
 
   bool reached_max_fork_limit =
       (MaxStaticForkPct < 1. &&
@@ -1099,8 +1099,8 @@ bool Executor::canReachSomeTargetFromBlock(ExecutionState &es, KBlock *block) {
     auto target = p.first;
     if (target->mustVisitForkBranches(es.prevPC))
       return true;
-    auto dist = distanceCalculator->getDistance(es.prevPC, nextInstr, es.frames,
-                                                es.error, target);
+    auto dist = distanceCalculator->getDistance(
+        es.prevPC, nextInstr, es.stack.uniqueFrames(), es.error, target);
     if (dist.result != WeightResult::Miss)
       return true;
   }
@@ -1444,7 +1444,7 @@ const Cell &Executor::eval(const KInstruction *ki, unsigned index,
 
 const Cell &Executor::eval(const KInstruction *ki, unsigned index,
                            ExecutionState &state, bool isSymbolic) {
-  return eval(ki, index, state, state.stack.back(), isSymbolic);
+  return eval(ki, index, state, state.stack.valueStack().back(), isSymbolic);
 }
 
 void Executor::bindLocal(const KInstruction *target, StackFrame &frame,
@@ -1753,7 +1753,7 @@ void Executor::unwindToNextLandingpad(ExecutionState &state) {
     lowestStackIndex = 0;
     popFrames = false;
   } else if (auto *cui = dyn_cast<CleanupPhaseUnwindingInformation>(ui)) {
-    startIndex = state.stack.size() - 1;
+    startIndex = state.stack.callStack().size() - 1;
     lowestStackIndex = cui->catchingStackIndex;
     popFrames = true;
   } else {
@@ -1761,7 +1761,7 @@ void Executor::unwindToNextLandingpad(ExecutionState &state) {
   }
 
   for (std::size_t i = startIndex; i > lowestStackIndex; i--) {
-    auto const &sf = state.stack.at(i);
+    auto const &sf = state.stack.callStack().at(i);
 
     Instruction *inst = sf.caller ? sf.caller->inst : nullptr;
 
@@ -1815,8 +1815,8 @@ void Executor::unwindToNextLandingpad(ExecutionState &state) {
         bindArgument(kf, 2, state, clauses_mo->getBaseExpr());
 
         if (statsTracker) {
-          statsTracker->framePushed(state,
-                                    &state.stack[state.stack.size() - 2]);
+          statsTracker->framePushed(
+              state, &state.stack.infoStack()[state.stack.size() - 2]);
         }
 
         // make sure we remember our search progress afterwards
@@ -2073,7 +2073,7 @@ void Executor::executeCall(ExecutionState &state, KInstruction *ki, Function *f,
     // va_arg is handled by caller and intrinsic lowering, see comment for
     // ExecutionState::varargs
     case Intrinsic::vastart: {
-      StackFrame &sf = state.stack.back();
+      StackFrame &sf = state.stack.valueStack().back();
 
       // varargs can be zero if no varargs were provided
       if (!sf.varargs)
@@ -2159,7 +2159,8 @@ void Executor::executeCall(ExecutionState &state, KInstruction *ki, Function *f,
                          state);
 
     if (statsTracker)
-      statsTracker->framePushed(state, &state.stack[state.stack.size() - 2]);
+      statsTracker->framePushed(
+          state, &state.stack.infoStack()[state.stack.size() - 2]);
 
     // TODO: support zeroext, signext, sret attributes
 
@@ -2244,7 +2245,7 @@ void Executor::executeCall(ExecutionState &state, KInstruction *ki, Function *f,
         }
       }
 
-      StackFrame &sf = state.stack.back();
+      StackFrame &sf = state.stack.valueStack().back();
       MemoryObject *mo = sf.varargs =
           memory->allocate(size, true, false, false, state.prevPC->inst,
                            (requires16ByteAlignment ? 16 : 8));
@@ -2338,7 +2339,7 @@ void Executor::transferToBasicBlock(KBlock *kdst, BasicBlock *src,
 
 void Executor::transferToBasicBlock(BasicBlock *dst, BasicBlock *src,
                                     ExecutionState &state) {
-  KFunction *kf = state.stack.back().kf;
+  KFunction *kf = state.stack.callStack().back().kf;
   auto kdst = kf->blockMap[dst];
   transferToBasicBlock(kdst, src, state);
 }
@@ -2387,7 +2388,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     // Control flow
   case Instruction::Ret: {
     ReturnInst *ri = cast<ReturnInst>(i);
-    KInstIterator kcaller = state.stack.back().caller;
+    KInstIterator kcaller = state.stack.callStack().back().caller;
     Instruction *caller = kcaller ? kcaller->inst : nullptr;
     bool isVoidReturn = (ri->getNumOperands() == 0);
     ref<Expr> result = ConstantExpr::alloc(0, Expr::Bool);
@@ -2507,7 +2508,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
 
       cond = optimizer.optimizeExpr(cond, false);
 
-      KFunction *kf = state.stack.back().kf;
+      KFunction *kf = state.stack.callStack().back().kf;
       auto ifTrueBlock = kf->blockMap[bi->getSuccessor(0)];
       auto ifFalseBlock = kf->blockMap[bi->getSuccessor(1)];
       Executor::StatePair branches =
@@ -2518,7 +2519,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       // requires that we still be in the context of the branch
       // instruction (it reuses its statistic id). Should be cleaned
       // up with convenient instruction specific data.
-      if (statsTracker && state.stack.back().kf->trackCoverage)
+      if (statsTracker && state.stack.callStack().back().kf->trackCoverage)
         statsTracker->markBranchVisited(branches.first, branches.second);
 
       if (branches.first)
@@ -2557,7 +2558,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
 
     ref<Expr> errorCase = ConstantExpr::alloc(1, Expr::Bool);
     SmallPtrSet<BasicBlock *, 5> destinations;
-    KFunction *kf = state.stack.back().kf;
+    KFunction *kf = state.stack.callStack().back().kf;
     // collect and check destinations from label list
     for (unsigned k = 0; k < numDestinations; ++k) {
       // filter duplicates
@@ -2652,7 +2653,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       // Track default branch values
       ref<Expr> defaultValue = ConstantExpr::alloc(1, Expr::Bool);
 
-      KFunction *kf = state.stack.back().kf;
+      KFunction *kf = state.stack.callStack().back().kf;
 
       // iterate through all non-default cases but in order of the expressions
       for (std::map<ref<Expr>, BasicBlock *>::iterator
@@ -4565,8 +4566,9 @@ Executor::getLastNonKleeInternalInstruction(const ExecutionState &state,
                                             Instruction **lastInstruction) {
   // unroll the stack of the applications state and find
   // the last instruction which is not inside a KLEE internal function
-  ExecutionState::stack_ty::const_reverse_iterator it = state.stack.rbegin(),
-                                                   itE = state.stack.rend();
+  ExecutionStack::call_stack_ty::const_reverse_iterator
+      it = state.stack.callStack().rbegin(),
+      itE = state.stack.callStack().rend();
 
   // don't check beyond the outermost function (i.e. main())
   itE--;
@@ -4693,7 +4695,7 @@ void Executor::terminateStateOnError(ExecutionState &state,
       }
       msg << "State: " << state.getID() << '\n';
     }
-    msg << "Stack: \n";
+    msg << "ExecutionStack: \n";
     state.dumpStack(msg);
 
     std::string info_str = info.str();
@@ -4988,7 +4990,7 @@ ObjectState *Executor::bindObjectInState(ExecutionState &state,
   // matter because all we use this list for is to unbind the object
   // on function return.
   if (isLocal && state.stack.size() > 0) {
-    state.stack.back().allocas.push_back(mo->id);
+    state.stack.valueStack().back().allocas.push_back(mo->id);
   }
   return os;
 }
@@ -6223,7 +6225,8 @@ IDType Executor::lazyInitializeLocalObject(ExecutionState &state,
 IDType Executor::lazyInitializeLocalObject(ExecutionState &state,
                                            ref<Expr> address,
                                            const KInstruction *target) {
-  return lazyInitializeLocalObject(state, state.stack.back(), address, target);
+  return lazyInitializeLocalObject(state, state.stack.valueStack().back(),
+                                   address, target);
 }
 
 void Executor::updateStateWithSymcretes(ExecutionState &state,
@@ -6594,7 +6597,7 @@ ExecutionState *Executor::prepareStateForPOSIX(KInstIterator &caller,
   targetedRun(*state, target, &initialState);
   state = initialState;
   if (state) {
-    auto frame = state->stack.back();
+    auto frame = state->stack.callStack().back();
     caller = frame.caller;
     state->popFrame();
     delete original;
@@ -6668,12 +6671,12 @@ void Executor::prepareMockValue(ExecutionState &state, const std::string &name,
                                 KInstruction *target) {
   Expr::Width width =
       kmodule->targetData->getTypeSizeInBits(target->inst->getType());
-  prepareMockValue(state, state.stack.back(), name, width, target);
+  prepareMockValue(state, state.stack.valueStack().back(), name, width, target);
 }
 
 void Executor::prepareSymbolicValue(ExecutionState &state,
                                     KInstruction *target) {
-  prepareSymbolicValue(state, state.stack.back(), target);
+  prepareSymbolicValue(state, state.stack.valueStack().back(), target);
 }
 
 void Executor::prepareSymbolicRegister(ExecutionState &state, StackFrame &sf,
@@ -6703,7 +6706,7 @@ void Executor::prepareSymbolicArgs(ExecutionState &state, StackFrame &frame) {
 }
 
 void Executor::prepareSymbolicArgs(ExecutionState &state) {
-  prepareSymbolicArgs(state, state.stack.back());
+  prepareSymbolicArgs(state, state.stack.valueStack().back());
 }
 
 unsigned Executor::getPathStreamID(const ExecutionState &state) {
@@ -7137,12 +7140,13 @@ void Executor::dumpStates() {
     for (ExecutionState *es : states) {
       *os << "(" << es << ",";
       *os << "[";
-      auto next = es->stack.begin();
+      auto next = es->stack.callStack().begin();
       ++next;
-      for (auto sfIt = es->stack.begin(), sf_ie = es->stack.end();
+      for (auto sfIt = es->stack.callStack().begin(),
+                sf_ie = es->stack.callStack().end();
            sfIt != sf_ie; ++sfIt) {
         *os << "('" << sfIt->kf->function->getName().str() << "',";
-        if (next == es->stack.end()) {
+        if (next == es->stack.callStack().end()) {
           *os << es->prevPC->info->line << "), ";
         } else {
           *os << next->caller->info->line << "), ";
@@ -7151,7 +7155,7 @@ void Executor::dumpStates() {
       }
       *os << "], ";
 
-      StackFrame &sf = es->stack.back();
+      InfoStackFrame &sf = es->stack.infoStack().back();
       uint64_t md2u =
           computeMinDistToUncovered(es->pc, sf.minDistToUncoveredOnReturn);
       uint64_t icnt = theStatisticManager->getIndexedValue(stats::instructions,
