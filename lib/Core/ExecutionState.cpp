@@ -42,6 +42,12 @@ cl::opt<bool> UseGEPOptimization(
     cl::desc("Lazily initialize whole objects referenced by gep expressions "
              "instead of only the referenced parts (default=true)"),
     cl::cat(ExecCat));
+
+cl::opt<unsigned long long> MaxCyclesBeforeStuck(
+    "max-cycles-before-stuck",
+    cl::desc("Set target after after state visiting some basic block this "
+             "amount of times (default=1)."),
+    cl::init(1), cl::cat(TerminationCat));
 } // namespace
 
 /***/
@@ -49,6 +55,19 @@ cl::opt<bool> UseGEPOptimization(
 std::uint32_t ExecutionState::nextID = 1;
 
 /***/
+
+int CallStackFrame::compare(const CallStackFrame &other) const {
+  if (kf != other.kf) {
+    return kf < other.kf ? -1 : 1;
+  }
+  if (!caller || !other.caller) {
+    return !caller ? !other.caller ? 0 : -1 : 1;
+  }
+  if (caller != other.caller) {
+    return caller < other.caller ? -1 : 1;
+  }
+  return 0;
+}
 
 StackFrame::StackFrame(KInstIterator _caller, KFunction *_kf)
     : caller(_caller), kf(_kf), callPathNode(0), minDistToUncoveredOnReturn(0),
@@ -71,24 +90,30 @@ StackFrame::~StackFrame() { delete[] locals; }
 /***/
 ExecutionState::ExecutionState()
     : initPC(nullptr), pc(nullptr), prevPC(nullptr), incomingBBIndex(-1),
-      depth(0), ptreeNode(nullptr), steppedInstructions(0),
-      steppedMemoryInstructions(0), instsSinceCovNew(0),
+      depth(0), prevHistory(TargetsHistory::create()),
+      history(TargetsHistory::create()), ptreeNode(nullptr),
+      steppedInstructions(0), steppedMemoryInstructions(0), instsSinceCovNew(0),
       roundingMode(llvm::APFloat::rmNearestTiesToEven), coveredNew(false),
       forkDisabled(false) {
   setID();
 }
 
 ExecutionState::ExecutionState(KFunction *kf)
-    : initPC(kf->instructions), pc(initPC), prevPC(pc),
-      roundingMode(llvm::APFloat::rmNearestTiesToEven) {
+    : initPC(kf->instructions), pc(initPC), prevPC(pc), incomingBBIndex(-1),
+      depth(0), prevHistory(TargetsHistory::create()),
+      history(TargetsHistory::create()), ptreeNode(nullptr),
+      steppedInstructions(0), steppedMemoryInstructions(0), instsSinceCovNew(0),
+      roundingMode(llvm::APFloat::rmNearestTiesToEven), coveredNew(false),
+      forkDisabled(false) {
   pushFrame(nullptr, kf);
   setID();
 }
 
 ExecutionState::ExecutionState(KFunction *kf, KBlock *kb)
     : initPC(kb->instructions), pc(initPC), prevPC(pc), incomingBBIndex(-1),
-      depth(0), ptreeNode(nullptr), steppedInstructions(0),
-      steppedMemoryInstructions(0), instsSinceCovNew(0),
+      depth(0), prevHistory(TargetsHistory::create()),
+      history(TargetsHistory::create()), ptreeNode(nullptr),
+      steppedInstructions(0), steppedMemoryInstructions(0), instsSinceCovNew(0),
       roundingMode(llvm::APFloat::rmNearestTiesToEven), coveredNew(false),
       forkDisabled(false) {
   pushFrame(nullptr, kf);
@@ -102,14 +127,16 @@ ExecutionState::~ExecutionState() {
 
 ExecutionState::ExecutionState(const ExecutionState &state)
     : initPC(state.initPC), pc(state.pc), prevPC(state.prevPC),
-      stack(state.stack), stackBalance(state.stackBalance),
-      incomingBBIndex(state.incomingBBIndex), depth(state.depth),
-      multilevel(state.multilevel), level(state.level),
+      stack(state.stack), callStack(state.callStack), frames(state.frames),
+      stackBalance(state.stackBalance), incomingBBIndex(state.incomingBBIndex),
+      depth(state.depth), multilevel(state.multilevel), level(state.level),
       transitionLevel(state.transitionLevel), addressSpace(state.addressSpace),
       constraints(state.constraints), targetForest(state.targetForest),
-      pathOS(state.pathOS), symPathOS(state.symPathOS),
-      coveredLines(state.coveredLines), symbolics(state.symbolics),
-      resolvedPointers(state.resolvedPointers),
+      prevTargets(state.prevTargets), targets(state.targets),
+      prevHistory(state.prevHistory), history(state.history),
+      isTargeted(state.isTargeted), pathOS(state.pathOS),
+      symPathOS(state.symPathOS), coveredLines(state.coveredLines),
+      symbolics(state.symbolics), resolvedPointers(state.resolvedPointers),
       cexPreferences(state.cexPreferences), arrayNames(state.arrayNames),
       steppedInstructions(state.steppedInstructions),
       steppedMemoryInstructions(state.steppedMemoryInstructions),
@@ -179,6 +206,11 @@ ExecutionState *ExecutionState::copy() const {
 
 void ExecutionState::pushFrame(KInstIterator caller, KFunction *kf) {
   stack.emplace_back(StackFrame(caller, kf));
+  if (std::find(callStack.begin(), callStack.end(),
+                CallStackFrame(caller, kf)) == callStack.end()) {
+    frames.emplace_back(CallStackFrame(caller, kf));
+  }
+  callStack.emplace_back(CallStackFrame(caller, kf));
   ++stackBalance;
 }
 
@@ -191,6 +223,12 @@ void ExecutionState::popFrame() {
     addressSpace.unbindObject(memoryObject);
   }
   stack.pop_back();
+  callStack.pop_back();
+  auto it = std::find(callStack.begin(), callStack.end(),
+                      CallStackFrame(sf.caller, sf.kf));
+  if (it == callStack.end()) {
+    frames.pop_back();
+  }
   --stackBalance;
 }
 
@@ -404,7 +442,7 @@ void ExecutionState::increaseLevel() {
   KModule *kmodule = kf->parent;
 
   if (prevPC->inst->isTerminator() && kmodule->inMainModule(kf->function)) {
-    multilevel[srcbb]++;
+    ++multilevel[srcbb];
     level.insert(srcbb);
   }
   if (srcbb != dstbb) {
@@ -431,4 +469,10 @@ bool ExecutionState::reachedTarget(Target target) const {
   } else {
     return pc == target.getBlock()->getFirstInstruction();
   }
+}
+
+bool ExecutionState::isStuck() {
+  KInstruction *prevKI = prevPC;
+  return (prevKI->inst->isTerminator() &&
+          multilevel[getPCBlock()] > MaxCyclesBeforeStuck - 1);
 }

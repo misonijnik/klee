@@ -52,6 +52,25 @@ struct TranstionHash;
 
 llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const MemoryMap &mm);
 
+struct CallStackFrame {
+  KInstruction *caller;
+  KFunction *kf;
+
+  CallStackFrame(KInstruction *caller_, KFunction *kf_)
+      : caller(caller_), kf(kf_) {}
+  ~CallStackFrame() = default;
+
+  int compare(const CallStackFrame &other) const;
+
+  bool operator<(const CallStackFrame &other) const {
+    return compare(other) == -1;
+  }
+
+  bool operator==(const CallStackFrame &other) const {
+    return compare(other) == 0;
+  }
+};
+
 struct StackFrame {
   KInstIterator caller;
   KFunction *kf;
@@ -204,8 +223,8 @@ private:
 
 public:
   using stack_ty = std::vector<StackFrame>;
-  using TargetHashSet =
-      std::unordered_set<ref<Target>, RefTargetHash, RefTargetCmp>;
+  using call_stack_ty = std::vector<CallStackFrame>;
+  using frames_ty = std::vector<CallStackFrame>;
 
   // Execution - Control Flow specific
 
@@ -221,6 +240,8 @@ public:
 
   /// @brief Stack representing the current instruction stream
   stack_ty stack;
+  call_stack_ty callStack;
+  frames_ty frames;
 
   int stackBalance = 0;
 
@@ -247,6 +268,12 @@ public:
 
   /// @brief Key points which should be visited through execution
   TargetForest targetForest;
+  TargetHashSet prevTargets;
+  TargetHashSet targets;
+  ref<TargetsHistory> prevHistory;
+  ref<TargetsHistory> history;
+  bool isTargeted = false;
+  bool areTargetsChanged = false;
 
   /// @brief Velocity and acceleration of this state investigating new blocks
   long long progressVelocity = 0;
@@ -388,6 +415,7 @@ public:
   bool isGEPExpr(ref<Expr> expr) const;
 
   bool reachedTarget(Target target) const;
+  bool isStuck();
 };
 
 struct ExecutionStateIDCompare {

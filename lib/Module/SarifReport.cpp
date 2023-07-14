@@ -45,7 +45,7 @@ tryConvertLocationJson(const LocationJson &locationJson) {
                           region->endColumn);
 }
 
-std::set<ReachWithError>
+std::vector<ReachWithError>
 tryConvertRuleJson(const std::string &ruleId, const std::string &toolName,
                    const optional<Message> &errorMessage) {
   if (toolName == "SecB") {
@@ -116,7 +116,7 @@ tryConvertRuleJson(const std::string &ruleId, const std::string &toolName,
 optional<Result> tryConvertResultJson(const ResultJson &resultJson,
                                       const std::string &toolName,
                                       unsigned id) {
-  std::set<ReachWithError> errors = {ReachWithError::None};
+  std::vector<ReachWithError> errors = {};
   if (!resultJson.ruleId.has_value()) {
     errors = {ReachWithError::Reachable};
   } else {
@@ -169,7 +169,7 @@ const char *getErrorString(ReachWithError error) {
   return ReachWithErrorNames[error];
 }
 
-std::string getErrorsString(const std::set<ReachWithError> &errors) {
+std::string getErrorsString(const std::vector<ReachWithError> &errors) {
   if (errors.size() == 1) {
     return getErrorString(*errors.begin());
   }
