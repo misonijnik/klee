@@ -56,7 +56,6 @@
 #include "klee/Module/KModule.h"
 #include "klee/Module/KType.h"
 #include "klee/Solver/Common.h"
-#include "klee/Solver/ConcretizationManager.h"
 #include "klee/Solver/Solver.h"
 #include "klee/Solver/SolverCmdLine.h"
 #include "klee/Statistics/TimerStatIncrementer.h"
@@ -457,7 +456,6 @@ Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
       externalDispatcher(new ExternalDispatcher(ctx)), statsTracker(0),
       pathWriter(0), symPathWriter(0),
       specialFunctionHandler(0), timers{time::Span(TimerInterval)},
-      concretizationManager(new ConcretizationManager(EqualitySubstitution)),
       codeGraphDistance(new CodeGraphDistance()),
       distanceCalculator(new DistanceCalculator(*codeGraphDistance)),
       replayKTest(0), replayPath(0), usingSeeds(0), atMemoryLimit(false),
@@ -491,7 +489,7 @@ Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
       interpreterHandler->getOutputFilename(SOLVER_QUERIES_SMT2_FILE_NAME),
       interpreterHandler->getOutputFilename(ALL_QUERIES_KQUERY_FILE_NAME),
       interpreterHandler->getOutputFilename(SOLVER_QUERIES_KQUERY_FILE_NAME),
-      concretizationManager.get(), addressManager.get());
+      addressManager.get());
 
   this->solver = new TimingSolver(solver, optimizer, EqualitySubstitution);
 
@@ -1392,28 +1390,25 @@ void Executor::addConstraint(ExecutionState &state, ref<Expr> condition) {
       klee_warning("seeds patched for violating constraint");
   }
 
-  std::pair<Assignment, bool> symcretization =
-      concretizationManager->get(state.constraints.cs(), condition);
-
-  if (!symcretization.second &&
-      Query(state.constraints.cs(), condition).containsSymcretes()) {
-    bool mayBeInBounds;
+  Assignment concretization;
+  if (Query(state.constraints.cs(), condition).containsSymcretes()) {
+    ref<SolverResponse> response;
     solver->setTimeout(coreSolverTimeout);
-    bool success = solver->mayBeTrue(state.constraints.cs(), condition,
-                                     mayBeInBounds, state.queryMetaData);
+    bool success = solver->getResponse(state.constraints.cs(),
+                                       Expr::createIsZero(condition), response,
+                                       state.queryMetaData);
     solver->setTimeout(time::Span());
     assert(success);
-    assert(mayBeInBounds);
-    symcretization =
-        concretizationManager->get(state.constraints.cs(), condition);
-    assert(symcretization.second);
+    assert(isa<InvalidResponse>(response));
+    concretization = cast<InvalidResponse>(response)->initialValuesFor(
+        state.constraints.cs().gatherSymcretizedArrays());
   }
 
-  if (symcretization.second) {
+  if (!concretization.isEmpty()) {
     // Update memory objects if arrays have affected them.
     Assignment delta =
-        state.constraints.cs().concretization().diffWith(symcretization.first);
-    updateStateWithSymcretes(state, symcretization.first);
+        state.constraints.cs().concretization().diffWith(concretization);
+    updateStateWithSymcretes(state, delta);
     state.addConstraint(condition, delta);
   } else {
     state.addConstraint(condition, {});
@@ -5700,14 +5695,21 @@ bool Executor::collectConcretizations(
   }
 
   for (unsigned int i = 0; i < resolvedMemoryObjects.size(); ++i) {
-    auto symcretization = concretizationManager->get(state.constraints.cs(),
-                                                     resolveConditions.at(i));
-    if (symcretization.second) {
-      Assignment assigment = symcretization.first;
-      resolveConcretizations.push_back(assigment);
-    } else {
-      resolveConcretizations.push_back(state.constraints.cs().concretization());
+    Assignment symcretization;
+    if (Query(state.constraints.cs(), resolveConditions.at(i))
+            .containsSymcretes()) {
+      ref<SolverResponse> response;
+      solver->setTimeout(coreSolverTimeout);
+      bool success = solver->getResponse(
+          state.constraints.cs(), Expr::createIsZero(resolveConditions.at(i)),
+          response, state.queryMetaData);
+      solver->setTimeout(time::Span());
+      assert(success);
+      assert(isa<InvalidResponse>(response));
+      symcretization = cast<InvalidResponse>(response)->initialValuesFor(
+          state.constraints.cs().gatherSymcretizedArrays());
     }
+    resolveConcretizations.push_back(symcretization);
   }
   return true;
 }
@@ -6912,10 +6914,22 @@ bool Executor::getSymbolicSolution(const ExecutionState &state, KTest &res) {
     // If the particular constraint operated on in this iteration through
     // the loop isn't implied then add it to the list of constraints.
     if (!mustBeTrue) {
-      auto symcretization =
-          concretizationManager->get(extendedConstraints.cs(), pi);
-      if (symcretization.second) {
-        extendedConstraints.addConstraint(pi, symcretization.first);
+      Assignment symcretization;
+      if (Query(extendedConstraints.cs(), pi).containsSymcretes()) {
+        ref<SolverResponse> response;
+        solver->setTimeout(coreSolverTimeout);
+        bool success = solver->getResponse(extendedConstraints.cs(),
+                                           Expr::createIsZero(pi), response,
+                                           state.queryMetaData);
+        solver->setTimeout(time::Span());
+        assert(success);
+        assert(isa<InvalidResponse>(response));
+        symcretization = cast<InvalidResponse>(response)->initialValuesFor(
+            state.constraints.cs().gatherSymcretizedArrays());
+      }
+
+      if (!symcretization.isEmpty()) {
+        extendedConstraints.addConstraint(pi, symcretization);
       } else {
         extendedConstraints.addConstraint(pi, {});
       }

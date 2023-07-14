@@ -12,7 +12,6 @@
 
 #include "klee/ADT/SparseStorage.h"
 #include "klee/Expr/Expr.h"
-#include "klee/Solver/ConcretizationManager.h"
 #include "klee/Solver/SolverCmdLine.h"
 #include "klee/Solver/SolverUtil.h"
 #include "klee/System/Time.h"
@@ -259,7 +258,6 @@ Solver *createDummySolver();
 Solver *createCoreSolver(CoreSolverType cst);
 
 Solver *createConcretizingSolver(Solver *s,
-                                 ConcretizationManager *concretizationManager,
                                  AddressGenerator *addressGenerator);
 } // namespace klee
 
