@@ -615,7 +615,7 @@ private:
   ExecutionState *prepareStateForPOSIX(KInstIterator &caller,
                                        ExecutionState *state);
 
-  void prepareTargetedExecution(ExecutionState *initialState,
+  void prepareTargetedExecution(ExecutionState &initialState,
                                 ref<TargetForest> whitelist);
 
   void increaseProgressVelocity(ExecutionState &state, KBlock *block);

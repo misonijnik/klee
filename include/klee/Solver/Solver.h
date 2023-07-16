@@ -257,8 +257,7 @@ Solver *createDummySolver();
 // Create a solver based on the supplied ``CoreSolverType``.
 Solver *createCoreSolver(CoreSolverType cst);
 
-Solver *createConcretizingSolver(Solver *s,
-                                 AddressGenerator *addressGenerator);
+Solver *createConcretizingSolver(Solver *s, AddressGenerator *addressGenerator);
 } // namespace klee
 
 #endif /* KLEE_SOLVER_H */

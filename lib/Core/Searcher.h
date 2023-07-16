@@ -157,7 +157,8 @@ public:
       std::unordered_map<TargetHistoryTargetPair, T, TargetHistoryTargetHash,
                          TargetHistoryTargetCmp>;
 
-  using TargetHistoryTargetPair = std::pair<ref<TargetsHistory>, ref<Target>>;
+  using TargetHistoryTargetPair =
+      std::pair<ref<const TargetsHistory>, ref<Target>>;
   using TargetHistoryTargetPairToSearcherMap =
       std::unordered_map<TargetHistoryTargetPair,
                          std::unique_ptr<TargetedSearcher>,
@@ -187,9 +188,9 @@ private:
   TargetForestHistoryTargetSet currTargets;
 
   TargetForestHisoryTargetVector historiesAndTargets;
-  bool isThereTarget(ref<TargetsHistory> history, ref<Target> target);
-  void addTarget(ref<TargetsHistory> history, ref<Target> target);
-  void removeTarget(ref<TargetsHistory> history, ref<Target> target);
+  bool isThereTarget(ref<const TargetsHistory> history, ref<Target> target);
+  void addTarget(ref<const TargetsHistory> history, ref<Target> target);
+  void removeTarget(ref<const TargetsHistory> history, ref<Target> target);
 
 public:
   GuidedSearcher(Searcher *baseSearcher, DistanceCalculator &distanceCalculator,

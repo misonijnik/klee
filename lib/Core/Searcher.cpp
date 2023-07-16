@@ -210,7 +210,7 @@ ExecutionState &GuidedSearcher::selectState() {
   } else {
     index = index % size;
     auto &historyTargetPair = historiesAndTargets[index];
-    ref<TargetsHistory> history = historyTargetPair.first;
+    ref<const TargetsHistory> history = historyTargetPair.first;
     ref<Target> target = historyTargetPair.second;
     assert(targetedSearchers.find({history, target}) !=
                targetedSearchers.end() &&
@@ -227,8 +227,8 @@ void GuidedSearcher::update(
 
   if (current) {
     updateTargets(current);
-    ref<TargetsHistory> history = current->history;
-    const TargetHashSet &targets = current->targets;
+    ref<const TargetsHistory> history = current->history();
+    const TargetHashSet &targets = current->targets();
     for (auto target : targets) {
       localHistoryTargets.insert({history, target});
       currTargets.insert({history, target});
@@ -236,8 +236,8 @@ void GuidedSearcher::update(
   }
 
   for (const auto state : addedStates) {
-    ref<TargetsHistory> history = state->history;
-    const TargetHashSet &targets = state->targets;
+    ref<const TargetsHistory> history = state->history();
+    const TargetHashSet &targets = state->targets();
     for (auto target : targets) {
       localHistoryTargets.insert({history, target});
       addedTStates[{history, target}].push_back(state);
@@ -245,8 +245,8 @@ void GuidedSearcher::update(
   }
 
   for (const auto state : removedStates) {
-    ref<TargetsHistory> history = state->history;
-    const TargetHashSet &targets = state->targets;
+    ref<const TargetsHistory> history = state->history();
+    const TargetHashSet &targets = state->targets();
     for (auto target : targets) {
       localHistoryTargets.insert({history, target});
       removedTStates[{history, target}].push_back(state);
@@ -254,7 +254,7 @@ void GuidedSearcher::update(
   }
 
   for (auto historyTarget : localHistoryTargets) {
-    ref<TargetsHistory> history = historyTarget.first;
+    ref<const TargetsHistory> history = historyTarget.first;
     ref<Target> target = historyTarget.second;
 
     ExecutionState *currTState =
@@ -282,14 +282,14 @@ void GuidedSearcher::update(
 }
 
 void GuidedSearcher::updateTargets(ExecutionState *state) {
-  if (!state->areTargetsChanged) {
+  if (!state->areTargetsChanged()) {
     return;
   }
 
-  ref<TargetsHistory> prevHistory = state->prevHistory;
-  ref<TargetsHistory> history = state->history;
-  const TargetHashSet &prevTargets = state->prevTargets;
-  const TargetHashSet &targets = state->targets;
+  ref<const TargetsHistory> prevHistory = state->prevHistory();
+  ref<const TargetsHistory> history = state->history();
+  const TargetHashSet &prevTargets = state->prevTargets();
+  const TargetHashSet &targets = state->targets();
   if (prevHistory != history) {
     for (auto target : prevTargets) {
       localHistoryTargets.insert({prevHistory, target});
@@ -323,7 +323,7 @@ void GuidedSearcher::updateTargets(ExecutionState *state) {
   }
 
   for (auto historyTarget : localHistoryTargets) {
-    ref<TargetsHistory> history = historyTarget.first;
+    ref<const TargetsHistory> history = historyTarget.first;
     ref<Target> target = historyTarget.second;
 
     if (!isThereTarget(history, target)) {
@@ -342,33 +342,33 @@ void GuidedSearcher::updateTargets(ExecutionState *state) {
   localHistoryTargets.clear();
 }
 
-bool GuidedSearcher::isThereTarget(ref<TargetsHistory> history,
+bool GuidedSearcher::isThereTarget(ref<const TargetsHistory> history,
                                    ref<Target> target) {
   return targetedSearchers.count({history, target}) != 0;
 }
 
-void GuidedSearcher::addTarget(ref<TargetsHistory> history,
+void GuidedSearcher::addTarget(ref<const TargetsHistory> history,
                                ref<Target> target) {
   assert(targetedSearchers.count({history, target}) == 0);
   targetedSearchers[{history, target}] =
       std::make_unique<TargetedSearcher>(target, distanceCalculator);
   assert(std::find_if(
              historiesAndTargets.begin(), historiesAndTargets.end(),
-             [&history, &target](
-                 const std::pair<ref<TargetsHistory>, ref<Target>> &element) {
+             [&history, &target](const std::pair<ref<const TargetsHistory>,
+                                                 ref<Target>> &element) {
                return element.first.get() == history.get() &&
                       element.second.get() == target.get();
              }) == historiesAndTargets.end());
   historiesAndTargets.push_back({history, target});
 }
 
-void GuidedSearcher::removeTarget(ref<TargetsHistory> history,
+void GuidedSearcher::removeTarget(ref<const TargetsHistory> history,
                                   ref<Target> target) {
   targetedSearchers.erase({history, target});
   auto it = std::find_if(
       historiesAndTargets.begin(), historiesAndTargets.end(),
-      [&history,
-       &target](const std::pair<ref<TargetsHistory>, ref<Target>> &element) {
+      [&history, &target](
+          const std::pair<ref<const TargetsHistory>, ref<Target>> &element) {
         return element.first.get() == history.get() &&
                element.second.get() == target.get();
       });

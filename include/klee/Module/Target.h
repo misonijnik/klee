@@ -56,6 +56,9 @@ private:
   static ref<Target> createCachedTarget(ref<Target> target);
 
 protected:
+  friend class ref<Target>;
+  friend class ref<const Target>;
+
   struct TargetHash {
     unsigned operator()(Target *const t) const { return t->hash(); }
   };
@@ -83,10 +86,11 @@ protected:
   bool isCached = false;
   bool toBeCleared = false;
 
+  /// @brief Required by klee::ref-managed objects
+  mutable class ReferenceCounter _refCount;
+
 public:
   bool isReported = false;
-  /// @brief Required by klee::ref-managed objects
-  class ReferenceCounter _refCount;
 
   static ref<Target> create(const std::vector<ReachWithError> &_errors,
                             unsigned _id, optional<ErrorLocation> _loc,

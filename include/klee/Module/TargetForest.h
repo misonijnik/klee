@@ -64,6 +64,9 @@ private:
   }
 
 protected:
+  friend class ref<TargetsHistory>;
+  friend class ref<const TargetsHistory>;
+
   struct TargetsHistoryHash {
     unsigned operator()(TargetsHistory *const t) const { return t->hash(); }
   };
@@ -93,6 +96,9 @@ protected:
   bool isCached = false;
   bool toBeCleared = false;
 
+  /// @brief Required by klee::ref-managed objects
+  mutable class ReferenceCounter _refCount;
+
 public:
   const ref<Target> target;
   const ref<TargetsHistory> visitedTargets;
@@ -115,12 +121,10 @@ public:
   void dump() const;
 
   ~TargetsHistory();
-
-  /// @brief Required by klee::ref-managed objects
-  class ReferenceCounter _refCount;
 };
 
-using TargetHistoryTargetPair = std::pair<ref<TargetsHistory>, ref<Target>>;
+using TargetHistoryTargetPair =
+    std::pair<ref<const TargetsHistory>, ref<Target>>;
 
 class TargetForest {
 public:

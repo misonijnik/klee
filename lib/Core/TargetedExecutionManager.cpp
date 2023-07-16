@@ -567,7 +567,7 @@ void TargetedExecutionManager::update(
   TargetToStateUnorderedSetMap reachableStatesOfTarget;
 
   for (auto state : localStates) {
-    auto &stateTargets = state->targets;
+    auto &stateTargets = state->targets();
 
     for (auto target : stateTargets) {
       DistanceResult stateDistance = targetManager.distance(*state, target);

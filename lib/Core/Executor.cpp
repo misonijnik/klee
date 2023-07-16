@@ -1580,7 +1580,7 @@ void Executor::printDebugInstructions(ExecutionState &state) {
   }
   (*stream) << state.getID() << ":";
   (*stream) << "[";
-  for (auto target : state.targets) {
+  for (auto target : state.targets()) {
     (*stream) << target->toString() << ",";
   }
   (*stream) << "]";
@@ -3913,14 +3913,10 @@ void Executor::updateStates(ExecutionState *current) {
 
   if (current && (std::find(removedStates.begin(), removedStates.end(),
                             current) == removedStates.end())) {
-    current->prevHistory = current->history;
-    current->prevTargets = current->targets;
-    current->areTargetsChanged = false;
+    current->stepTargetsAndHistory();
   }
   for (const auto state : addedStates) {
-    state->prevHistory = state->history;
-    state->prevTargets = state->targets;
-    state->areTargetsChanged = false;
+    state->stepTargetsAndHistory();
   }
 
   states.insert(addedStates.begin(), addedStates.end());
@@ -4245,8 +4241,7 @@ void Executor::run(std::vector<ExecutionState *> initialStates) {
                                    std::vector<ExecutionState *>());
   searcher->update(0, newStates, std::vector<ExecutionState *>());
   for (auto state : newStates) {
-    state->prevHistory = state->history;
-    state->prevTargets = state->targets;
+    state->stepTargetsAndHistory();
   }
 
   // main interpreter loop
@@ -4329,7 +4324,7 @@ void Executor::initializeTypeManager() {
 
 void Executor::executeStep(ExecutionState &state) {
   KInstruction *prevKI = state.prevPC;
-  if (targetManager->isTargeted(state) && state.targets.empty()) {
+  if (targetManager->isTargeted(state) && state.targets().empty()) {
     terminateStateEarly(state, "State missed all it's targets.",
                         StateTerminationType::MissedAllTargets);
   } else if (prevKI->inst->isTerminator() &&
@@ -6524,7 +6519,7 @@ void Executor::runFunctionAsMain(Function *f, int argc, char **argv,
       targets.emplace(kf, TargetedHaltsOnTraces(whitelist));
       ExecutionState *initialState = state->withStackFrame(caller, kf);
       prepareSymbolicArgs(*initialState);
-      prepareTargetedExecution(initialState, whitelist);
+      prepareTargetedExecution(*initialState, whitelist);
       states.push_back(initialState);
     }
     delete state;
@@ -6588,12 +6583,9 @@ ExecutionState *Executor::prepareStateForPOSIX(KInstIterator &caller,
   processForest->addRoot(state);
   ExecutionState *original = state->copy();
   ExecutionState *initialState = nullptr;
-  state->targetForest.add(Target::create(target));
-  state->isTargeted = true;
-  state->history = state->targetForest.getHistory();
-  state->targets = state->targetForest.getTargets();
-  state->prevHistory = state->history;
-  state->prevTargets = state->targets;
+  ref<TargetForest> targets(new TargetForest());
+  targets->add(Target::create(target));
+  prepareTargetedExecution(*state, targets);
   targetedRun(*state, target, &initialState);
   state = initialState;
   if (state) {
@@ -6614,14 +6606,13 @@ ExecutionState *Executor::prepareStateForPOSIX(KInstIterator &caller,
   return state;
 }
 
-void Executor::prepareTargetedExecution(ExecutionState *initialState,
+void Executor::prepareTargetedExecution(ExecutionState &initialState,
                                         ref<TargetForest> whitelist) {
-  initialState->targetForest = *whitelist->deepCopy();
-  initialState->isTargeted = true;
-  initialState->history = initialState->targetForest.getHistory();
-  initialState->targets = initialState->targetForest.getTargets();
-  initialState->prevHistory = initialState->history;
-  initialState->prevTargets = initialState->targets;
+  initialState.targetForest = *whitelist->deepCopy();
+  initialState.setTargeted(true);
+  initialState.setHistory(initialState.targetForest.getHistory());
+  initialState.setTargets(initialState.targetForest.getTargets());
+  initialState.stepTargetsAndHistory();
 }
 
 bool isReturnValueFromInitBlock(const ExecutionState &state,

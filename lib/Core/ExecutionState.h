@@ -291,12 +291,6 @@ public:
 
   /// @brief Key points which should be visited through execution
   TargetForest targetForest;
-  TargetHashSet prevTargets;
-  TargetHashSet targets;
-  ref<TargetsHistory> prevHistory;
-  ref<TargetsHistory> history;
-  bool isTargeted = false;
-  bool areTargetsChanged = false;
 
   /// @brief Velocity and acceleration of this state investigating new blocks
   long long progressVelocity = 0;
@@ -379,6 +373,14 @@ public:
   std::atomic<HaltExecution::Reason> terminationReasonType{
       HaltExecution::NotHalt};
 
+private:
+  TargetHashSet prevTargets_;
+  TargetHashSet targets_;
+  ref<TargetsHistory> prevHistory_;
+  ref<TargetsHistory> history_;
+  bool isTargeted_ = false;
+  bool areTargetsChanged_ = false;
+
 public:
   // only to create the initial state
   explicit ExecutionState();
@@ -436,6 +438,17 @@ public:
   void increaseLevel();
   bool isTransfered();
   bool isGEPExpr(ref<Expr> expr) const;
+
+  const TargetHashSet &prevTargets() const;
+  const TargetHashSet &targets() const;
+  ref<const TargetsHistory> prevHistory() const;
+  ref<const TargetsHistory> history() const;
+  bool isTargeted() const;
+  bool areTargetsChanged() const;
+  void stepTargetsAndHistory();
+  void setTargeted(bool targeted);
+  void setTargets(const TargetHashSet &targets);
+  void setHistory(ref<TargetsHistory> history);
 
   bool reachedTarget(Target target) const;
   bool isStuck();

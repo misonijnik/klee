@@ -37,19 +37,11 @@ private:
   StatesSet localStates;
 
   void setTargets(ExecutionState &state, const TargetHashSet &targets) {
-    state.targets = targets;
+    state.setTargets(targets);
   }
 
   void setHistory(ExecutionState &state, ref<TargetsHistory> history) {
-    state.history = history;
-  }
-
-  void setPrevHistory(ExecutionState &state, ref<TargetsHistory> history) {
-    state.prevHistory = history;
-  }
-
-  void setPrevTargets(ExecutionState &state, const TargetHashSet &targets) {
-    state.prevTargets = targets;
+    state.setHistory(history);
   }
 
   void updateMiss(ExecutionState &state, ref<Target> target);
@@ -76,26 +68,26 @@ public:
   }
 
   const TargetHashSet &targets(const ExecutionState &state) {
-    return state.targets;
+    return state.targets();
   }
 
-  ref<TargetsHistory> history(const ExecutionState &state) {
-    return state.history;
+  ref<const TargetsHistory> history(const ExecutionState &state) {
+    return state.history();
   }
 
-  ref<TargetsHistory> prevHistory(const ExecutionState &state) {
-    return state.prevHistory;
+  ref<const TargetsHistory> prevHistory(const ExecutionState &state) {
+    return state.prevHistory();
   }
 
   const TargetHashSet &prevTargets(const ExecutionState &state) {
-    return state.prevTargets;
+    return state.prevTargets();
   }
 
   TargetForest &targetForest(ExecutionState &state) {
     return state.targetForest;
   }
 
-  bool isTargeted(const ExecutionState &state) { return state.isTargeted; }
+  bool isTargeted(const ExecutionState &state) { return state.isTargeted(); }
 
   void setReached(ref<Target> target) { reachedTargets.insert(target); }
 };

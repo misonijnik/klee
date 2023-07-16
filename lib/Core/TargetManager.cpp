@@ -24,9 +24,8 @@ void TargetManager::updateMiss(ExecutionState &state, ref<Target> target) {
   auto &stateTargetForest = targetForest(state);
   stateTargetForest.remove(target);
   setTargets(state, stateTargetForest.getTargets());
-  state.areTargetsChanged = true;
   if (guidance == Interpreter::GuidanceKind::CoverageGuidance) {
-    state.isTargeted = false;
+    state.setTargeted(false);
   }
 }
 
@@ -38,7 +37,6 @@ void TargetManager::updateDone(ExecutionState &state, ref<Target> target) {
   stateTargetForest.stepTo(target);
   setTargets(state, stateTargetForest.getTargets());
   setHistory(state, stateTargetForest.getHistory());
-  state.areTargetsChanged = true;
   if (guidance == Interpreter::GuidanceKind::CoverageGuidance ||
       target->shouldFailOnThisTarget()) {
     reachedTargets.insert(target);
@@ -46,10 +44,9 @@ void TargetManager::updateDone(ExecutionState &state, ref<Target> target) {
       if (isTargeted(*es)) {
         auto &esTargetForest = targetForest(*es);
         esTargetForest.block(target);
-        es->areTargetsChanged = true;
         if (guidance == Interpreter::GuidanceKind::CoverageGuidance) {
           if (targets(*es).size() == 0) {
-            es->isTargeted = false;
+            es->setTargeted(false);
           }
         }
         setTargets(*es, esTargetForest.getTargets());
@@ -57,20 +54,19 @@ void TargetManager::updateDone(ExecutionState &state, ref<Target> target) {
     }
   }
   if (guidance == Interpreter::GuidanceKind::CoverageGuidance) {
-    state.isTargeted = false;
+    state.setTargeted(false);
   }
 }
 
 void TargetManager::updateTargets(ExecutionState &state) {
   if (guidance == Interpreter::GuidanceKind::CoverageGuidance) {
     if (targets(state).empty() && state.isStuck()) {
-      state.isTargeted = true;
+      state.setTargeted(true);
     }
     if (isTargeted(state) && targets(state).empty()) {
       ref<Target> target(targetCalculator.calculate(state));
       if (target) {
         state.targetForest.add(target);
-        state.areTargetsChanged = true;
         setTargets(state, state.targetForest.getTargets());
       }
     }

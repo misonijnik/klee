@@ -115,32 +115,32 @@ InfoStackFrame::InfoStackFrame(const InfoStackFrame &s)
 /***/
 ExecutionState::ExecutionState()
     : initPC(nullptr), pc(nullptr), prevPC(nullptr), incomingBBIndex(-1),
-      depth(0), prevHistory(TargetsHistory::create()),
-      history(TargetsHistory::create()), ptreeNode(nullptr),
-      steppedInstructions(0), steppedMemoryInstructions(0), instsSinceCovNew(0),
+      depth(0), ptreeNode(nullptr), steppedInstructions(0),
+      steppedMemoryInstructions(0), instsSinceCovNew(0),
       roundingMode(llvm::APFloat::rmNearestTiesToEven), coveredNew(false),
-      forkDisabled(false) {
+      forkDisabled(false), prevHistory_(TargetsHistory::create()),
+      history_(TargetsHistory::create()) {
   setID();
 }
 
 ExecutionState::ExecutionState(KFunction *kf)
     : initPC(kf->instructions), pc(initPC), prevPC(pc), incomingBBIndex(-1),
-      depth(0), prevHistory(TargetsHistory::create()),
-      history(TargetsHistory::create()), ptreeNode(nullptr),
-      steppedInstructions(0), steppedMemoryInstructions(0), instsSinceCovNew(0),
+      depth(0), ptreeNode(nullptr), steppedInstructions(0),
+      steppedMemoryInstructions(0), instsSinceCovNew(0),
       roundingMode(llvm::APFloat::rmNearestTiesToEven), coveredNew(false),
-      forkDisabled(false) {
+      forkDisabled(false), prevHistory_(TargetsHistory::create()),
+      history_(TargetsHistory::create()) {
   pushFrame(nullptr, kf);
   setID();
 }
 
 ExecutionState::ExecutionState(KFunction *kf, KBlock *kb)
     : initPC(kb->instructions), pc(initPC), prevPC(pc), incomingBBIndex(-1),
-      depth(0), prevHistory(TargetsHistory::create()),
-      history(TargetsHistory::create()), ptreeNode(nullptr),
-      steppedInstructions(0), steppedMemoryInstructions(0), instsSinceCovNew(0),
+      depth(0), ptreeNode(nullptr), steppedInstructions(0),
+      steppedMemoryInstructions(0), instsSinceCovNew(0),
       roundingMode(llvm::APFloat::rmNearestTiesToEven), coveredNew(false),
-      forkDisabled(false) {
+      forkDisabled(false), prevHistory_(TargetsHistory::create()),
+      history_(TargetsHistory::create()) {
   pushFrame(nullptr, kf);
   setID();
 }
@@ -157,11 +157,10 @@ ExecutionState::ExecutionState(const ExecutionState &state)
       multilevel(state.multilevel), level(state.level),
       transitionLevel(state.transitionLevel), addressSpace(state.addressSpace),
       constraints(state.constraints), targetForest(state.targetForest),
-      prevTargets(state.prevTargets), targets(state.targets),
-      prevHistory(state.prevHistory), history(state.history),
-      isTargeted(state.isTargeted), pathOS(state.pathOS),
-      symPathOS(state.symPathOS), coveredLines(state.coveredLines),
-      symbolics(state.symbolics), resolvedPointers(state.resolvedPointers),
+      prevTargets_(state.prevTargets_), targets_(state.targets_),
+      pathOS(state.pathOS), symPathOS(state.symPathOS),
+      coveredLines(state.coveredLines), symbolics(state.symbolics),
+      resolvedPointers(state.resolvedPointers),
       cexPreferences(state.cexPreferences), arrayNames(state.arrayNames),
       steppedInstructions(state.steppedInstructions),
       steppedMemoryInstructions(state.steppedMemoryInstructions),
@@ -171,7 +170,9 @@ ExecutionState::ExecutionState(const ExecutionState &state)
                                ? state.unwindingInformation->clone()
                                : nullptr),
       coveredNew(state.coveredNew), forkDisabled(state.forkDisabled),
-      returnValue(state.returnValue), gepExprBases(state.gepExprBases) {}
+      returnValue(state.returnValue), gepExprBases(state.gepExprBases),
+      prevHistory_(state.prevHistory_), history_(state.history_),
+      isTargeted_(state.isTargeted_) {}
 
 ExecutionState *ExecutionState::branch() {
   depth++;
@@ -470,6 +471,40 @@ bool ExecutionState::isGEPExpr(ref<Expr> expr) const {
 
 bool ExecutionState::visited(KBlock *block) const {
   return level.find(block->basicBlock) != level.end();
+}
+
+const TargetHashSet &ExecutionState::prevTargets() const {
+  return prevTargets_;
+}
+
+const TargetHashSet &ExecutionState::targets() const { return targets_; }
+
+ref<const TargetsHistory> ExecutionState::prevHistory() const {
+  return prevHistory_;
+}
+
+ref<const TargetsHistory> ExecutionState::history() const { return history_; }
+
+bool ExecutionState::isTargeted() const { return isTargeted_; }
+
+bool ExecutionState::areTargetsChanged() const { return areTargetsChanged_; }
+
+void ExecutionState::stepTargetsAndHistory() {
+  prevHistory_ = history_;
+  prevTargets_ = targets_;
+  areTargetsChanged_ = false;
+}
+
+void ExecutionState::setTargeted(bool targeted) { isTargeted_ = targeted; }
+
+void ExecutionState::setTargets(const TargetHashSet &targets) {
+  targets_ = targets;
+  areTargetsChanged_ = true;
+}
+
+void ExecutionState::setHistory(ref<TargetsHistory> history) {
+  history_ = history;
+  areTargetsChanged_ = true;
 }
 
 bool ExecutionState::reachedTarget(Target target) const {
