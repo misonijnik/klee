@@ -69,12 +69,11 @@ private:
     unsigned computeHash();
 
   public:
-    const KInstruction *pc;
+    KBlock *kb;
     TargetKind kind;
     ReachWithError error;
-    SpeculativeState(const KInstruction *pc_, TargetKind kind_,
-                     ReachWithError error_)
-        : pc(pc_), kind(kind_), error(error_) {
+    SpeculativeState(KBlock *kb_, TargetKind kind_, ReachWithError error_)
+        : kb(kb_), kind(kind_), error(error_) {
       computeHash();
     }
     ~SpeculativeState() = default;
@@ -88,7 +87,7 @@ private:
   struct SpeculativeStateCompare {
     bool operator()(const SpeculativeState &a,
                     const SpeculativeState &b) const {
-      return a.pc == b.pc && a.error == b.error && a.kind == b.kind;
+      return a.kb == b.kb && a.error == b.error && a.kind == b.kind;
     }
   };
 
@@ -105,10 +104,10 @@ private:
   TargetToSpeculativeStateToDistanceResultMap distanceResultCache;
   StatesSet localStates;
 
-  DistanceResult getDistance(const KInstruction *pc, TargetKind kind,
-                             ReachWithError error, ref<Target> target);
+  DistanceResult getDistance(KBlock *kb, TargetKind kind, ReachWithError error,
+                             ref<Target> target);
 
-  DistanceResult computeDistance(const KInstruction *pc, TargetKind kind,
+  DistanceResult computeDistance(KBlock *kb, TargetKind kind,
                                  ReachWithError error,
                                  ref<Target> target) const;
 
@@ -116,18 +115,17 @@ private:
                            const std::unordered_map<KFunction *, unsigned int>
                                &distanceToTargetFunction,
                            ref<Target> target) const;
-  WeightResult tryGetLocalWeight(const KInstruction *pc, weight_type &weight,
+  WeightResult tryGetLocalWeight(KBlock *kb, weight_type &weight,
                                  const std::vector<KBlock *> &localTargets,
                                  ref<Target> target) const;
   WeightResult
-  tryGetPreTargetWeight(const KInstruction *pc, weight_type &weight,
+  tryGetPreTargetWeight(KBlock *kb, weight_type &weight,
                         const std::unordered_map<KFunction *, unsigned int>
                             &distanceToTargetFunction,
                         ref<Target> target) const;
-  WeightResult tryGetTargetWeight(const KInstruction *pc, weight_type &weight,
+  WeightResult tryGetTargetWeight(KBlock *kb, weight_type &weight,
                                   ref<Target> target) const;
-  WeightResult tryGetPostTargetWeight(const KInstruction *pc,
-                                      weight_type &weight,
+  WeightResult tryGetPostTargetWeight(KBlock *kb, weight_type &weight,
                                       ref<Target> target) const;
 };
 } // namespace klee

@@ -36,6 +36,14 @@
 using namespace llvm;
 using namespace klee;
 
+namespace klee {
+cl::opt<unsigned long long> MaxCyclesBeforeStuck(
+    "max-cycles-before-stuck",
+    cl::desc("Set target after after state visiting some basic block this "
+             "amount of times (default=10)."),
+    cl::init(10), cl::cat(TerminationCat));
+}
+
 namespace {
 cl::opt<bool> UseGEPOptimization(
     "use-gep-opt", cl::init(true),
@@ -43,11 +51,6 @@ cl::opt<bool> UseGEPOptimization(
              "instead of only the referenced parts (default=true)"),
     cl::cat(ExecCat));
 
-cl::opt<unsigned long long> MaxCyclesBeforeStuck(
-    "max-cycles-before-stuck",
-    cl::desc("Set target after after state visiting some basic block this "
-             "amount of times (default=1)."),
-    cl::init(1), cl::cat(TerminationCat));
 } // namespace
 
 /***/
@@ -157,7 +160,6 @@ ExecutionState::ExecutionState(const ExecutionState &state)
       multilevel(state.multilevel), level(state.level),
       transitionLevel(state.transitionLevel), addressSpace(state.addressSpace),
       constraints(state.constraints), targetForest(state.targetForest),
-      prevTargets_(state.prevTargets_), targets_(state.targets_),
       pathOS(state.pathOS), symPathOS(state.symPathOS),
       coveredLines(state.coveredLines), symbolics(state.symbolics),
       resolvedPointers(state.resolvedPointers),
@@ -171,6 +173,7 @@ ExecutionState::ExecutionState(const ExecutionState &state)
                                : nullptr),
       coveredNew(state.coveredNew), forkDisabled(state.forkDisabled),
       returnValue(state.returnValue), gepExprBases(state.gepExprBases),
+      prevTargets_(state.prevTargets_), targets_(state.targets_),
       prevHistory_(state.prevHistory_), history_(state.history_),
       isTargeted_(state.isTargeted_) {}
 
@@ -463,48 +466,12 @@ void ExecutionState::increaseLevel() {
   }
 }
 
-bool ExecutionState::isTransfered() { return getPrevPCBlock() != getPCBlock(); }
-
 bool ExecutionState::isGEPExpr(ref<Expr> expr) const {
   return UseGEPOptimization && gepExprBases.find(expr) != gepExprBases.end();
 }
 
 bool ExecutionState::visited(KBlock *block) const {
   return level.find(block->basicBlock) != level.end();
-}
-
-const TargetHashSet &ExecutionState::prevTargets() const {
-  return prevTargets_;
-}
-
-const TargetHashSet &ExecutionState::targets() const { return targets_; }
-
-ref<const TargetsHistory> ExecutionState::prevHistory() const {
-  return prevHistory_;
-}
-
-ref<const TargetsHistory> ExecutionState::history() const { return history_; }
-
-bool ExecutionState::isTargeted() const { return isTargeted_; }
-
-bool ExecutionState::areTargetsChanged() const { return areTargetsChanged_; }
-
-void ExecutionState::stepTargetsAndHistory() {
-  prevHistory_ = history_;
-  prevTargets_ = targets_;
-  areTargetsChanged_ = false;
-}
-
-void ExecutionState::setTargeted(bool targeted) { isTargeted_ = targeted; }
-
-void ExecutionState::setTargets(const TargetHashSet &targets) {
-  targets_ = targets;
-  areTargetsChanged_ = true;
-}
-
-void ExecutionState::setHistory(ref<TargetsHistory> history) {
-  history_ = history;
-  areTargetsChanged_ = true;
 }
 
 bool ExecutionState::reachedTarget(Target target) const {
@@ -516,10 +483,4 @@ bool ExecutionState::reachedTarget(Target target) const {
   } else {
     return pc == target.getBlock()->getFirstInstruction();
   }
-}
-
-bool ExecutionState::isStuck() {
-  KInstruction *prevKI = prevPC;
-  return (prevKI->inst->isTerminator() &&
-          multilevel[getPCBlock()] > MaxCyclesBeforeStuck - 1);
 }

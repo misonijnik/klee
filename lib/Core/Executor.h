@@ -239,6 +239,8 @@ private:
 
   GuidanceKind guidanceKind;
 
+  bool hasStateWhichCanReachSomeTarget = false;
+
   /// Return the typeid corresponding to a certain `type_info`
   ref<ConstantExpr> getEhTypeidFor(ref<Expr> type_info);
 
@@ -624,8 +626,8 @@ private:
 
   void increaseProgressVelocity(ExecutionState &state, KBlock *block);
 
-  bool decreaseConfidenceFromStoppedStates(
-      SetOfStates &left_states,
+  void decreaseConfidenceFromStoppedStates(
+      SetOfStates &leftStates,
       HaltExecution::Reason reason = HaltExecution::NotHalt);
 
   void checkNullCheckAfterDeref(ref<Expr> cond, ExecutionState &state,

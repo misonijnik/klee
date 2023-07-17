@@ -35,7 +35,7 @@ std::string DistanceResult::toString() const {
 
 unsigned DistanceCalculator::SpeculativeState::computeHash() {
   unsigned res =
-      (reinterpret_cast<uintptr_t>(pc) * SymbolicSource::MAGIC_HASH_CONSTANT) +
+      (reinterpret_cast<uintptr_t>(kb) * SymbolicSource::MAGIC_HASH_CONSTANT) +
       kind;
   res = (res * SymbolicSource::MAGIC_HASH_CONSTANT) + error;
   hashValue = res;
@@ -48,22 +48,19 @@ DistanceResult DistanceCalculator::getDistance(const ExecutionState &state,
                      state.error, target);
 }
 
-DistanceResult DistanceCalculator::getDistance(const KInstruction *pc,
-                                               TargetKind kind,
+DistanceResult DistanceCalculator::getDistance(KBlock *kb, TargetKind kind,
                                                ReachWithError error,
                                                ref<Target> target) {
-  const KInstruction *ki = pc;
-  SpeculativeState specState(pc, kind, error);
+  SpeculativeState specState(kb, kind, error);
   if (distanceResultCache.count(target) == 0 ||
       distanceResultCache.at(target).count(specState) == 0) {
-    auto result = computeDistance(pc, kind, error, target);
+    auto result = computeDistance(kb, kind, error, target);
     distanceResultCache[target][specState] = result;
   }
   return distanceResultCache.at(target).at(specState);
 }
 
-DistanceResult DistanceCalculator::computeDistance(const KInstruction *pc,
-                                                   TargetKind kind,
+DistanceResult DistanceCalculator::computeDistance(KBlock *kb, TargetKind kind,
                                                    ReachWithError error,
                                                    ref<Target> target) const {
   const auto &distanceToTargetFunction =
@@ -73,16 +70,16 @@ DistanceResult DistanceCalculator::computeDistance(const KInstruction *pc,
   bool isInsideFunction = true;
   switch (kind) {
   case LocalTarget:
-    res = tryGetTargetWeight(pc, weight, target);
+    res = tryGetTargetWeight(kb, weight, target);
     break;
 
   case PreTarget:
-    res = tryGetPreTargetWeight(pc, weight, distanceToTargetFunction, target);
+    res = tryGetPreTargetWeight(kb, weight, distanceToTargetFunction, target);
     isInsideFunction = false;
     break;
 
   case PostTarget:
-    res = tryGetPostTargetWeight(pc, weight, target);
+    res = tryGetPostTargetWeight(kb, weight, target);
     isInsideFunction = false;
     break;
 
@@ -129,7 +126,7 @@ DistanceCalculator::getDistance(const KInstruction *prevPC,
       callWeight *= 2;
       callWeight += sfNum;
 
-      if (callWeight < minCallWeight) {
+      if (callWeight < UINT_MAX) {
         minCallWeight = callWeight;
         minSfNum = sfNum;
       }
@@ -140,7 +137,7 @@ DistanceCalculator::getDistance(const KInstruction *prevPC,
     }
     sfNum++;
 
-    if (minCallWeight < sfNum)
+    if (minCallWeight < UINT_MAX)
       break;
   }
 
@@ -153,7 +150,7 @@ DistanceCalculator::getDistance(const KInstruction *prevPC,
     kind = PostTarget;
   }
 
-  return getDistance(pc, kind, error, target);
+  return getDistance(pc->parent, kind, error, target);
 }
 
 bool DistanceCalculator::distanceInCallGraph(
@@ -186,11 +183,12 @@ bool DistanceCalculator::distanceInCallGraph(
   return distance != UINT_MAX;
 }
 
-WeightResult DistanceCalculator::tryGetLocalWeight(
-    const KInstruction *pc, weight_type &weight,
-    const std::vector<KBlock *> &localTargets, ref<Target> target) const {
-  KFunction *currentKF = pc->parent->parent;
-  KBlock *currentKB = pc->parent;
+WeightResult
+DistanceCalculator::tryGetLocalWeight(KBlock *kb, weight_type &weight,
+                                      const std::vector<KBlock *> &localTargets,
+                                      ref<Target> target) const {
+  KFunction *currentKF = kb->parent;
+  KBlock *currentKB = kb;
   const std::unordered_map<KBlock *, unsigned> &dist =
       codeGraphDistance.getDistance(currentKB);
   weight = UINT_MAX;
@@ -211,11 +209,11 @@ WeightResult DistanceCalculator::tryGetLocalWeight(
 }
 
 WeightResult DistanceCalculator::tryGetPreTargetWeight(
-    const KInstruction *pc, weight_type &weight,
+    KBlock *kb, weight_type &weight,
     const std::unordered_map<KFunction *, unsigned int>
         &distanceToTargetFunction,
     ref<Target> target) const {
-  KFunction *currentKF = pc->parent->parent;
+  KFunction *currentKF = kb->parent;
   std::vector<KBlock *> localTargets;
   for (auto &kCallBlock : currentKF->kCallBlocks) {
     for (auto &calledFunction : kCallBlock->calledFunctions) {
@@ -230,26 +228,27 @@ WeightResult DistanceCalculator::tryGetPreTargetWeight(
   if (localTargets.empty())
     return Miss;
 
-  WeightResult res = tryGetLocalWeight(pc, weight, localTargets, target);
+  WeightResult res = tryGetLocalWeight(kb, weight, localTargets, target);
   return res == Done ? Continue : res;
 }
 
-WeightResult DistanceCalculator::tryGetPostTargetWeight(
-    const KInstruction *pc, weight_type &weight, ref<Target> target) const {
-  KFunction *currentKF = pc->parent->parent;
+WeightResult
+DistanceCalculator::tryGetPostTargetWeight(KBlock *kb, weight_type &weight,
+                                           ref<Target> target) const {
+  KFunction *currentKF = kb->parent;
   std::vector<KBlock *> &localTargets = currentKF->returnKBlocks;
 
   if (localTargets.empty())
     return Miss;
 
-  WeightResult res = tryGetLocalWeight(pc, weight, localTargets, target);
+  WeightResult res = tryGetLocalWeight(kb, weight, localTargets, target);
   return res == Done ? Continue : res;
 }
 
-WeightResult DistanceCalculator::tryGetTargetWeight(const KInstruction *pc,
+WeightResult DistanceCalculator::tryGetTargetWeight(KBlock *kb,
                                                     weight_type &weight,
                                                     ref<Target> target) const {
   std::vector<KBlock *> localTargets = {target->getBlock()};
-  WeightResult res = tryGetLocalWeight(pc, weight, localTargets, target);
+  WeightResult res = tryGetLocalWeight(kb, weight, localTargets, target);
   return res;
 }

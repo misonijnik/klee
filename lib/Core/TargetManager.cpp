@@ -60,7 +60,7 @@ void TargetManager::updateDone(ExecutionState &state, ref<Target> target) {
 
 void TargetManager::updateTargets(ExecutionState &state) {
   if (guidance == Interpreter::GuidanceKind::CoverageGuidance) {
-    if (targets(state).empty() && state.isStuck()) {
+    if (targets(state).empty() && state.isStuck(MaxCyclesBeforeStuck)) {
       state.setTargeted(true);
     }
     if (isTargeted(state) && targets(state).empty()) {

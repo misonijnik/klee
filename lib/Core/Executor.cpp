@@ -4049,12 +4049,11 @@ bool Executor::checkMemoryUsage() {
   return false;
 }
 
-bool Executor::decreaseConfidenceFromStoppedStates(
+void Executor::decreaseConfidenceFromStoppedStates(
     SetOfStates &leftStates, HaltExecution::Reason reason) {
   if (targets.size() == 0) {
-    return false;
+    return;
   }
-  bool hasStateWhichCanReachSomeTarget = false;
   for (auto state : leftStates) {
     if (state->targetForest.empty())
       continue;
@@ -4066,7 +4065,6 @@ bool Executor::decreaseConfidenceFromStoppedStates(
           .subtractConfidencesFrom(state->targetForest, realReason);
     }
   }
-  return hasStateWhichCanReachSomeTarget;
 }
 
 void Executor::doDumpStates() {
@@ -4260,11 +4258,11 @@ void Executor::run(std::vector<ExecutionState *> initialStates) {
 
   if (guidanceKind == GuidanceKind::ErrorGuidance) {
     reportProgressTowardsTargets();
-    bool canReachNew =
-        decreaseConfidenceFromStoppedStates(states, haltExecution);
+    decreaseConfidenceFromStoppedStates(states, haltExecution);
 
     for (auto &startBlockAndWhiteList : targets) {
-      startBlockAndWhiteList.second.reportFalsePositives(canReachNew);
+      startBlockAndWhiteList.second.reportFalsePositives(
+          hasStateWhichCanReachSomeTarget);
     }
 
     if (searcher->empty())

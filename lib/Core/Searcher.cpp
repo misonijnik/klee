@@ -192,9 +192,9 @@ weight_type TargetedSearcher::getWeight(ExecutionState *es) {
     return weight;
   }
   auto distRes = distanceCalculator.getDistance(*es, target);
-  weight = ulog2(distRes.weight + es->steppedMemoryInstructions + 1); // [0, 32]
+  weight = ulog2(distRes.weight + es->steppedMemoryInstructions + 1); // [0, 32)
   if (!distRes.isInsideFunction) {
-    weight += 32; // [32, 64]
+    weight += 32; // [32, 64)
   }
   return weight;
 }
@@ -300,14 +300,10 @@ void GuidedSearcher::updateTargets(ExecutionState *state) {
       addedTStates[{history, target}].push_back(state);
     }
   } else {
+    addedTargets = targets;
     for (auto target : prevTargets) {
-      if (!targets.count(target)) {
+      if (addedTargets.erase(target) == 0) {
         removedTargets.insert(target);
-      }
-    }
-    for (auto target : targets) {
-      if (!prevTargets.count(target)) {
-        addedTargets.insert(target);
       }
     }
     for (auto target : removedTargets) {
