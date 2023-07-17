@@ -13,6 +13,7 @@
 #include "llvm/Support/CommandLine.h"
 
 namespace klee {
+class BackwardSearcher;
 class Executor;
 class Searcher;
 
@@ -23,6 +24,8 @@ void initializeSearchOptions();
 
 Searcher *constructUserSearcher(Executor &executor,
                                 bool stopAfterReachingTarget = true);
+
+BackwardSearcher *constructUserBackwardSearcher();
 } // namespace klee
 
 #endif /* KLEE_USERSEARCHER_H */

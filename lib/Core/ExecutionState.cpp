@@ -67,7 +67,7 @@ void ExecutionStack::pushFrame(KInstIterator caller, KFunction *kf) {
   }
   callStack_.emplace_back(CallStackFrame(caller, kf));
   infoStack_.emplace_back(InfoStackFrame(kf));
-  ++stackBalance;
+  ++stackBalance_;
   assert(valueStack_.size() == callStack_.size());
   assert(valueStack_.size() == infoStack_.size());
 }
@@ -84,7 +84,7 @@ void ExecutionStack::popFrame() {
   if (it == callStack_.end()) {
     uniqueFrames_.pop_back();
   }
-  --stackBalance;
+  --stackBalance_;
   assert(valueStack_.size() == callStack_.size());
   assert(valueStack_.size() == infoStack_.size());
 }
@@ -155,9 +155,9 @@ ExecutionState::~ExecutionState() {
 
 ExecutionState::ExecutionState(const ExecutionState &state)
     : initPC(state.initPC), pc(state.pc), prevPC(state.prevPC),
-      stack(state.stack), stackBalance(state.stackBalance),
-      incomingBBIndex(state.incomingBBIndex), depth(state.depth),
-      multilevel(state.multilevel), level(state.level),
+      stack(state.stack), incomingBBIndex(state.incomingBBIndex),
+      depth(state.depth), multilevel(state.multilevel),
+      multilevelCount(state.multilevelCount), level(state.level),
       transitionLevel(state.transitionLevel), addressSpace(state.addressSpace),
       constraints(state.constraints), targetForest(state.targetForest),
       pathOS(state.pathOS), symPathOS(state.symPathOS),
@@ -172,10 +172,10 @@ ExecutionState::ExecutionState(const ExecutionState &state)
                                ? state.unwindingInformation->clone()
                                : nullptr),
       coveredNew(state.coveredNew), forkDisabled(state.forkDisabled),
-      returnValue(state.returnValue), gepExprBases(state.gepExprBases),
-      prevTargets_(state.prevTargets_), targets_(state.targets_),
-      prevHistory_(state.prevHistory_), history_(state.history_),
-      isTargeted_(state.isTargeted_) {}
+      isolated(state.isolated), returnValue(state.returnValue),
+      gepExprBases(state.gepExprBases), prevTargets_(state.prevTargets_),
+      targets_(state.targets_), prevHistory_(state.prevHistory_),
+      history_(state.history_), isTargeted_(state.isTargeted_) {}
 
 ExecutionState *ExecutionState::branch() {
   depth++;
@@ -213,7 +213,7 @@ ExecutionState *ExecutionState::withKInstruction(KInstruction *ki) const {
   ExecutionState *newState = new ExecutionState(*this);
   newState->setID();
   newState->pushFrame(nullptr, ki->parent->parent);
-  newState->stackBalance = 0;
+  newState->stack.SETSTACKBALANCETOZERO();
   newState->initPC = ki->parent->instructions;
   while (newState->initPC != ki) {
     ++newState->initPC;
@@ -433,6 +433,10 @@ void ExecutionState::dumpStack(llvm::raw_ostream &out) const {
   }
 }
 
+std::string ExecutionState::pathAndPCToString() const {
+  return constraints.path().toString() + " at " + pc->toString();
+}
+
 void ExecutionState::addConstraint(ref<Expr> e, const Assignment &delta) {
   constraints.addConstraint(e, delta);
 }
@@ -459,6 +463,7 @@ void ExecutionState::increaseLevel() {
 
   if (prevPC->inst->isTerminator() && kmodule->inMainModule(kf->function)) {
     ++multilevel[srcbb];
+    multilevelCount++;
     level.insert(srcbb);
   }
   if (srcbb != dstbb) {
@@ -474,13 +479,13 @@ bool ExecutionState::visited(KBlock *block) const {
   return level.find(block->basicBlock) != level.end();
 }
 
-bool ExecutionState::reachedTarget(Target target) const {
+bool ExecutionState::reachedTarget(ref<Target> target) const {
   if (constraints.path().KBlockSize() == 0) {
     return false;
   }
-  if (target.atReturn()) {
-    return prevPC == target.getBlock()->getLastInstruction();
+  if (target->atReturn()) {
+    return prevPC == target->getBlock()->getLastInstruction();
   } else {
-    return pc == target.getBlock()->getFirstInstruction();
+    return pc == target->getBlock()->getFirstInstruction();
   }
 }

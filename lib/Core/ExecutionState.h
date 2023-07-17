@@ -113,11 +113,13 @@ private:
   call_stack_ty callStack_;
   info_stack_ty infoStack_;
   call_stack_ty uniqueFrames_;
-  unsigned stackBalance = 0;
+  int stackBalance_ = 0;
 
 public:
   void pushFrame(KInstIterator caller, KFunction *kf);
   void popFrame();
+  int stackBalance() const { return stackBalance_; }
+  void SETSTACKBALANCETOZERO() { stackBalance_ = 0; }
   inline value_stack_ty &valueStack() { return valueStack_; }
   inline const value_stack_ty &valueStack() const { return valueStack_; }
   inline const call_stack_ty &callStack() const { return callStack_; }
@@ -252,8 +254,6 @@ private:
   ExecutionState(const ExecutionState &state);
 
 public:
-  using stack_ty = ExecutionStack;
-
   // Execution - Control Flow specific
 
   /// @brief Pointer to initial instruction
@@ -267,9 +267,7 @@ public:
   KInstIterator prevPC;
 
   /// @brief Execution stack representing the current instruction stream
-  stack_ty stack;
-
-  int stackBalance = 0;
+  ExecutionStack stack;
 
   /// @brief Remember from which Basic Block control flow arrived
   /// (i.e. to select the right phi values)
@@ -283,6 +281,7 @@ public:
 
   /// @brief Exploration level, i.e., number of times KLEE cycled for this state
   std::unordered_map<llvm::BasicBlock *, unsigned long long> multilevel;
+  unsigned long multilevelCount = 0;
   std::unordered_set<llvm::BasicBlock *> level;
   std::unordered_set<Transition, TransitionHash> transitionLevel;
 
@@ -367,6 +366,8 @@ public:
   /// @brief Disables forking for this state. Set by user code
   bool forkDisabled = false;
 
+  bool isolated = false;
+
   /// Needed for composition
   ref<Expr> returnValue;
 
@@ -431,6 +432,8 @@ public:
 
   void dumpStack(llvm::raw_ostream &out) const;
 
+  std::string pathAndPCToString() const;
+
   bool visited(KBlock *block) const;
 
   std::uint32_t getID() const { return id; };
@@ -474,7 +477,7 @@ public:
     areTargetsChanged_ = true;
   }
 
-  bool reachedTarget(Target target) const;
+  bool reachedTarget(ref<Target> target) const;
 
   inline bool isStuck(unsigned long long bound) {
     KInstruction *prevKI = prevPC;

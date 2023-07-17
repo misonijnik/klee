@@ -59,7 +59,7 @@ void TargetManager::updateDone(ExecutionState &state, ref<Target> target) {
 }
 
 void TargetManager::updateTargets(ExecutionState &state) {
-  if (guidance == Interpreter::GuidanceKind::CoverageGuidance) {
+  if (!state.isolated && guidance == Interpreter::GuidanceKind::CoverageGuidance) {
     if (targets(state).empty() && state.isStuck(MaxCyclesBeforeStuck)) {
       state.setTargeted(true);
     }
@@ -123,8 +123,29 @@ void TargetManager::update(ExecutionState *current,
   }
 
   for (auto state : localStates) {
+    state->stepTargetsAndHistory();
+    auto prevKI = state->prevPC;
+    auto kf = prevKI->parent->parent;
+    auto kmodule = kf->parent;
+
+    if (prevKI->inst->isTerminator() && kmodule->inMainModule(kf->function)) {
+      auto target = Target::create(state->prevPC->parent);
+      if (guidance == Interpreter::GuidanceKind::CoverageGuidance) {
+        if (!target->atReturn() ||
+            state->prevPC == target->getBlock()->getLastInstruction()) {
+          setReached(target);
+        }
+      }
+    }
+
     updateTargets(*state);
   }
 
   localStates.clear();
+}
+
+void TargetManager::update(ref<ObjectManager::Event> e) {
+  if (auto states = dyn_cast<ObjectManager::States>(e)) {
+    update(states->modified, states->added, states->removed);
+  }
 }

@@ -394,7 +394,7 @@ struct Expr::CreateArg {
 // Comparison operators
 
 inline bool operator==(const Expr &lhs, const Expr &rhs) {
-  return lhs.compare(rhs) == 0;
+  return lhs.equals(rhs);
 }
 
 inline bool operator<(const Expr &lhs, const Expr &rhs) {
