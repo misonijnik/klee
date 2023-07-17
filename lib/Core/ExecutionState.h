@@ -115,14 +115,14 @@ private:
 public:
   void pushFrame(KInstIterator caller, KFunction *kf);
   void popFrame();
-  value_stack_ty &valueStack() { return valueStack_; }
-  const value_stack_ty &valueStack() const { return valueStack_; }
-  const call_stack_ty &callStack() const { return callStack_; }
-  info_stack_ty &infoStack() { return infoStack_; }
-  const call_stack_ty &uniqueFrames() const { return uniqueFrames_; }
+  inline value_stack_ty &valueStack() { return valueStack_; }
+  inline const value_stack_ty &valueStack() const { return valueStack_; }
+  inline const call_stack_ty &callStack() const { return callStack_; }
+  inline info_stack_ty &infoStack() { return infoStack_; }
+  inline const call_stack_ty &uniqueFrames() const { return uniqueFrames_; }
 
-  unsigned size() const { return callStack_.size(); }
-  bool empty() const { return callStack_.empty(); }
+  inline unsigned size() const { return callStack_.size(); }
+  inline bool empty() const { return callStack_.empty(); }
 };
 
 /// Contains information related to unwinding (Itanium ABI/2-Phase unwinding)

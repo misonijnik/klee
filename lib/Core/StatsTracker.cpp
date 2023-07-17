@@ -1092,19 +1092,25 @@ void StatsTracker::computeReachableUncovered() {
        it != ie; ++it) {
     ExecutionState *es = *it;
     uint64_t currentFrameMinDist = 0;
-    for (unsigned i = 0; i < es->stack.size(); ++i) {
-      unsigned ri = es->stack.size() - 1 - i;
+    ExecutionStack::call_stack_ty::const_iterator
+        sfIt = es->stack.callStack().begin(),
+        sf_ie = es->stack.callStack().end();
+    ExecutionStack::info_stack_ty::iterator isfIt =
+                                                es->stack.infoStack().begin(),
+                                            isf_ie =
+                                                es->stack.infoStack().end();
+    for (; sfIt != sf_ie && isfIt != isf_ie; ++sfIt, ++isfIt) {
+      ExecutionStack::call_stack_ty::const_iterator next = sfIt + 1;
       KInstIterator kii;
 
-      if (ri + 1 == es->stack.size()) {
+      if (next == sf_ie) {
         kii = es->pc;
       } else {
-        kii = es->stack.callStack().at(ri + 1).caller;
+        kii = next->caller;
         ++kii;
       }
 
-      es->stack.infoStack().at(ri).minDistToUncoveredOnReturn =
-          currentFrameMinDist;
+      isfIt->minDistToUncoveredOnReturn = currentFrameMinDist;
 
       currentFrameMinDist = computeMinDistToUncovered(kii, currentFrameMinDist);
     }
