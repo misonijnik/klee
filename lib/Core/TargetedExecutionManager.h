@@ -14,6 +14,7 @@
 #ifndef KLEE_TARGETEDEXECUTIONMANAGER_H
 #define KLEE_TARGETEDEXECUTIONMANAGER_H
 
+#include "ObjectManager.h"
 #include "klee/Core/TargetedExecutionReporter.h"
 #include "klee/Module/KModule.h"
 #include "klee/Module/Target.h"
@@ -22,6 +23,9 @@
 #include <unordered_map>
 
 namespace klee {
+class DistanceCalculator;
+class TargetManager;
+
 extern llvm::cl::OptionCategory TerminationCat;
 
 /*** Termination criteria options ***/
@@ -56,6 +60,8 @@ extern llvm::cl::opt<unsigned> MaxStaticPctCheckDelay;
 
 extern llvm::cl::opt<std::string> TimerInterval;
 
+extern llvm::cl::opt<unsigned long long> MaxCycles;
+
 class CodeGraphDistance;
 
 class LocatedEventManager {
@@ -78,8 +84,8 @@ class TargetedHaltsOnTraces {
   using TraceToHaltTypeToConfidence =
       std::unordered_map<ref<TargetForest::UnorderedTargetsSet>,
                          HaltTypeToConfidence,
-                         TargetForest::RefUnorderedTargetsSetHash,
-                         TargetForest::RefUnorderedTargetsSetCmp>;
+                         TargetForest::UnorderedTargetsSetHash,
+                         TargetForest::UnorderedTargetsSetCmp>;
   TraceToHaltTypeToConfidence traceToHaltTypeToConfidence;
 
   static void totalConfidenceAndTopContributor(
@@ -96,21 +102,24 @@ public:
   void reportFalsePositives(bool canReachSomeTarget);
 };
 
-class TargetedExecutionManager {
+class TargetedExecutionManager final : public Subscriber {
 private:
   using Blocks = std::unordered_set<KBlock *>;
   using LocationToBlocks = std::unordered_map<ref<Location>, Blocks,
                                               RefLocationHash, RefLocationCmp>;
   using Locations =
       std::unordered_set<ref<Location>, RefLocationHash, RefLocationCmp>;
+  using StatesSet = std::unordered_set<ExecutionState *>;
+  using TargetToStateUnorderedSetMap = TargetHashMap<StatesSet>;
 
   using Instructions = std::unordered_map<
       std::string,
       std::unordered_map<
           unsigned int,
           std::unordered_map<unsigned int, std::unordered_set<unsigned int>>>>;
-  std::unordered_set<unsigned> broken_traces;
-  std::unordered_set<unsigned> reported_traces;
+
+  std::unordered_set<unsigned> brokenTraces;
+  std::unordered_set<unsigned> reportedTraces;
 
   bool tryResolveLocations(Result &result, LocationToBlocks &locToBlocks) const;
   LocationToBlocks prepareAllLocations(KModule *kmodule,
@@ -124,17 +133,38 @@ private:
                                      LocationToBlocks &locToBlocks) const;
 
   CodeGraphDistance &codeGraphDistance;
+  DistanceCalculator &distanceCalculator;
+  TargetManager &targetManager;
+  StatesSet localStates;
 
 public:
-  explicit TargetedExecutionManager(CodeGraphDistance &codeGraphDistance_)
-      : codeGraphDistance(codeGraphDistance_) {}
-  std::unordered_map<KFunction *, ref<TargetForest>>
+  struct KFunctionLess {
+    bool operator()(const KFunction *a, const KFunction *b) const {
+      return a->id < b->id;
+    }
+  };
+
+  explicit TargetedExecutionManager(CodeGraphDistance &codeGraphDistance_,
+                                    DistanceCalculator &distanceCalculator_,
+                                    TargetManager &targetManager_)
+      : codeGraphDistance(codeGraphDistance_),
+        distanceCalculator(distanceCalculator_), targetManager(targetManager_) {
+  }
+  ~TargetedExecutionManager() = default;
+
+  std::map<KFunction *, ref<TargetForest>, KFunctionLess>
   prepareTargets(KModule *kmodule, SarifReport paths);
 
   void reportFalseNegative(ExecutionState &state, ReachWithError error);
 
   // Return true if report is successful
   bool reportTruePositive(ExecutionState &state, ReachWithError error);
+
+  void update(ExecutionState *current,
+              const std::vector<ExecutionState *> &addedStates,
+              const std::vector<ExecutionState *> &removedStates);
+
+  void update(ref<ObjectManager::Event> e) override;
 };
 
 } // namespace klee

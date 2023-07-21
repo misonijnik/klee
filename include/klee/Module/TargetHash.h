@@ -14,6 +14,7 @@
 
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace llvm {
 class BasicBlock;
@@ -23,22 +24,10 @@ namespace klee {
 struct Target;
 
 struct TargetHash {
-  unsigned operator()(const Target *t) const;
-};
-
-struct TargetCmp {
-  bool operator()(const Target *a, const Target *b) const;
-};
-
-struct EquivTargetCmp {
-  bool operator()(const Target *a, const Target *b) const;
-};
-
-struct RefTargetHash {
   unsigned operator()(const ref<Target> &t) const;
 };
 
-struct RefTargetCmp {
+struct TargetCmp {
   bool operator()(const ref<Target> &a, const ref<Target> &b) const;
 };
 
@@ -48,11 +37,16 @@ struct TransitionHash {
   std::size_t operator()(const Transition &p) const;
 };
 
-struct RefTargetLess {
+struct TargetLess {
   bool operator()(const ref<Target> &a, const ref<Target> &b) const {
-    return a.get() < b.get();
+    return a < b;
   }
 };
+
+template <class T>
+using TargetHashMap = std::unordered_map<ref<Target>, T, TargetHash, TargetCmp>;
+
+using TargetHashSet = std::unordered_set<ref<Target>, TargetHash, TargetCmp>;
 
 } // namespace klee
 #endif /* KLEE_TARGETHASH_H */

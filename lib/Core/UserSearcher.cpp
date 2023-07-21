@@ -9,6 +9,7 @@
 
 #include "UserSearcher.h"
 
+#include "BackwardSearcher.h"
 #include "Executor.h"
 #include "Searcher.h"
 
@@ -77,10 +78,11 @@ cl::opt<std::string> BatchTime(
     cl::init("5s"), cl::cat(SearchCat));
 
 cl::opt<unsigned long long>
-    MaxCycles("max-cycles",
-              cl::desc("stop execution after visiting some basic block this "
-                       "amount of times (default=1)."),
-              cl::init(1), cl::cat(TerminationCat));
+    MaxPropagations("max-propagations",
+                    cl::desc("propagate at most this amount of propagations "
+                             "with the same state (default=0 (no limit))."),
+                    cl::init(0), cl::cat(TerminationCat));
+
 } // namespace
 
 void klee::initializeSearchOptions() {
@@ -178,13 +180,8 @@ Searcher *klee::constructUserSearcher(Executor &executor,
   }
 
   if (executor.guidanceKind != Interpreter::GuidanceKind::NoGuidance) {
-    if (executor.guidanceKind == Interpreter::GuidanceKind::ErrorGuidance) {
-      delete searcher;
-      searcher = nullptr;
-    }
-    searcher = new GuidedSearcher(
-        *executor.codeGraphDistance.get(), *executor.targetCalculator,
-        executor.pausedStates, MaxCycles - 1, executor.theRNG, searcher);
+    searcher = new GuidedSearcher(searcher, *executor.distanceCalculator,
+                                  executor.theRNG);
   }
 
   llvm::raw_ostream &os = executor.getHandler().getInfoStream();
@@ -194,4 +191,8 @@ Searcher *klee::constructUserSearcher(Executor &executor,
   os << "END searcher description\n";
 
   return searcher;
+}
+
+BackwardSearcher *klee::constructUserBackwardSearcher() {
+  return new RecencyRankedSearcher(MaxPropagations - 1);
 }

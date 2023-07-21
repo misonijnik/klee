@@ -1,0 +1,52 @@
+{
+    "inputs" : {
+        "buildPath" : "",
+        "sarifTracesFilePath" : ".json",
+        "bytecodeFilePath" : ".bc",
+        "maxTime" : "240",
+        "maxSolverTime" : "5",
+        "maxForks" : "200",
+        "maxSymAlloc" : "32",
+        "SymbolicAllocationThreshold" : "2048",
+        "minNumberElements" : "4",
+        "maxCycles" : 10,
+        "useSymbolicSizeLI" : false,
+        "writeKpaths": false
+    },
+    "configurations": [
+        {
+            "program": "${buildPath}/bin/klee",
+            "args": [
+                "--use-guided-search=error",
+                "--mock-external-calls",
+                "--posix-runtime",
+                "--check-out-of-memory",
+                "--suppress-external-warnings",
+                "--libc=klee",
+                "--skip-not-lazy-initialized",
+                "--external-calls=all",
+                "--output-source=false",
+                "--output-istats=false",
+                "--output-stats=false",
+                "--max-time=${maxTime}s",
+                "--max-sym-alloc=${maxSymAlloc}",
+                "--max-forks=${maxForks}",
+                "--max-solver-time=${maxSolverTime}s",
+                "--mock-all-externals",
+                "--smart-resolve-entry-function",
+                "--extern-calls-can-return-null",
+                "--align-symbolic-pointers=false",
+                "--write-no-tests",
+                "--write-kpaths=${writeKpaths}",
+                "--use-lazy-initialization=only",
+                "--min-number-elements-li=${minNumberElements}",
+                "--use-sym-size-li=${useSymbolicSizeLI}",
+                "--max-cycles-before-stuck=${maxCycles}",
+                "--rewrite-equalities=simple",
+                "--symbolic-allocation-threshold=${SymbolicAllocationThreshold}",
+                "--analysis-reproduce=${sarifTracesFilePath}",
+                "${bytecodeFilePath}"
+            ]
+        }
+    ]
+}

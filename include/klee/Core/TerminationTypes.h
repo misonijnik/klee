@@ -20,7 +20,9 @@
   TTYPE(MaxDepth, 3U, "early")                                                 \
   TTYPE(OutOfMemory, 4U, "early")                                              \
   TTYPE(OutOfStackMemory, 5U, "early")                                         \
-  MARK(EARLY, 5U)                                                              \
+  TTYPE(MaxCycles, 6U, "early")                                                \
+  TTYPE(MissedAllTargets, 7U, "miss_all_targets.early")                        \
+  MARK(EARLY, 7U)                                                              \
   TTYPE(Solver, 8U, "solver.err")                                              \
   MARK(SOLVERERR, 8U)                                                          \
   TTYPE(Abort, 10U, "abort.err")                                               \
@@ -33,7 +35,7 @@
   TTYPE(ReadOnly, 17U, "read_only.err")                                        \
   TTYPE(ReportError, 18U, "report_error.err")                                  \
   TTYPE(UndefinedBehavior, 19U, "undefined_behavior.err")                      \
-  TTYPE(InternalOutOfMemory, 20U, "out_of_memory.er")                          \
+  TTYPE(InternalOutOfMemory, 20U, "out_of_memory.err")                         \
   MARK(PROGERR, 20U)                                                           \
   TTYPE(User, 23U, "user.err")                                                 \
   MARK(USERERR, 23U)                                                           \
@@ -60,6 +62,7 @@ enum Reason {
   MaxInstructions,
   MaxSteppedInstructions,
   MaxTime,
+  MaxCycles,
   CovCheck,
   NoMoreStates,
   ReachedTarget,

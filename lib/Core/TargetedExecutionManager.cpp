@@ -9,10 +9,14 @@
 
 #include "TargetedExecutionManager.h"
 
+#include "DistanceCalculator.h"
+#include "TargetManager.h"
+
 #include "ExecutionState.h"
 #include "klee/Core/TerminationTypes.h"
 #include "klee/Module/CodeGraphDistance.h"
 #include "klee/Module/KInstruction.h"
+#include "klee/Module/KModule.h"
 #include "klee/Support/ErrorHandling.h"
 
 #include <memory>
@@ -154,6 +158,12 @@ llvm::cl::opt<bool> SmartResolveEntryFunction(
     "smart-resolve-entry-function", cl::init(false),
     cl::desc("Resolve entry function using code flow graph instead of taking "
              "function of first location (default=false)"));
+
+cl::opt<unsigned long long>
+    MaxCycles("max-cycles",
+              cl::desc("stop execution after visiting some basic block this "
+                       "amount of times (default=0)."),
+              cl::init(0), cl::cat(TerminationCat));
 } // namespace klee
 
 void LocatedEventManager::prefetchFindFilename(const std::string &filename) {
@@ -247,6 +257,9 @@ getAdviseWhatToIncreaseConfidenceRate(HaltExecution::Reason reason) {
     break;
   case HaltExecution::MaxSteppedInstructions:
     what = MaxSteppedInstructions.ArgStr.str();
+    break;
+  case HaltExecution::MaxCycles:
+    what = "max-cycles"; // TODO: taken from UserSearcher.cpp
     break;
   case HaltExecution::CovCheck:
     what = "cov-check"; // TODO: taken from StatsTracker.cpp
@@ -457,23 +470,24 @@ KFunction *TargetedExecutionManager::tryResolveEntryFunction(
   return resKf;
 }
 
-std::unordered_map<KFunction *, ref<TargetForest>>
+std::map<KFunction *, ref<TargetForest>,
+         TargetedExecutionManager::KFunctionLess>
 TargetedExecutionManager::prepareTargets(KModule *kmodule, SarifReport paths) {
   Locations locations = collectAllLocations(paths);
   LocationToBlocks locToBlocks = prepareAllLocations(kmodule, locations);
 
-  std::unordered_map<KFunction *, ref<TargetForest>> whitelists;
+  std::map<KFunction *, ref<TargetForest>, KFunctionLess> whitelists;
 
   for (auto &result : paths.results) {
     bool isFullyResolved = tryResolveLocations(result, locToBlocks);
     if (!isFullyResolved) {
-      broken_traces.insert(result.id);
+      brokenTraces.insert(result.id);
       continue;
     }
 
     auto kf = tryResolveEntryFunction(result, locToBlocks);
     if (!kf) {
-      broken_traces.insert(result.id);
+      brokenTraces.insert(result.id);
       continue;
     }
 
@@ -496,10 +510,9 @@ void TargetedExecutionManager::reportFalseNegative(ExecutionState &state,
 bool TargetedExecutionManager::reportTruePositive(ExecutionState &state,
                                                   ReachWithError error) {
   bool atLeastOneReported = false;
-  for (auto kvp : state.targetForest) {
-    auto target = kvp.first;
-    if (!target->isThatError(error) || broken_traces.count(target->getId()) ||
-        reported_traces.count(target->getId()))
+  for (auto target : state.targetForest.getTargets()) {
+    if (!target->isThatError(error) || brokenTraces.count(target->getId()) ||
+        reportedTraces.count(target->getId()))
       continue;
 
     /// The following code checks if target is a `call ...` instruction and we
@@ -516,7 +529,7 @@ bool TargetedExecutionManager::reportTruePositive(ExecutionState &state,
         found = false;
         break;
       }
-      possibleInstruction = state.stack[i].caller;
+      possibleInstruction = state.stack.callStack().at(i).caller;
       i--;
     }
     if (!found)
@@ -533,7 +546,56 @@ bool TargetedExecutionManager::reportTruePositive(ExecutionState &state,
                    getErrorString(error), target->getId());
     }
     target->isReported = true;
-    reported_traces.insert(target->getId());
+    reportedTraces.insert(target->getId());
   }
   return atLeastOneReported;
+}
+
+void TargetedExecutionManager::update(
+    ExecutionState *current, const std::vector<ExecutionState *> &addedStates,
+    const std::vector<ExecutionState *> &removedStates) {
+  if (current && (std::find(removedStates.begin(), removedStates.end(),
+                            current) == removedStates.end())) {
+    localStates.insert(current);
+  }
+  for (const auto state : addedStates) {
+    localStates.insert(state);
+  }
+  for (const auto state : removedStates) {
+    localStates.insert(state);
+  }
+
+  TargetToStateUnorderedSetMap reachableStatesOfTarget;
+
+  for (auto state : localStates) {
+    auto &stateTargets = state->targets();
+
+    for (auto target : stateTargets) {
+      DistanceResult stateDistance = targetManager.distance(*state, target);
+      switch (stateDistance.result) {
+      case WeightResult::Miss:
+        break;
+      case WeightResult::Continue:
+      case WeightResult::Done:
+        reachableStatesOfTarget[target].insert(state);
+        break;
+      default:
+        assert(0 && "unreachable");
+      }
+    }
+  }
+
+  for (auto state : localStates) {
+    state->targetForest.divideConfidenceBy(reachableStatesOfTarget);
+  }
+
+  localStates.clear();
+}
+
+void TargetedExecutionManager::update(ref<ObjectManager::Event> e) {
+  if (auto states = dyn_cast<ObjectManager::States>(e)) {
+    if (!states->isolated) {
+      update(states->modified, states->added, states->removed);
+    }
+  }
 }

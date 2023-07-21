@@ -22,14 +22,12 @@
 #include <string>
 
 namespace klee {
-class ConcretizationManager;
 class AddressGenerator;
 
 Solver *constructSolverChain(Solver *coreSolver, std::string querySMT2LogPath,
                              std::string baseSolverQuerySMT2LogPath,
                              std::string queryKQueryLogPath,
                              std::string baseSolverQueryKQueryLogPath,
-                             ConcretizationManager *concretizationManager,
                              AddressGenerator *addressGenerator) {
   Solver *solver = coreSolver;
   const time::Span minQueryTimeToLog(MinQueryTimeToLog);
@@ -63,9 +61,8 @@ Solver *constructSolverChain(Solver *coreSolver, std::string querySMT2LogPath,
   if (UseIndependentSolver)
     solver = createIndependentSolver(solver);
 
-  if (UseConcretizingSolver && concretizationManager)
-    solver = createConcretizingSolver(solver, concretizationManager,
-                                      addressGenerator);
+  if (UseConcretizingSolver)
+    solver = createConcretizingSolver(solver, addressGenerator);
 
   if (DebugValidateSolver)
     solver = createValidatingSolver(solver, coreSolver);

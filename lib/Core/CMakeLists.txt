@@ -9,26 +9,35 @@
 klee_add_component(kleeCore
   AddressManager.cpp  
   AddressSpace.cpp
+  BackwardSearcher.cpp
+  BidirectionalSearcher.cpp
   CallPathManager.cpp
+  Composer.cpp
   Context.cpp
   CoreStats.cpp
   CXXTypeSystem/CXXTypeManager.cpp
+  DistanceCalculator.cpp
   ExecutionState.cpp
   Executor.cpp
   ExecutorUtil.cpp
   ExternalDispatcher.cpp
   ImpliedValue.cpp
+  Initializer.cpp
   Memory.cpp
   MemoryManager.cpp
+  ObjectManager.cpp
   PForest.cpp
   PTree.cpp
+  ProofObligation.cpp
   Searcher.cpp
   SeedInfo.cpp
+  SeedMap.cpp
   SpecialFunctionHandler.cpp
   StatsTracker.cpp
   TargetCalculator.cpp
   TargetedExecutionReporter.cpp
   TargetedExecutionManager.cpp
+  TargetManager.cpp
   TimingSolver.cpp
   TypeManager.cpp
   UserSearcher.cpp

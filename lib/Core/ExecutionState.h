@@ -20,6 +20,7 @@
 #include "klee/Expr/Expr.h"
 #include "klee/Expr/ExprHashMap.h"
 #include "klee/Module/KInstIterator.h"
+#include "klee/Module/KInstruction.h"
 #include "klee/Module/Target.h"
 #include "klee/Module/TargetForest.h"
 #include "klee/Module/TargetHash.h"
@@ -31,6 +32,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -51,20 +53,26 @@ struct TranstionHash;
 
 llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const MemoryMap &mm);
 
-struct StackFrame {
+extern llvm::cl::opt<unsigned long long> MaxCyclesBeforeStuck;
+
+struct CallStackFrame {
   KInstIterator caller;
   KFunction *kf;
-  CallPathNode *callPathNode;
 
+  CallStackFrame(KInstIterator caller_, KFunction *kf_)
+      : caller(caller_), kf(kf_) {}
+  ~CallStackFrame() = default;
+  CallStackFrame(const CallStackFrame &s);
+
+  bool equals(const CallStackFrame &other) const;
+
+  bool operator==(const CallStackFrame &other) const { return equals(other); }
+};
+
+struct StackFrame {
+  KFunction *kf;
   std::vector<IDType> allocas;
   Cell *locals;
-
-  /// Minimum distance to an uncovered instruction once the function
-  /// returns. This is not a good place for this but is used to
-  /// quickly compute the context sensitive minimum distance to an
-  /// uncovered instruction. This value is updated by the StatsTracker
-  /// periodically.
-  unsigned minDistToUncoveredOnReturn;
 
   // For vararg functions: arguments not passed via parameter are
   // stored (packed tightly) in a local (alloca) memory object. This
@@ -73,9 +81,53 @@ struct StackFrame {
   // of intrinsic lowering.
   MemoryObject *varargs;
 
-  StackFrame(KInstIterator caller, KFunction *kf);
+  StackFrame(KFunction *kf);
   StackFrame(const StackFrame &s);
   ~StackFrame();
+};
+
+struct InfoStackFrame {
+  KFunction *kf;
+  CallPathNode *callPathNode = nullptr;
+
+  /// Minimum distance to an uncovered instruction once the function
+  /// returns. This is not a good place for this but is used to
+  /// quickly compute the context sensitive minimum distance to an
+  /// uncovered instruction. This value is updated by the StatsTracker
+  /// periodically.
+  unsigned minDistToUncoveredOnReturn = 0;
+
+  InfoStackFrame(KFunction *kf);
+  InfoStackFrame(const InfoStackFrame &s);
+  ~InfoStackFrame() = default;
+};
+
+struct ExecutionStack {
+public:
+  using value_stack_ty = std::vector<StackFrame>;
+  using call_stack_ty = std::vector<CallStackFrame>;
+  using info_stack_ty = std::vector<InfoStackFrame>;
+
+private:
+  value_stack_ty valueStack_;
+  call_stack_ty callStack_;
+  info_stack_ty infoStack_;
+  call_stack_ty uniqueFrames_;
+  int stackBalance_ = 0;
+
+public:
+  void pushFrame(KInstIterator caller, KFunction *kf);
+  void popFrame();
+  int stackBalance() const { return stackBalance_; }
+  void SETSTACKBALANCETOZERO() { stackBalance_ = 0; }
+  inline value_stack_ty &valueStack() { return valueStack_; }
+  inline const value_stack_ty &valueStack() const { return valueStack_; }
+  inline const call_stack_ty &callStack() const { return callStack_; }
+  inline info_stack_ty &infoStack() { return infoStack_; }
+  inline const call_stack_ty &uniqueFrames() const { return uniqueFrames_; }
+
+  inline unsigned size() const { return callStack_.size(); }
+  inline bool empty() const { return callStack_.empty(); }
 };
 
 /// Contains information related to unwinding (Itanium ABI/2-Phase unwinding)
@@ -202,8 +254,6 @@ private:
   ExecutionState(const ExecutionState &state);
 
 public:
-  using stack_ty = std::vector<StackFrame>;
-
   // Execution - Control Flow specific
 
   /// @brief Pointer to initial instruction
@@ -216,10 +266,8 @@ public:
   /// @brief Pointer to instruction which is currently executed
   KInstIterator prevPC;
 
-  /// @brief Stack representing the current instruction stream
-  stack_ty stack;
-
-  int stackBalance = 0;
+  /// @brief Execution stack representing the current instruction stream
+  ExecutionStack stack;
 
   /// @brief Remember from which Basic Block control flow arrived
   /// (i.e. to select the right phi values)
@@ -232,7 +280,8 @@ public:
   std::uint32_t depth = 0;
 
   /// @brief Exploration level, i.e., number of times KLEE cycled for this state
-  std::unordered_multiset<llvm::BasicBlock *> multilevel;
+  std::unordered_map<llvm::BasicBlock *, unsigned long long> multilevel;
+  unsigned long multilevelCount = 0;
   std::unordered_set<llvm::BasicBlock *> level;
   std::unordered_set<Transition, TransitionHash> transitionLevel;
 
@@ -317,6 +366,8 @@ public:
   /// @brief Disables forking for this state. Set by user code
   bool forkDisabled = false;
 
+  bool isolated = false;
+
   /// Needed for composition
   ref<Expr> returnValue;
 
@@ -325,6 +376,14 @@ public:
   ReachWithError error = ReachWithError::None;
   std::atomic<HaltExecution::Reason> terminationReasonType{
       HaltExecution::NotHalt};
+
+private:
+  TargetHashSet prevTargets_;
+  TargetHashSet targets_;
+  ref<TargetsHistory> prevHistory_;
+  ref<TargetsHistory> history_;
+  bool isTargeted_ = false;
+  bool areTargetsChanged_ = false;
 
 public:
   // only to create the initial state
@@ -361,14 +420,19 @@ public:
                std::pair<ref<const MemoryObject>, ref<Expr>> &resolution) const;
 
   void removePointerResolutions(const MemoryObject *mo);
+  void removePointerResolutions(ref<Expr> address, unsigned size);
   void addPointerResolution(ref<Expr> address, const MemoryObject *mo,
                             unsigned size = 0);
+  void addUniquePointerResolution(ref<Expr> address, const MemoryObject *mo,
+                                  unsigned size = 0);
   bool resolveOnSymbolics(const ref<ConstantExpr> &addr, IDType &result) const;
 
   void addConstraint(ref<Expr> e, const Assignment &c);
   void addCexPreference(const ref<Expr> &cond);
 
   void dumpStack(llvm::raw_ostream &out) const;
+
+  std::string pathAndPCToString() const;
 
   bool visited(KBlock *block) const;
 
@@ -378,10 +442,48 @@ public:
   llvm::BasicBlock *getPrevPCBlock() const;
   llvm::BasicBlock *getPCBlock() const;
   void increaseLevel();
-  bool isTransfered();
+
+  inline bool isTransfered() { return getPrevPCBlock() != getPCBlock(); }
+
   bool isGEPExpr(ref<Expr> expr) const;
 
-  bool reachedTarget(Target target) const;
+  inline const TargetHashSet &prevTargets() const { return prevTargets_; }
+
+  inline const TargetHashSet &targets() const { return targets_; }
+
+  inline ref<const TargetsHistory> prevHistory() const { return prevHistory_; }
+
+  inline ref<const TargetsHistory> history() const { return history_; }
+
+  inline bool isTargeted() const { return isTargeted_; }
+
+  inline bool areTargetsChanged() const { return areTargetsChanged_; }
+
+  void stepTargetsAndHistory() {
+    prevHistory_ = history_;
+    prevTargets_ = targets_;
+    areTargetsChanged_ = false;
+  }
+
+  inline void setTargeted(bool targeted) { isTargeted_ = targeted; }
+
+  inline void setTargets(const TargetHashSet &targets) {
+    targets_ = targets;
+    areTargetsChanged_ = true;
+  }
+
+  inline void setHistory(ref<TargetsHistory> history) {
+    history_ = history;
+    areTargetsChanged_ = true;
+  }
+
+  bool reachedTarget(ref<Target> target) const;
+
+  inline bool isStuck(unsigned long long bound) {
+    KInstruction *prevKI = prevPC;
+    return (prevKI->inst->isTerminator() &&
+            multilevel[getPCBlock()] > bound - 1);
+  }
 };
 
 struct ExecutionStateIDCompare {

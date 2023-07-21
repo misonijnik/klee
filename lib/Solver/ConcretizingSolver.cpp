@@ -8,7 +8,6 @@
 #include "klee/Expr/Symcrete.h"
 
 #include "klee/Solver/AddressGenerator.h"
-#include "klee/Solver/ConcretizationManager.h"
 #include "klee/Solver/Solver.h"
 #include "klee/Solver/SolverImpl.h"
 #include "klee/Solver/SolverUtil.h"
@@ -24,13 +23,11 @@ namespace klee {
 class ConcretizingSolver : public SolverImpl {
 private:
   Solver *solver;
-  ConcretizationManager *concretizationManager;
   AddressGenerator *addressGenerator;
 
 public:
-  ConcretizingSolver(Solver *_solver, ConcretizationManager *_cm,
-                     AddressGenerator *_ag)
-      : solver(_solver), concretizationManager(_cm), addressGenerator(_ag) {}
+  ConcretizingSolver(Solver *_solver, AddressGenerator *_ag)
+      : solver(_solver), addressGenerator(_ag) {}
 
   ~ConcretizingSolver() { delete solver; }
 
@@ -197,6 +194,18 @@ bool ConcretizingSolver::relaxSymcreteConstraints(const Query &query,
       }
 
       for (const ref<Symcrete> &symcrete : currentlyBrokenSymcretes) {
+        constraints_ty required;
+        IndependentElementSet eltsClosure = getIndependentConstraints(
+            Query(query.constraints,
+                  AndExpr::create(query.expr,
+                                  Expr::createIsZero(symcrete->symcretized))),
+            required);
+        for (ref<Symcrete> symcrete : eltsClosure.symcretes) {
+          currentlyBrokenSymcretes.insert(symcrete);
+        }
+      }
+
+      for (const ref<Symcrete> &symcrete : currentlyBrokenSymcretes) {
         brokenSymcretes.insert(symcrete);
         for (const Array *array : symcrete->dependentArrays()) {
           if (usedSymcretizedArrays.insert(array).second) {
@@ -230,7 +239,6 @@ bool ConcretizingSolver::relaxSymcreteConstraints(const Query &query,
       Simplificator::simplifyExpr(query.constraints, symbolicSizesSum)
           .simplified;
 
-  ref<ConstantExpr> minimalValueOfSum;
   ref<SolverResponse> response;
 
   /* Compute assignment for symcretes. */
@@ -242,13 +250,14 @@ bool ConcretizingSolver::relaxSymcreteConstraints(const Query &query,
           Query(queryConstraints,
                 UgtExpr::create(
                     symbolicSizesSum,
-                    ConstantExpr::create(SymbolicAllocationThreshhold,
+                    ConstantExpr::create(SymbolicAllocationThreshold,
                                          symbolicSizesSum->getWidth()))),
           response)) {
     return false;
   }
 
   if (!response->tryGetInitialValuesFor(objects, brokenSymcretizedValues)) {
+    ref<ConstantExpr> minimalValueOfSum;
     /* Receive model with a smallest sum as possible. */
     if (!solver->impl->computeMinimalUnsignedValue(
             Query(queryConstraints, symbolicSizesSum), minimalValueOfSum)) {
@@ -271,6 +280,13 @@ bool ConcretizingSolver::relaxSymcreteConstraints(const Query &query,
     assignment.bindings[objects[idx]] = brokenSymcretizedValues[idx];
   }
 
+  ExprHashMap<ref<Expr>> concretizations;
+
+  for (ref<Symcrete> symcrete : query.constraints.symcretes()) {
+    concretizations[symcrete->symcretized] =
+        assignment.evaluate(symcrete->symcretized);
+  }
+
   for (const ref<Symcrete> &symcrete : brokenSymcretes) {
     ref<SizeSymcrete> sizeSymcrete = dyn_cast<SizeSymcrete>(symcrete);
 
@@ -280,15 +296,10 @@ bool ConcretizingSolver::relaxSymcreteConstraints(const Query &query,
 
     /* Receive address array linked with this size array to request address
      * concretization. */
-    uint64_t newSize =
-        cast<ConstantExpr>(assignment.evaluate(symcrete->symcretized))
-            ->getZExtValue();
+    ref<Expr> condcretized = assignment.evaluate(symcrete->symcretized);
 
-    /* TODO: we should be sure that `addressSymcrete` constains only one
-     * dependent array. */
-    assert(sizeSymcrete->addressSymcrete.dependentArrays().size() == 1);
-    const Array *addressArray =
-        sizeSymcrete->addressSymcrete.dependentArrays().back();
+    uint64_t newSize = cast<ConstantExpr>(condcretized)->getZExtValue();
+
     void *address = addressGenerator->allocate(
         sizeSymcrete->addressSymcrete.symcretized, newSize);
     unsigned char *charAddressIterator =
@@ -296,11 +307,22 @@ bool ConcretizingSolver::relaxSymcreteConstraints(const Query &query,
     SparseStorage<unsigned char> storage(sizeof(address));
     storage.store(0, charAddressIterator,
                   charAddressIterator + sizeof(address));
-    assignment.bindings[addressArray] = storage;
+
+    concretizations[sizeSymcrete->addressSymcrete.symcretized] =
+        ConstantExpr::create(
+            reinterpret_cast<uint64_t>(address),
+            sizeSymcrete->addressSymcrete.symcretized->getWidth());
   }
 
-  if (!solver->impl->check(constructConcretizedQuery(query, assignment),
-                           result)) {
+  ref<Expr> concretizationCondition = query.expr;
+  for (const auto &concretization : concretizations) {
+    concretizationCondition =
+        OrExpr::create(Expr::createIsZero(EqExpr::create(
+                           concretization.first, concretization.second)),
+                       concretizationCondition);
+  }
+
+  if (!solver->impl->check(query.withExpr(concretizationCondition), result)) {
     return false;
   }
 
@@ -373,36 +395,14 @@ bool ConcretizingSolver::computeValidity(
   // appropriate for the remain branch.
 
   if (isa<ValidResponse>(queryResult)) {
-    concretizationManager->add(
-        query,
-        cast<InvalidResponse>(negatedQueryResult)->initialValuesFor(objects));
     if (!relaxSymcreteConstraints(query, queryResult)) {
       return false;
     }
-    if (ref<InvalidResponse> queryInvalidResponse =
-            dyn_cast<InvalidResponse>(queryResult)) {
-      concretizationManager->add(
-          query.negateExpr(), queryInvalidResponse->initialValuesFor(objects));
-    }
   } else if (isa<ValidResponse>(negatedQueryResult)) {
-    concretizationManager->add(
-        query.negateExpr(),
-        cast<InvalidResponse>(queryResult)->initialValuesFor(objects));
     if (!relaxSymcreteConstraints(query.negateExpr(), negatedQueryResult)) {
       return false;
     }
-    if (ref<InvalidResponse> negatedQueryInvalidResponse =
-            dyn_cast<InvalidResponse>(negatedQueryResult)) {
-      concretizationManager->add(
-          query, negatedQueryInvalidResponse->initialValuesFor(objects));
-    }
   } else {
-    concretizationManager->add(
-        query.negateExpr(),
-        cast<InvalidResponse>(queryResult)->initialValuesFor(objects));
-    concretizationManager->add(
-        query,
-        cast<InvalidResponse>(negatedQueryResult)->initialValuesFor(objects));
   }
 
   return true;
@@ -428,13 +428,6 @@ bool ConcretizingSolver::check(const Query &query,
     }
   }
 
-  if (ref<InvalidResponse> resultInvalidResponse =
-          dyn_cast<InvalidResponse>(result)) {
-    concretizationManager->add(
-        query.negateExpr(),
-        resultInvalidResponse->initialValuesFor(assign.keys()));
-  }
-
   return true;
 }
 
@@ -445,10 +438,6 @@ char *ConcretizingSolver::getConstraintLog(const Query &query) {
 bool ConcretizingSolver::computeTruth(const Query &query, bool &isValid) {
   if (!query.containsSymcretes()) {
     if (solver->impl->computeTruth(query, isValid)) {
-      if (!isValid) {
-        concretizationManager->add(query.negateExpr(),
-                                   query.constraints.concretization());
-      }
       return true;
     }
     return false;
@@ -483,10 +472,6 @@ bool ConcretizingSolver::computeTruth(const Query &query, bool &isValid) {
       assign = resultInvalidResponse->initialValuesFor(assign.keys());
       isValid = false;
     }
-  }
-
-  if (!isValid) {
-    concretizationManager->add(query.negateExpr(), assign);
   }
 
   return true;
@@ -535,7 +520,6 @@ bool ConcretizingSolver::computeValidityCore(const Query &query,
 
   if (!isValid) {
     validityCore = ValidityCore();
-    concretizationManager->add(query.negateExpr(), assign);
   }
 
   return true;
@@ -589,14 +573,11 @@ bool ConcretizingSolver::computeInitialValues(
             dyn_cast<InvalidResponse>(result)) {
       hasSolution = true;
       assign = resultInvalidResponse->initialValuesFor(assign.keys());
-      concretizationManager->add(query.negateExpr(), assign);
       values = std::vector<SparseStorage<unsigned char>>();
       return solver->impl->computeInitialValues(
           constructConcretizedQuery(query, assign), objects, values,
           hasSolution);
     }
-  } else {
-    concretizationManager->add(query.negateExpr(), assign);
   }
 
   return true;
@@ -612,9 +593,7 @@ void ConcretizingSolver::setCoreSolverTimeout(time::Span timeout) {
 }
 
 Solver *createConcretizingSolver(Solver *s,
-                                 ConcretizationManager *concretizationManager,
                                  AddressGenerator *addressGenerator) {
-  return new Solver(
-      new ConcretizingSolver(s, concretizationManager, addressGenerator));
+  return new Solver(new ConcretizingSolver(s, addressGenerator));
 }
 } // namespace klee

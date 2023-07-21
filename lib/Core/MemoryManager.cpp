@@ -72,6 +72,11 @@ llvm::cl::opt<uint64_t> MaxSymbolicAllocationSize(
         "Maximum available size for single allocation (default 10Mb)"),
     llvm::cl::init(10ll << 20), llvm::cl::cat(MemoryCat));
 
+llvm::cl::opt<bool> UseSymbolicSizeAllocation(
+    "use-sym-size-alloc",
+    llvm::cl::desc("Allows symbolic size allocation (default false)"),
+    llvm::cl::init(false), llvm::cl::cat(MemoryCat));
+
 /***/
 MemoryManager::MemoryManager(ArrayCache *_arrayCache)
     : arrayCache(_arrayCache), deterministicSpace(0), nextFreeSlot(0),
@@ -117,6 +122,8 @@ MemoryObject *MemoryManager::allocate(uint64_t size, bool isLocal,
                                       ref<Expr> sizeExpr, unsigned timestamp,
                                       IDType id) {
   if (size > MaxConstantAllocationSize) {
+    klee_warning_once(
+        0, "Large alloc: %" PRIu64 " bytes.  KLEE models out of memory.", size);
     return 0;
   }
 

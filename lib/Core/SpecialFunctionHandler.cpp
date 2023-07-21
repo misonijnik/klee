@@ -675,7 +675,8 @@ void SpecialFunctionHandler::handleWarning(ExecutionState &state,
          "invalid number of arguments to klee_warning");
 
   std::string msg_str = readStringAtAddress(state, arguments[0]);
-  klee_warning("%s: %s", state.stack.back().kf->function->getName().data(),
+  klee_warning("%s: %s",
+               state.stack.callStack().back().kf->function->getName().data(),
                msg_str.c_str());
 }
 
@@ -686,9 +687,10 @@ void SpecialFunctionHandler::handleWarningOnce(
          "invalid number of arguments to klee_warning_once");
 
   std::string msg_str = readStringAtAddress(state, arguments[0]);
-  klee_warning_once(0, "%s: %s",
-                    state.stack.back().kf->function->getName().data(),
-                    msg_str.c_str());
+  klee_warning_once(
+      0, "%s: %s",
+      state.stack.callStack().back().kf->function->getName().data(),
+      msg_str.c_str());
 }
 
 void SpecialFunctionHandler::handlePrintRange(
@@ -813,16 +815,15 @@ void SpecialFunctionHandler::handleRealloc(ExecutionState &state,
   ref<Expr> address = arguments[0];
   ref<Expr> size = arguments[1];
 
-  Executor::StatePair zeroSize =
-      executor.fork(state, Expr::createIsZero(size), true, BranchType::Realloc);
+  Executor::StatePair zeroSize = executor.forkInternal(
+      state, Expr::createIsZero(size), BranchType::Realloc);
 
   if (zeroSize.first) { // size == 0
     executor.executeFree(*zeroSize.first, address, target);
   }
   if (zeroSize.second) { // size != 0
-    Executor::StatePair zeroPointer =
-        executor.fork(*zeroSize.second, Expr::createIsZero(address), true,
-                      BranchType::Realloc);
+    Executor::StatePair zeroPointer = executor.forkInternal(
+        *zeroSize.second, Expr::createIsZero(address), BranchType::Realloc);
 
     if (zeroPointer.first) { // address == 0
       executor.executeAlloc(*zeroPointer.first, size, false, target,

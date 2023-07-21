@@ -36,12 +36,21 @@
 using namespace llvm;
 using namespace klee;
 
+namespace klee {
+cl::opt<unsigned long long> MaxCyclesBeforeStuck(
+    "max-cycles-before-stuck",
+    cl::desc("Set target after after state visiting some basic block this "
+             "amount of times (default=10)."),
+    cl::init(10), cl::cat(TerminationCat));
+}
+
 namespace {
 cl::opt<bool> UseGEPOptimization(
     "use-gep-opt", cl::init(true),
     cl::desc("Lazily initialize whole objects referenced by gep expressions "
              "instead of only the referenced parts (default=true)"),
     cl::cat(ExecCat));
+
 } // namespace
 
 /***/
@@ -50,23 +59,61 @@ std::uint32_t ExecutionState::nextID = 1;
 
 /***/
 
-StackFrame::StackFrame(KInstIterator _caller, KFunction *_kf)
-    : caller(_caller), kf(_kf), callPathNode(0), minDistToUncoveredOnReturn(0),
-      varargs(0) {
+void ExecutionStack::pushFrame(KInstIterator caller, KFunction *kf) {
+  valueStack_.emplace_back(StackFrame(kf));
+  if (std::find(callStack_.begin(), callStack_.end(),
+                CallStackFrame(caller, kf)) == callStack_.end()) {
+    uniqueFrames_.emplace_back(CallStackFrame(caller, kf));
+  }
+  callStack_.emplace_back(CallStackFrame(caller, kf));
+  infoStack_.emplace_back(InfoStackFrame(kf));
+  ++stackBalance_;
+  assert(valueStack_.size() == callStack_.size());
+  assert(valueStack_.size() == infoStack_.size());
+}
+
+void ExecutionStack::popFrame() {
+  assert(callStack_.size() > 0);
+  KInstIterator caller = callStack_.back().caller;
+  KFunction *kf = callStack_.back().kf;
+  valueStack_.pop_back();
+  callStack_.pop_back();
+  infoStack_.pop_back();
+  auto it = std::find(callStack_.begin(), callStack_.end(),
+                      CallStackFrame(caller, kf));
+  if (it == callStack_.end()) {
+    uniqueFrames_.pop_back();
+  }
+  --stackBalance_;
+  assert(valueStack_.size() == callStack_.size());
+  assert(valueStack_.size() == infoStack_.size());
+}
+
+bool CallStackFrame::equals(const CallStackFrame &other) const {
+  return kf == other.kf && caller == other.caller;
+}
+
+StackFrame::StackFrame(KFunction *kf) : kf(kf), varargs(0) {
   locals = new Cell[kf->numRegisters];
 }
 
 StackFrame::StackFrame(const StackFrame &s)
-    : caller(s.caller), kf(s.kf), callPathNode(s.callPathNode),
-      allocas(s.allocas),
-      minDistToUncoveredOnReturn(s.minDistToUncoveredOnReturn),
-      varargs(s.varargs) {
-  locals = new Cell[s.kf->numRegisters];
-  for (unsigned i = 0; i < s.kf->numRegisters; i++)
+    : kf(s.kf), allocas(s.allocas), varargs(s.varargs) {
+  locals = new Cell[kf->numRegisters];
+  for (unsigned i = 0; i < kf->numRegisters; i++)
     locals[i] = s.locals[i];
 }
 
 StackFrame::~StackFrame() { delete[] locals; }
+
+CallStackFrame::CallStackFrame(const CallStackFrame &s)
+    : caller(s.caller), kf(s.kf) {}
+
+InfoStackFrame::InfoStackFrame(KFunction *kf) : kf(kf) {}
+
+InfoStackFrame::InfoStackFrame(const InfoStackFrame &s)
+    : kf(s.kf), callPathNode(s.callPathNode),
+      minDistToUncoveredOnReturn(s.minDistToUncoveredOnReturn) {}
 
 /***/
 ExecutionState::ExecutionState()
@@ -74,13 +121,18 @@ ExecutionState::ExecutionState()
       depth(0), ptreeNode(nullptr), steppedInstructions(0),
       steppedMemoryInstructions(0), instsSinceCovNew(0),
       roundingMode(llvm::APFloat::rmNearestTiesToEven), coveredNew(false),
-      forkDisabled(false) {
+      forkDisabled(false), prevHistory_(TargetsHistory::create()),
+      history_(TargetsHistory::create()) {
   setID();
 }
 
 ExecutionState::ExecutionState(KFunction *kf)
-    : initPC(kf->instructions), pc(initPC), prevPC(pc),
-      roundingMode(llvm::APFloat::rmNearestTiesToEven) {
+    : initPC(kf->instructions), pc(initPC), prevPC(pc), incomingBBIndex(-1),
+      depth(0), ptreeNode(nullptr), steppedInstructions(0),
+      steppedMemoryInstructions(0), instsSinceCovNew(0),
+      roundingMode(llvm::APFloat::rmNearestTiesToEven), coveredNew(false),
+      forkDisabled(false), prevHistory_(TargetsHistory::create()),
+      history_(TargetsHistory::create()) {
   pushFrame(nullptr, kf);
   setID();
 }
@@ -90,7 +142,8 @@ ExecutionState::ExecutionState(KFunction *kf, KBlock *kb)
       depth(0), ptreeNode(nullptr), steppedInstructions(0),
       steppedMemoryInstructions(0), instsSinceCovNew(0),
       roundingMode(llvm::APFloat::rmNearestTiesToEven), coveredNew(false),
-      forkDisabled(false) {
+      forkDisabled(false), prevHistory_(TargetsHistory::create()),
+      history_(TargetsHistory::create()) {
   pushFrame(nullptr, kf);
   setID();
 }
@@ -102,9 +155,9 @@ ExecutionState::~ExecutionState() {
 
 ExecutionState::ExecutionState(const ExecutionState &state)
     : initPC(state.initPC), pc(state.pc), prevPC(state.prevPC),
-      stack(state.stack), stackBalance(state.stackBalance),
-      incomingBBIndex(state.incomingBBIndex), depth(state.depth),
-      multilevel(state.multilevel), level(state.level),
+      stack(state.stack), incomingBBIndex(state.incomingBBIndex),
+      depth(state.depth), multilevel(state.multilevel),
+      multilevelCount(state.multilevelCount), level(state.level),
       transitionLevel(state.transitionLevel), addressSpace(state.addressSpace),
       constraints(state.constraints), targetForest(state.targetForest),
       pathOS(state.pathOS), symPathOS(state.symPathOS),
@@ -119,7 +172,10 @@ ExecutionState::ExecutionState(const ExecutionState &state)
                                ? state.unwindingInformation->clone()
                                : nullptr),
       coveredNew(state.coveredNew), forkDisabled(state.forkDisabled),
-      returnValue(state.returnValue), gepExprBases(state.gepExprBases) {}
+      isolated(state.isolated), returnValue(state.returnValue),
+      gepExprBases(state.gepExprBases), prevTargets_(state.prevTargets_),
+      targets_(state.targets_), prevHistory_(state.prevHistory_),
+      history_(state.history_), isTargeted_(state.isTargeted_) {}
 
 ExecutionState *ExecutionState::branch() {
   depth++;
@@ -157,7 +213,7 @@ ExecutionState *ExecutionState::withKInstruction(KInstruction *ki) const {
   ExecutionState *newState = new ExecutionState(*this);
   newState->setID();
   newState->pushFrame(nullptr, ki->parent->parent);
-  newState->stackBalance = 0;
+  newState->stack.SETSTACKBALANCETOZERO();
   newState->initPC = ki->parent->instructions;
   while (newState->initPC != ki) {
     ++newState->initPC;
@@ -178,20 +234,18 @@ ExecutionState *ExecutionState::copy() const {
 }
 
 void ExecutionState::pushFrame(KInstIterator caller, KFunction *kf) {
-  stack.emplace_back(StackFrame(caller, kf));
-  ++stackBalance;
+  stack.pushFrame(caller, kf);
 }
 
 void ExecutionState::popFrame() {
-  const StackFrame &sf = stack.back();
+  const StackFrame &sf = stack.valueStack().back();
   for (const auto id : sf.allocas) {
     const MemoryObject *memoryObject = addressSpace.findObject(id).first;
     assert(memoryObject);
     removePointerResolutions(memoryObject);
     addressSpace.unbindObject(memoryObject);
   }
-  stack.pop_back();
-  --stackBalance;
+  stack.popFrame();
 }
 
 void ExecutionState::addSymbolic(const MemoryObject *mo, const Array *array,
@@ -277,11 +331,29 @@ void ExecutionState::removePointerResolutions(const MemoryObject *mo) {
   }
 }
 
+void ExecutionState::removePointerResolutions(ref<Expr> address,
+                                              unsigned size) {
+  if (!isa<ConstantExpr>(address)) {
+    resolvedPointers[address].clear();
+    resolvedSubobjects[MemorySubobject(address, size)].clear();
+  }
+}
+
 // base address mo and ignore non pure reads in setinitializationgraph
 void ExecutionState::addPointerResolution(ref<Expr> address,
                                           const MemoryObject *mo,
                                           unsigned size) {
   if (!isa<ConstantExpr>(address)) {
+    resolvedPointers[address].insert(mo->id);
+    resolvedSubobjects[MemorySubobject(address, size)].insert(mo->id);
+  }
+}
+
+void ExecutionState::addUniquePointerResolution(ref<Expr> address,
+                                                const MemoryObject *mo,
+                                                unsigned size) {
+  if (!isa<ConstantExpr>(address)) {
+    removePointerResolutions(address, size);
     resolvedPointers[address].insert(mo->id);
     resolvedSubobjects[MemorySubobject(address, size)].insert(mo->id);
   }
@@ -324,15 +396,15 @@ llvm::raw_ostream &klee::operator<<(llvm::raw_ostream &os,
 }
 
 void ExecutionState::dumpStack(llvm::raw_ostream &out) const {
-  unsigned idx = 0;
   const KInstruction *target = prevPC;
-  for (ExecutionState::stack_ty::const_reverse_iterator it = stack.rbegin(),
-                                                        ie = stack.rend();
-       it != ie; ++it) {
-    const StackFrame &sf = *it;
-    Function *f = sf.kf->function;
+  for (unsigned i = 0; i < stack.size(); ++i) {
+    unsigned ri = stack.size() - 1 - i;
+    const CallStackFrame &csf = stack.callStack().at(ri);
+    const StackFrame &sf = stack.valueStack().at(ri);
+
+    Function *f = csf.kf->function;
     const InstructionInfo &ii = *target->info;
-    out << "\t#" << idx++;
+    out << "\t#" << i;
     if (ii.assemblyLine.hasValue()) {
       std::stringstream AssStream;
       AssStream << std::setw(8) << std::setfill('0')
@@ -349,7 +421,7 @@ void ExecutionState::dumpStack(llvm::raw_ostream &out) const {
 
       out << ai->getName().str();
       // XXX should go through function
-      ref<Expr> value = sf.locals[sf.kf->getArgRegister(index++)].value;
+      ref<Expr> value = sf.locals[csf.kf->getArgRegister(index++)].value;
       if (isa_and_nonnull<ConstantExpr>(value))
         out << "=" << value;
     }
@@ -357,8 +429,12 @@ void ExecutionState::dumpStack(llvm::raw_ostream &out) const {
     if (ii.file != "")
       out << " at " << ii.file << ":" << ii.line;
     out << "\n";
-    target = sf.caller;
+    target = csf.caller;
   }
+}
+
+std::string ExecutionState::pathAndPCToString() const {
+  return constraints.path().toString() + " at " + pc->toString();
 }
 
 void ExecutionState::addConstraint(ref<Expr> e, const Assignment &delta) {
@@ -386,13 +462,14 @@ void ExecutionState::increaseLevel() {
   KModule *kmodule = kf->parent;
 
   if (prevPC->inst->isTerminator() && kmodule->inMainModule(kf->function)) {
-    multilevel.insert(srcbb);
+    ++multilevel[srcbb];
+    multilevelCount++;
     level.insert(srcbb);
   }
-  transitionLevel.insert(std::make_pair(srcbb, dstbb));
+  if (srcbb != dstbb) {
+    transitionLevel.insert(std::make_pair(srcbb, dstbb));
+  }
 }
-
-bool ExecutionState::isTransfered() { return getPrevPCBlock() != getPCBlock(); }
 
 bool ExecutionState::isGEPExpr(ref<Expr> expr) const {
   return UseGEPOptimization && gepExprBases.find(expr) != gepExprBases.end();
@@ -402,13 +479,13 @@ bool ExecutionState::visited(KBlock *block) const {
   return level.find(block->basicBlock) != level.end();
 }
 
-bool ExecutionState::reachedTarget(Target target) const {
+bool ExecutionState::reachedTarget(ref<Target> target) const {
   if (constraints.path().KBlockSize() == 0) {
     return false;
   }
-  if (target.atReturn()) {
-    return prevPC == target.getBlock()->getLastInstruction();
+  if (target->atReturn()) {
+    return prevPC == target->getBlock()->getLastInstruction();
   } else {
-    return pc == target.getBlock()->getFirstInstruction();
+    return pc == target->getBlock()->getFirstInstruction();
   }
 }

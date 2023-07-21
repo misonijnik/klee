@@ -530,6 +530,7 @@ void ExprPPrinter::printSignleArray(llvm::raw_ostream &os, const Array *a) {
 void ExprPPrinter::printSignleSource(llvm::raw_ostream &os,
                                      const ref<SymbolicSource> s) {
   PPrinter p(os);
+  p.printArrayDecls = true;
   PrintContext PC(os);
   p.printSource(s, PC);
 }
@@ -594,10 +595,11 @@ void ExprPPrinter::printQuery(
     }
   }
 
+  PC.breakLine();
   PC << "(query [";
 
   // Ident at constraint list;
-  unsigned indent = PC.pos;
+  unsigned indent = PC.pos - 1;
   for (auto it = constraints.cs().begin(), ie = constraints.cs().end();
        it != ie;) {
     p.print(*it, PC);
@@ -607,12 +609,12 @@ void ExprPPrinter::printQuery(
   }
   PC << ']';
 
-  p.printSeparator(PC, constraints.cs().empty(), indent - 1);
+  p.printSeparator(PC, constraints.cs().empty(), indent);
   p.print(q, PC);
 
   // Print expressions to obtain values for, if any.
   if (evalExprsBegin != evalExprsEnd) {
-    p.printSeparator(PC, q->isFalse(), indent - 1);
+    p.printSeparator(PC, q->isFalse(), indent);
     PC << '[';
     for (const ref<Expr> *it = evalExprsBegin; it != evalExprsEnd; ++it) {
       p.print(*it, PC, /*printConstWidth*/ true);
@@ -627,7 +629,7 @@ void ExprPPrinter::printQuery(
     if (evalExprsBegin == evalExprsEnd)
       PC << " []";
 
-    PC.breakLine(indent - 1);
+    PC.breakLine(indent);
     PC << '[';
     for (const Array *const *it = evalArraysBegin; it != evalArraysEnd; ++it) {
       PC << (*it)->getIdentifier();
@@ -638,5 +640,54 @@ void ExprPPrinter::printQuery(
   }
 
   PC << ')';
+  PC.breakLine();
+}
+
+void ExprPPrinter::printLemma(llvm::raw_ostream &os, const Lemma &l) {
+  PPrinter p(os);
+
+  for (const auto &constraint : l.constraints) {
+    p.scan(constraint);
+  }
+
+  PrintContext PC(os);
+
+  PC << "(lemma";
+  PC.breakLine(1);
+
+  // print path
+  PC << l.path.toString();
+
+  PC.breakLine();
+  PC.breakLine(1);
+
+  PC << "(";
+
+  std::vector<const Array *> sortedArray(p.usedArrays.begin(),
+                                         p.usedArrays.end());
+
+  std::sort(sortedArray.begin(), sortedArray.end(), ArrayPtrsByDependency());
+
+  for (auto it = sortedArray.begin(), ie = sortedArray.end(); it != ie; ++it) {
+    const Array *A = *it;
+    PC << A->getIdentifier() << " : ";
+    p.printArrayDecl(A, PC);
+    if (it + 1 != ie) {
+      PC.breakLine(2);
+    }
+  }
+  PC << ")";
+  PC.breakLine();
+  PC.breakLine(1);
+
+  PC << "(";
+  for (auto it = l.constraints.begin(), ie = l.constraints.end(); it != ie;
+       ++it) {
+    if (it != l.constraints.begin()) {
+      PC.breakLine(2);
+    }
+    p.print(*it, PC);
+  }
+  PC << "))";
   PC.breakLine();
 }

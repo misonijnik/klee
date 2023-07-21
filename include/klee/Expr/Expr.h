@@ -123,7 +123,7 @@ protected:
   };
 
   static ExprCacheSet cachedExpressions;
-  static ref<Expr> createCachedExpr(const ref<Expr> &e);
+  static ref<Expr> createCachedExpr(ref<Expr> e);
   bool isCached = false;
   bool toBeCleared = false;
 
@@ -321,6 +321,9 @@ public:
   /// isZero - Is this a constant zero.
   bool isZero() const;
 
+  /// isZero - Is this a constant one.
+  bool isOne() const;
+
   /// isTrue - Is this the true expression.
   bool isTrue() const;
 
@@ -391,7 +394,7 @@ struct Expr::CreateArg {
 // Comparison operators
 
 inline bool operator==(const Expr &lhs, const Expr &rhs) {
-  return lhs.compare(rhs) == 0;
+  return lhs.equals(rhs);
 }
 
 inline bool operator<(const Expr &lhs, const Expr &rhs) {
@@ -1550,6 +1553,12 @@ public:
 inline bool Expr::isZero() const {
   if (const ConstantExpr *CE = dyn_cast<ConstantExpr>(this))
     return CE->isZero();
+  return false;
+}
+
+inline bool Expr::isOne() const {
+  if (const ConstantExpr *CE = dyn_cast<ConstantExpr>(this))
+    return CE->isOne();
   return false;
 }
 

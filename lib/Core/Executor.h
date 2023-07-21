@@ -15,7 +15,9 @@
 #ifndef KLEE_EXECUTOR_H
 #define KLEE_EXECUTOR_H
 
+#include "BidirectionalSearcher.h"
 #include "ExecutionState.h"
+#include "SeedMap.h"
 #include "TargetedExecutionManager.h"
 #include "UserSearcher.h"
 
@@ -26,12 +28,12 @@
 #include "klee/Expr/ArrayCache.h"
 #include "klee/Expr/ArrayExprOptimizer.h"
 #include "klee/Expr/Constraints.h"
+#include "klee/Expr/Lemma.h"
 #include "klee/Expr/SourceBuilder.h"
 #include "klee/Expr/SymbolicSource.h"
 #include "klee/Module/Cell.h"
 #include "klee/Module/KInstruction.h"
 #include "klee/Module/KModule.h"
-#include "klee/Solver/ConcretizationManager.h"
 #include "klee/System/Time.h"
 
 #include "llvm/ADT/Twine.h"
@@ -70,6 +72,7 @@ class AddressManager;
 class Array;
 struct Cell;
 class CodeGraphDistance;
+class DistanceCalculator;
 class ExecutionState;
 class ExternalDispatcher;
 class Expr;
@@ -90,12 +93,11 @@ class SpecialFunctionHandler;
 struct StackFrame;
 class SymbolicSource;
 class TargetCalculator;
+class TargetManager;
 class StatsTracker;
 class TimingSolver;
 class TreeStreamWriter;
 class TypeManager;
-class MergeHandler;
-class MergingSearcher;
 template <class T> class ref;
 
 /// \todo Add a context object to keep track of data only live
@@ -103,12 +105,19 @@ template <class T> class ref;
 /// removedStates, and haltExecution, among others.
 
 class Executor : public Interpreter {
+  friend struct ComposeHelper;
   friend class OwningSearcher;
   friend class WeightedRandomSearcher;
   friend class SpecialFunctionHandler;
   friend class StatsTracker;
   friend klee::Searcher *
   klee::constructUserSearcher(Executor &executor, bool stopAfterReachingTarget);
+
+  struct ComposeResult {
+    bool success;
+    PathConstraints composed;
+    Conflict conflict;
+  };
 
 public:
   typedef std::pair<ExecutionState *, ExecutionState *> StatePair;
@@ -125,7 +134,7 @@ private:
 
   std::unique_ptr<KModule> kmodule;
   InterpreterHandler *interpreterHandler;
-  Searcher *searcher;
+  std::unique_ptr<IBidirectionalSearcher> searcher;
 
   ExternalDispatcher *externalDispatcher;
   TimingSolver *solver;
@@ -133,27 +142,17 @@ private:
   MemoryManager *memory;
   TypeManager *typeSystemManager;
 
-  SetOfStates states;
-  SetOfStates pausedStates;
+  std::unique_ptr<ObjectManager> objectManager;
+  Summary summary;
   StatsTracker *statsTracker;
   TreeStreamWriter *pathWriter, *symPathWriter;
   SpecialFunctionHandler *specialFunctionHandler;
   TimerGroup timers;
-  std::unique_ptr<ConcretizationManager> concretizationManager;
   std::unique_ptr<PForest> processForest;
   std::unique_ptr<CodeGraphDistance> codeGraphDistance;
+  std::unique_ptr<DistanceCalculator> distanceCalculator;
   std::unique_ptr<TargetCalculator> targetCalculator;
-
-  /// Used to track states that have been added during the current
-  /// instructions step.
-  /// \invariant \ref addedStates is a subset of \ref states.
-  /// \invariant \ref addedStates and \ref removedStates are disjoint.
-  std::vector<ExecutionState *> addedStates;
-  /// Used to track states that have been removed during the current
-  /// instructions step.
-  /// \invariant \ref removedStates is a subset of \ref states.
-  /// \invariant \ref addedStates and \ref removedStates are disjoint.
-  std::vector<ExecutionState *> removedStates;
+  std::unique_ptr<TargetManager> targetManager;
 
   /// When non-empty the Executor is running in "seed" mode. The
   /// states in this map will be executed in an arbitrary order
@@ -162,7 +161,7 @@ private:
   /// satisfies one or more seeds will be added to this map. What
   /// happens with other states (that don't satisfy the seeds) depends
   /// on as-yet-to-be-determined flags.
-  std::map<ExecutionState *, std::vector<SeedInfo>> seedMap;
+  std::unique_ptr<SeedMap> seedMap;
 
   /// Map of globals to their representative memory object.
   std::map<const llvm::GlobalValue *, MemoryObject *> globalObjects;
@@ -176,7 +175,7 @@ private:
   std::unordered_map<std::uint64_t, llvm::Function *> legalFunctions;
 
   /// Manager for everything related to targeted execution mode
-  TargetedExecutionManager targetedExecutionManager;
+  std::unique_ptr<TargetedExecutionManager> targetedExecutionManager;
 
   /// When non-null the bindings that will be used for calls to
   /// klee_make_symbolic in order replay.
@@ -235,7 +234,16 @@ private:
   /// Typeids used during exception handling
   std::vector<ref<Expr>> eh_typeids;
 
+  // For statistics
+  std::set<KBlock *> summarized;
+
+  std::unordered_set<llvm::BasicBlock *> verifingTransitionsTo;
+  std::unordered_set<llvm::BasicBlock *> successTransitionsTo;
+  std::unordered_map<llvm::BasicBlock *, unsigned> failedTransitionsTo;
+
   GuidanceKind guidanceKind;
+
+  bool hasStateWhichCanReachSomeTarget = false;
 
   /// Return the typeid corresponding to a certain `type_info`
   ref<ConstantExpr> getEhTypeidFor(ref<Expr> type_info);
@@ -244,12 +252,12 @@ private:
 
   void executeInstruction(ExecutionState &state, KInstruction *ki);
 
-  void targetedRun(ExecutionState &initialState, KBlock *target,
-                   ExecutionState **resultState = nullptr);
+  // void targetedRun(ExecutionState &initialState, KBlock *target,
+  //                  ExecutionState **resultState = nullptr);
 
   void seed(ExecutionState &initialState);
   void run(std::vector<ExecutionState *> initialStates);
-  void runWithTarget(ExecutionState &state, KFunction *kf, KBlock *target);
+  // void runWithTarget(ExecutionState &state, KFunction *kf, KBlock *target);
 
   void initializeTypeManager();
 
@@ -267,7 +275,6 @@ private:
   void initializeGlobalObjects(ExecutionState &state);
 
   void stepInstruction(ExecutionState &state);
-  void updateStates(ExecutionState *current);
   void transferToBasicBlock(llvm::BasicBlock *dst, llvm::BasicBlock *src,
                             ExecutionState &state);
   void transferToBasicBlock(KBlock *dst, llvm::BasicBlock *src,
@@ -360,7 +367,7 @@ private:
   bool checkResolvedMemoryObjects(
       ExecutionState &state, ref<Expr> address, KInstruction *target,
       unsigned bytes, const std::vector<IDType> &mayBeResolvedMemoryObjects,
-      std::vector<IDType> &resolvedMemoryObjects,
+      bool hasLazyInitialized, std::vector<IDType> &resolvedMemoryObjects,
       std::vector<ref<Expr>> &resolveConditions,
       std::vector<ref<Expr>> &unboundConditions, ref<Expr> &checkOutOfBounds,
       bool &mayBeOutOfBound);
@@ -380,6 +387,13 @@ private:
                               std::vector<Assignment> &resolveConcretizations,
                               bool &mayBeInBounds);
 
+  void
+  collectObjectStates(ExecutionState &state, ref<Expr> address,
+                      Expr::Width type, unsigned bytes,
+                      const std::vector<IDType> &resolvedMemoryObjects,
+                      const std::vector<Assignment> &resolveConcretizations,
+                      std::vector<ref<ObjectState>> &results);
+
   void collectReads(ExecutionState &state, ref<Expr> address, KType *targetType,
                     Expr::Width type, unsigned bytes,
                     const std::vector<IDType> &resolvedMemoryObjects,
@@ -395,8 +409,8 @@ private:
 
   bool lazyInitializeObject(ExecutionState &state, ref<Expr> address,
                             const KInstruction *target, KType *targetType,
-                            uint64_t size, IDType &id,
-                            bool isConstantSize = false, bool isLocal = false);
+                            uint64_t size, bool isLocal, IDType &id,
+                            bool isConstant = true);
 
   IDType lazyInitializeLocalObject(ExecutionState &state, StackFrame &sf,
                                    ref<Expr> address,
@@ -412,6 +426,10 @@ private:
   void updateStateWithSymcretes(ExecutionState &state,
                                 const Assignment &assignment);
 
+  /// Assume that `current` state stepped to `block`.
+  /// Can we reach at least one target of `current` from there?
+  bool canReachSomeTargetFromBlock(ExecutionState &current, KBlock *block);
+
   /// Create a new state where each input condition has been added as
   /// a constraint and return the results. The input state is included
   /// as one of the results. Note that the output vector may include
@@ -422,12 +440,19 @@ private:
   /// Fork current and return states in which condition holds / does
   /// not hold, respectively. One of the states is necessarily the
   /// current state, and one of the states may be null.
-  StatePair fork(ExecutionState &current, ref<Expr> condition, bool isInternal,
-                 BranchType reason);
+  /// if ifTrueBlock == ifFalseBlock, then fork is internal
+  StatePair fork(ExecutionState &current, ref<Expr> condition,
+                 KBlock *ifTrueBlock, KBlock *ifFalseBlock, BranchType reason);
+  StatePair forkInternal(ExecutionState &current, ref<Expr> condition,
+                         BranchType reason);
 
   // If the MaxStatic*Pct limits have been reached, concretize the condition and
   // return it. Otherwise, return the unmodified condition.
   ref<Expr> maxStaticPctChecks(ExecutionState &current, ref<Expr> condition);
+
+  Assignment computeConcretization(const ConstraintSet &constraints,
+                                   ref<Expr> condition,
+                                   SolverQueryMetaData &queryMetaData);
 
   /// Add the given (boolean) condition as a constraint on state. This
   /// function is a wrapper around the state's addConstraint function
@@ -479,11 +504,11 @@ private:
 
   Cell &getArgumentCell(const ExecutionState &state, const KFunction *kf,
                         unsigned index) {
-    return getArgumentCell(state.stack.back(), kf, index);
+    return getArgumentCell(state.stack.valueStack().back(), kf, index);
   }
 
   Cell &getDestCell(const ExecutionState &state, const KInstruction *target) {
-    return getDestCell(state.stack.back(), target);
+    return getDestCell(state.stack.valueStack().back(), target);
   }
 
   void bindLocal(const KInstruction *target, StackFrame &frame,
@@ -538,6 +563,7 @@ private:
 
   /// Get textual information regarding a memory address.
   std::string getAddressInfo(ExecutionState &state, ref<Expr> address,
+                             unsigned size = 0,
                              const MemoryObject *mo = nullptr) const;
 
   // Determines the \param lastInstruction of the \param state which is not KLEE
@@ -591,6 +617,10 @@ private:
   void terminateStateOnUserError(ExecutionState &state,
                                  const llvm::Twine &message);
 
+  void reportProgressTowardsTargets(std::string prefix,
+                                    const SetOfStates &states) const;
+  void reportProgressTowardsTargets() const;
+
   /// bindModuleConstants - Initialize the module constant table.
   void bindModuleConstants(const llvm::APFloat::roundingMode &rm);
 
@@ -598,16 +628,18 @@ private:
 
   const Array *makeArray(ref<Expr> size, const ref<SymbolicSource> source);
 
-  ExecutionState *prepareStateForPOSIX(KInstIterator &caller,
-                                       ExecutionState *state);
+  // ExecutionState *prepareStateForPOSIX(KInstIterator &caller,
+  //                                      ExecutionState *state);
 
-  void prepareTargetedExecution(ExecutionState *initialState,
+  void prepareTargetedExecution(ExecutionState &initialState,
                                 ref<TargetForest> whitelist);
 
   void increaseProgressVelocity(ExecutionState &state, KBlock *block);
 
-  bool decreaseConfidenceFromStoppedStates(
-      SetOfStates &left_states,
+  void updateConfidenceRates();
+
+  void decreaseConfidenceFromStoppedStates(
+      const SetOfStates &leftStates,
       HaltExecution::Reason reason = HaltExecution::NotHalt);
 
   void checkNullCheckAfterDeref(ref<Expr> cond, ExecutionState &state,
@@ -642,6 +674,40 @@ private:
   /// Only for debug purposes; enable via debugger or klee-control
   void dumpStates();
   void dumpPForest();
+
+  ref<Expr> fillValue(ExecutionState &state, ref<ValueSource> valueSource,
+                      ref<Expr> size, Expr::Width width);
+  ref<ObjectState> fillMakeSymbolic(ExecutionState &state,
+                                    ref<MakeSymbolicSource> makeSymbolicSource,
+                                    ref<Expr> size, unsigned concreteSize);
+  ref<ObjectState> fillConstant(ExecutionState &state,
+                                ref<ConstantSource> constanSource,
+                                ref<Expr> size);
+  ref<ObjectState> fillSymbolicSizeConstant(
+      ExecutionState &state,
+      ref<SymbolicSizeConstantSource> symbolicSizeConstantSource,
+      ref<Expr> size, unsigned concreteSize);
+  ref<Expr> fillSymbolicSizeConstantAddress(
+      ExecutionState &state,
+      ref<SymbolicSizeConstantAddressSource> symbolicSizeConstantAddressSource,
+      ref<Expr> size, Expr::Width width);
+  std::pair<ref<Expr>, ref<Expr>> getSymbolicSizeConstantSizeAddressPair(
+      ExecutionState &state,
+      ref<SymbolicSizeConstantAddressSource> symbolicSizeConstantAddressSource,
+      ref<Expr> size, Expr::Width width);
+  ref<Expr> fillSizeAddressSymcretes(ExecutionState &state,
+                                     ref<Expr> oldAddress, ref<Expr> newAddress,
+                                     ref<Expr> size);
+  ComposeResult compose(const ExecutionState &state,
+                        const PathConstraints &pob);
+
+  void executeAction(ref<BidirectionalAction> action);
+
+  void goForward(ref<ForwardAction> action);
+  void goBackward(ref<BackwardAction> action);
+  void initializeIsolated(ref<InitializeAction> action);
+
+  void closeProofObligation(ProofObligation *pob);
 
   const KInstruction *getKInst(const llvm::Instruction *ints) const;
   const KBlock *getKBlock(const llvm::BasicBlock *bb) const;
@@ -760,8 +826,6 @@ public:
 
   /// Returns the errno location in memory of the state
   int *getErrnoLocation(const ExecutionState &state) const;
-
-  void executeStep(ExecutionState &state);
 };
 
 } // namespace klee
