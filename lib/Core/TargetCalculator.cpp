@@ -42,10 +42,10 @@ void TargetCalculator::update(const ExecutionState &state) {
   switch (TargetCalculatorMode) {
   case TargetCalculateBy::Default:
     blocksHistory[initialFunction][state.getPrevPCBlock()].insert(
-        state.getInitPCBlock());
+        state.initPC->parent);
     if (state.prevPC == state.prevPC->parent->getLastInstruction()) {
       coveredBlocks[state.getPrevPCBlock()->getParent()].insert(
-          state.getPrevPCBlock());
+          state.prevPC->parent);
     }
     if (state.prevPC == state.prevPC->parent->getLastInstruction()) {
       unsigned index = 0;
@@ -81,10 +81,10 @@ bool TargetCalculator::differenceIsEmpty(
     const ExecutionState &state,
     const std::unordered_map<llvm::BasicBlock *, VisitedBlocks> &history,
     KBlock *target) {
-  std::vector<BasicBlock *> diff;
-  std::set<BasicBlock *> left(state.level.begin(), state.level.end());
-  std::set<BasicBlock *> right(history.at(target->basicBlock).begin(),
-                               history.at(target->basicBlock).end());
+  std::vector<KBlock *> diff;
+  std::set<KBlock *> left(state.level.begin(), state.level.end());
+  std::set<KBlock *> right(history.at(target->basicBlock).begin(),
+                           history.at(target->basicBlock).end());
   std::set_difference(left.begin(), left.end(), right.begin(), right.end(),
                       std::inserter(diff, diff.begin()));
   return diff.empty();

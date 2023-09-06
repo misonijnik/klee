@@ -42,7 +42,7 @@ typedef std::pair<llvm::BasicBlock *, llvm::BasicBlock *> Transition;
 typedef std::pair<llvm::BasicBlock *, unsigned> Branch;
 
 class TargetCalculator {
-  typedef std::unordered_set<llvm::BasicBlock *> VisitedBlocks;
+  typedef std::unordered_set<KBlock *> VisitedBlocks;
   typedef std::unordered_set<Transition, TransitionHash> VisitedTransitions;
   typedef std::unordered_set<Branch, BranchHash> VisitedBranches;
 

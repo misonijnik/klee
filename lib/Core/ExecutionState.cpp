@@ -114,14 +114,7 @@ StackFrame::StackFrame(const StackFrame &s)
 
 StackFrame::~StackFrame() { delete[] locals; }
 
-CallStackFrame::CallStackFrame(const CallStackFrame &s)
-    : caller(s.caller), kf(s.kf) {}
-
 InfoStackFrame::InfoStackFrame(KFunction *kf) : kf(kf) {}
-
-InfoStackFrame::InfoStackFrame(const InfoStackFrame &s)
-    : kf(s.kf), callPathNode(s.callPathNode),
-      minDistToUncoveredOnReturn(s.minDistToUncoveredOnReturn) {}
 
 /***/
 ExecutionState::ExecutionState()
@@ -470,10 +463,13 @@ void ExecutionState::increaseLevel() {
   KFunction *kf = prevPC->parent->parent;
   KModule *kmodule = kf->parent;
 
-  if (prevPC->inst->isTerminator() && kmodule->inMainModule(*kf->function)) {
+  if (prevPC->inst->isTerminator()) {
     auto srcLevel = stack.infoStack().back().multilevel[srcbb].second;
     stack.infoStack().back().multilevel.replace({srcbb, srcLevel + 1});
-    level.insert(srcbb);
+    stack.infoStack().back().maxMultilevel =
+        std::max(stack.infoStack().back().maxMultilevel, srcLevel + 1);
+    level.insert(prevPC->parent);
+    stack.infoStack().back().level.insert(prevPC->parent);
   }
   if (srcbb != dstbb) {
     transitionLevel.insert(std::make_pair(srcbb, dstbb));
@@ -485,7 +481,7 @@ bool ExecutionState::isGEPExpr(ref<Expr> expr) const {
 }
 
 bool ExecutionState::visited(KBlock *block) const {
-  return level.count(block->basicBlock) != 0;
+  return level.count(block) != 0;
 }
 
 bool ExecutionState::reachedTarget(ref<ReachBlockTarget> target) const {

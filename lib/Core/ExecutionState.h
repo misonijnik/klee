@@ -68,7 +68,6 @@ struct CallStackFrame {
   CallStackFrame(KInstIterator caller_, KFunction *kf_)
       : caller(caller_), kf(kf_) {}
   ~CallStackFrame() = default;
-  CallStackFrame(const CallStackFrame &s);
 
   bool equals(const CallStackFrame &other) const;
 
@@ -96,6 +95,8 @@ struct InfoStackFrame {
   KFunction *kf;
   CallPathNode *callPathNode = nullptr;
   PersistentMap<llvm::BasicBlock *, unsigned long long> multilevel;
+  unsigned long long maxMultilevel = 0;
+  std::set<KBlock *, KBlockCompare> level;
 
   /// Minimum distance to an uncovered instruction once the function
   /// returns. This is not a good place for this but is used to
@@ -105,7 +106,6 @@ struct InfoStackFrame {
   unsigned minDistToUncoveredOnReturn = 0;
 
   InfoStackFrame(KFunction *kf);
-  InfoStackFrame(const InfoStackFrame &s);
   ~InfoStackFrame() = default;
 };
 
@@ -290,7 +290,7 @@ public:
   std::uint32_t depth = 0;
 
   /// @brief Exploration level, i.e., number of times KLEE cycled for this state
-  std::unordered_set<llvm::BasicBlock *> level;
+  std::set<KBlock *, KBlockCompare> level;
   std::unordered_set<Transition, TransitionHash> transitionLevel;
 
   /// @brief Address space used by this state (e.g. Global and Heap)
