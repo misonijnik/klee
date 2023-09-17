@@ -43,4 +43,4 @@ public:
 };
 } // namespace klee
 
-#endif
+#endif /* KLEE_INDEPENDENTCONSTRAINTSETUNION_H */

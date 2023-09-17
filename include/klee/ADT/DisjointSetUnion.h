@@ -1,5 +1,6 @@
 #ifndef KLEE_DISJOINEDSETUNION_H
 #define KLEE_DISJOINEDSETUNION_H
+
 #include "klee/ADT/PersistentMap.h"
 #include "klee/ADT/PersistentSet.h"
 #include "klee/ADT/Ref.h"
@@ -140,4 +141,5 @@ public:
   disjointSets_ty ds() const { return disjointSets; }
 };
 } // namespace klee
-#endif
+
+#endif /* KLEE_DISJOINEDSETUNION_H */
