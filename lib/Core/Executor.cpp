@@ -2484,8 +2484,7 @@ ref<Expr> FPToX87FP80Ext(ref<Expr> arg) {
   ref<Expr> result = arg;
 #ifdef ENABLE_FP
   Expr::Width resultType = Expr::Fl80;
-  if (Context::get().getPointerWidth() == 32 &&
-      arg->getWidth() == Expr::Int64) {
+  if (Context::get().getPointerWidth() == 32) {
     result = FPExtExpr::create(arg, resultType);
   }
 #else
@@ -3715,9 +3714,9 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     ref<Expr> arg = eval(ki, 0, state).value;
     if (!fpWidthToSemantics(arg->getWidth()) || !fpWidthToSemantics(resultType))
       return terminateStateOnExecError(state, "Unsupported FPTrunc operation");
-    if (arg->getWidth() < resultType)
-      return terminateStateOnExecError(state, "Invalid FPTrunc");
-    ref<Expr> result = FPTruncExpr::create(arg, resultType, state.roundingMode);
+    ref<Expr> result = arg;
+    if (arg->getWidth() > resultType)
+      result = FPTruncExpr::create(arg, resultType, state.roundingMode);
     bindLocal(ki, state, result);
     break;
   }
@@ -3728,9 +3727,11 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     ref<Expr> arg = eval(ki, 0, state).value;
     if (!fpWidthToSemantics(arg->getWidth()) || !fpWidthToSemantics(resultType))
       return terminateStateOnExecError(state, "Unsupported FPExt operation");
-    if (arg->getWidth() > resultType)
-      return terminateStateOnExecError(state, "Invalid FPExt");
-    ref<Expr> result = FPExtExpr::create(arg, resultType);
+    ref<Expr> result = arg;
+    if (arg->getWidth() < resultType) {
+      // return terminateStateOnExecError(state, "Invalid FPExt");
+      result = FPExtExpr::create(arg, resultType);
+    }
     bindLocal(ki, state, result);
     break;
   }

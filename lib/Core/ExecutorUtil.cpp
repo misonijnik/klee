@@ -41,8 +41,7 @@ ref<Expr> FPToX87FP80Ext(ref<Expr> arg) {
   ref<Expr> result = arg;
 #ifdef ENABLE_FP
   Expr::Width resultType = Expr::Fl80;
-  if (Context::get().getPointerWidth() == 32 &&
-      arg->getWidth() == Expr::Int64) {
+  if (Context::get().getPointerWidth() == 32) {
     result = FPExtExpr::create(arg, resultType);
   }
 #else
