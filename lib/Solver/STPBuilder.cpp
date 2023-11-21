@@ -577,7 +577,7 @@ ExprHandle STPBuilder::constructActual(ref<Expr> e, int *width_out) {
         ref<Expr> selectExpr = constantSource->constantValues.defaultV();
         if (auto storage =
                 llvm::dyn_cast<SparseStorage_RegularMap<ref<ConstantExpr>>>(
-                    source->constantValues.storage())) {
+                    constantSource->constantValues.storage())) {
           for (const auto &[index, value] : storage->getMap()) {
             selectExpr = SelectExpr::create(
                 EqExpr::create(re->index, ConstantExpr::create(
@@ -586,7 +586,7 @@ ExprHandle STPBuilder::constructActual(ref<Expr> e, int *width_out) {
           }
         } else if (auto storage = llvm::dyn_cast<
                        SparseStorage_PersistentMap<ref<ConstantExpr>>>(
-                       source->constantValues.storage())) {
+                       constantSource->constantValues.storage())) {
           for (const auto &[index, value] : storage->getMap()) {
             selectExpr = SelectExpr::create(
                 EqExpr::create(re->index, ConstantExpr::create(
