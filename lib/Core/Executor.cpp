@@ -713,6 +713,9 @@ MemoryObject *Executor::addExternalObject(ExecutionState &state, void *addr,
   auto mo = memory->allocateFixed(reinterpret_cast<std::uint64_t>(addr), size,
                                   nullptr);
   ObjectState *os = bindObjectInState(state, mo, type, false);
+  if (isReadOnly) {
+    os->setConstantSparseStorage(true);
+  }
   for (unsigned i = 0; i < size; i++)
     os->write8(i, ((uint8_t *)addr)[i]);
   if (isReadOnly)
@@ -965,6 +968,9 @@ void Executor::initializeGlobalObjects(ExecutionState &state) {
             state, mo, typeSystemManager->getWrappedType(v.getType()),
             SourceBuilder::irreproducible("mockMutableGlobalObject"), false);
       } else {
+        if (v.isConstant()) {
+          os->setConstantSparseStorage(true);
+        }
         initializeGlobalObject(state, os, v.getInitializer(), 0);
         if (v.isConstant()) {
           os->setReadOnly(true);

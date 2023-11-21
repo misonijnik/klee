@@ -225,6 +225,7 @@ private:
 
 template <typename ValueType, typename Eq = std::equal_to<ValueType>>
 class SparseStorage {
+  friend class ObjectState;
 private:
   using RegularMap_t = SparseStorage_RegularMap<ValueType>;
   using PersistentMap_t = SparseStorage_PersistentMap<ValueType>;
@@ -233,6 +234,7 @@ private:
   ValueType defaultValue;
   std::unique_ptr<SparseStorage_Map<ValueType>> internalStorage;
   Eq eq;
+  bool isConstant = false;
 
   bool contains(size_t key) const { return internalStorage->contains(key) != 0; }
 
@@ -259,10 +261,13 @@ public:
     }
   }
 
-  SparseStorage(const SparseStorage<ValueType, Eq> &other) : defaultValue(other.defaultValue) {
-    if (auto regularMap = llvm::dyn_cast<RegularMap_t>(other.internalStorage.get())) {
+  SparseStorage(const SparseStorage<ValueType, Eq> &other)
+      : defaultValue(other.defaultValue), isConstant(other.isConstant) {
+    if (auto regularMap =
+            llvm::dyn_cast<RegularMap_t>(other.internalStorage.get())) {
       internalStorage = std::make_unique<RegularMap_t>(*regularMap);
-    } else if (auto persistentMap = llvm::dyn_cast<PersistentMap_t>(other.internalStorage.get())) {
+    } else if (auto persistentMap = llvm::dyn_cast<PersistentMap_t>(
+                   other.internalStorage.get())) {
       internalStorage = std::make_unique<PersistentMap_t>(*persistentMap);
     }
   }
@@ -270,6 +275,7 @@ public:
   SparseStorage& operator=(const SparseStorage<ValueType, Eq> &other) {
     if (this != &other) {
       defaultValue = other.defaultValue;
+      isConstant = other.isConstant;
       if (auto regularMap = llvm::dyn_cast<RegularMap_t>(other.internalStorage.get())) {
         internalStorage = std::make_unique<RegularMap_t>(*regularMap);
       } else if (auto persistentMap = llvm::dyn_cast<PersistentMap_t>(other.internalStorage.get())) {
@@ -286,7 +292,7 @@ public:
       internalStorage->set(idx, value);
     }
 
-    if (internalStorage->mapSize() > 100000000) {
+    if (internalStorage->mapSize() > 0 && !isConstant) {
       if (auto regularMap =
               llvm::dyn_cast<RegularMap_t>(internalStorage.get())) {
         PersistentMap_t *newStorage = new PersistentMap_t();

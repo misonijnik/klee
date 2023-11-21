@@ -245,6 +245,10 @@ public:
   const MemoryObject *getObject() const { return object.get(); }
 
   void setReadOnly(bool ro) { readOnly = ro; }
+  void setConstantSparseStorage(bool constant) {
+    knownSymbolics.isConstant = constant;
+    unflushedMask.isConstant = constant;
+  }
 
   void swapObjectHack(MemoryObject *mo) { object = mo; }
 
