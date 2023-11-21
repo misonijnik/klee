@@ -9,7 +9,7 @@
 
 #include "DistanceCalculator.h"
 #include "ExecutionState.h"
-#include "klee/Module/CodeGraphDistance.h"
+#include "klee/Module/CodeGraphInfo.h"
 #include "klee/Module/KInstruction.h"
 #include "klee/Module/Target.h"
 
@@ -56,18 +56,23 @@ DistanceResult DistanceCalculator::getDistance(const ExecutionState &state,
 DistanceResult DistanceCalculator::getDistance(KBlock *kb, TargetKind kind,
                                                KBlock *target) {
   SpeculativeState specState(kb, kind);
-  if (distanceResultCache.count(target) == 0 ||
-      distanceResultCache.at(target).count(specState) == 0) {
-    auto result = computeDistance(kb, kind, target);
-    distanceResultCache[target][specState] = result;
+  auto it1 = distanceResultCache.find(target);
+  if (it1 == distanceResultCache.end()) {
+    SpeculativeStateToDistanceResultMap m;
+    it1 = distanceResultCache.emplace(target, std::move(m)).first;
   }
-  return distanceResultCache.at(target).at(specState);
+  auto &m = it1->second;
+  auto it2 = m.find(specState);
+  if (it2 == m.end()) {
+    auto result = computeDistance(kb, kind, target);
+    m.emplace(specState, result);
+    return result;
+  }
+  return it2->second;
 }
 
 DistanceResult DistanceCalculator::computeDistance(KBlock *kb, TargetKind kind,
                                                    KBlock *target) const {
-  const auto &distanceToTargetFunction =
-      codeGraphDistance.getBackwardDistance(target->parent);
   weight_type weight = 0;
   WeightResult res = Miss;
   bool isInsideFunction = true;
@@ -77,7 +82,7 @@ DistanceResult DistanceCalculator::computeDistance(KBlock *kb, TargetKind kind,
     break;
 
   case PreTarget:
-    res = tryGetPreTargetWeight(kb, weight, distanceToTargetFunction, target);
+    res = tryGetPreTargetWeight(kb, weight, target);
     isInsideFunction = false;
     break;
 
@@ -95,35 +100,28 @@ DistanceResult DistanceCalculator::computeDistance(KBlock *kb, TargetKind kind,
 DistanceResult DistanceCalculator::getDistance(
     const KInstruction *prevPC, const KInstruction *pc,
     const ExecutionStack::call_stack_ty &frames, KBlock *target) {
-  weight_type weight = 0;
-
   KBlock *kb = pc->parent;
   const auto &distanceToTargetFunction =
-      codeGraphDistance.getBackwardDistance(target->parent);
+      codeGraphInfo.getBackwardDistance(target->parent);
   unsigned int minCallWeight = UINT_MAX, minSfNum = UINT_MAX, sfNum = 0;
   auto sfi = frames.rbegin(), sfe = frames.rend();
   bool strictlyAfterKB =
       sfi != sfe && sfi->kf->parent->inMainModule(*sfi->kf->function);
-  for (; sfi != sfe; sfi++) {
+  for (; sfi != sfe; sfi++, sfNum++) {
     unsigned callWeight;
     if (distanceInCallGraph(sfi->kf, kb, callWeight, distanceToTargetFunction,
                             target, strictlyAfterKB && sfNum != 0)) {
-      callWeight *= 2;
-      callWeight += sfNum;
+      callWeight = 2 * callWeight + sfNum;
 
       if (callWeight < UINT_MAX) {
         minCallWeight = callWeight;
         minSfNum = sfNum;
+        break;
       }
     }
 
-    if (sfi->caller) {
+    if (sfi->caller)
       kb = sfi->caller->parent;
-    }
-    sfNum++;
-
-    if (minCallWeight < UINT_MAX)
-      break;
   }
 
   TargetKind kind = NoneTarget;
@@ -140,72 +138,38 @@ DistanceResult DistanceCalculator::getDistance(
 
 bool DistanceCalculator::distanceInCallGraph(
     KFunction *kf, KBlock *origKB, unsigned int &distance,
-    const std::unordered_map<KFunction *, unsigned int>
-        &distanceToTargetFunction,
-    KBlock *target, bool strictlyAfterKB) const {
-  distance = UINT_MAX;
-  const std::unordered_map<KBlock *, unsigned> &dist =
-      codeGraphDistance.getDistance(origKB);
-  KBlock *targetBB = target;
-  KFunction *targetF = targetBB->parent;
-
-  if (kf == targetF && dist.count(targetBB) != 0) {
+    const FunctionDistanceMap &distanceToTargetFunction, KBlock *targetKB,
+    bool strictlyAfterKB) const {
+  auto &dist = codeGraphInfo.getDistance(origKB->basicBlock);
+  if (kf == targetKB->parent && dist.count(targetKB->basicBlock)) {
     distance = 0;
     return true;
   }
 
-  if (!strictlyAfterKB)
-    return distanceInCallGraph(kf, origKB, distance, distanceToTargetFunction,
-                               target);
-  auto min_distance = UINT_MAX;
   distance = UINT_MAX;
-  for (auto bb : successors(origKB->basicBlock)) {
-    auto kb = kf->blockMap[bb];
-    distanceInCallGraph(kf, kb, distance, distanceToTargetFunction, target);
-    if (distance < min_distance)
-      min_distance = distance;
-  }
-  distance = min_distance;
-  return distance != UINT_MAX;
-}
-
-bool DistanceCalculator::distanceInCallGraph(
-    KFunction *kf, KBlock *kb, unsigned int &distance,
-    const std::unordered_map<KFunction *, unsigned int>
-        &distanceToTargetFunction,
-    KBlock *target) const {
-  distance = UINT_MAX;
-  const std::unordered_map<KBlock *, unsigned> &dist =
-      codeGraphDistance.getDistance(kb);
-
-  for (auto &kCallBlock : kf->kCallBlocks) {
-    if (dist.count(kCallBlock) == 0)
+  bool cannotReachItself = strictlyAfterKB && !codeGraphInfo.hasCycle(origKB);
+  for (auto kCallBlock : kf->kCallBlocks) {
+    if (!dist.count(kCallBlock->basicBlock) ||
+        (cannotReachItself && origKB == kCallBlock))
       continue;
-    for (auto &calledFunction : kCallBlock->calledFunctions) {
-      KFunction *calledKFunction = kf->parent->functionMap[calledFunction];
-      if (distanceToTargetFunction.count(calledKFunction) != 0 &&
-          distance > distanceToTargetFunction.at(calledKFunction) + 1) {
-        distance = distanceToTargetFunction.at(calledKFunction) + 1;
-      }
+    for (auto calledFunction : kCallBlock->calledFunctions) {
+      auto it = distanceToTargetFunction.find(calledFunction);
+      if (it != distanceToTargetFunction.end() && distance > it->second + 1)
+        distance = it->second + 1;
     }
   }
   return distance != UINT_MAX;
 }
 
-WeightResult
-DistanceCalculator::tryGetLocalWeight(KBlock *kb, weight_type &weight,
-                                      const std::vector<KBlock *> &localTargets,
-                                      KBlock *target) const {
-  KFunction *currentKF = kb->parent;
-  KBlock *currentKB = kb;
-  const std::unordered_map<KBlock *, unsigned> &dist =
-      codeGraphDistance.getDistance(currentKB);
+WeightResult DistanceCalculator::tryGetLocalWeight(
+    KBlock *kb, weight_type &weight,
+    const std::vector<KBlock *> &localTargets) const {
+  const auto &dist = codeGraphInfo.getDistance(kb);
   weight = UINT_MAX;
-  for (auto &end : localTargets) {
-    if (dist.count(end) > 0) {
-      unsigned int w = dist.at(end);
-      weight = std::min(w, weight);
-    }
+  for (auto end : localTargets) {
+    auto it = dist.find(end->basicBlock);
+    if (it != dist.end())
+      weight = std::min(it->second, weight);
   }
 
   if (weight == UINT_MAX)
@@ -217,19 +181,18 @@ DistanceCalculator::tryGetLocalWeight(KBlock *kb, weight_type &weight,
   return Continue;
 }
 
-WeightResult DistanceCalculator::tryGetPreTargetWeight(
-    KBlock *kb, weight_type &weight,
-    const std::unordered_map<KFunction *, unsigned int>
-        &distanceToTargetFunction,
-    KBlock *target) const {
+WeightResult DistanceCalculator::tryGetPreTargetWeight(KBlock *kb,
+                                                       weight_type &weight,
+                                                       KBlock *target) const {
+  auto &distanceToTargetFunction =
+      codeGraphInfo.getBackwardDistance(target->parent);
   KFunction *currentKF = kb->parent;
   std::vector<KBlock *> localTargets;
-  for (auto &kCallBlock : currentKF->kCallBlocks) {
-    for (auto &calledFunction : kCallBlock->calledFunctions) {
-      KFunction *calledKFunction =
-          currentKF->parent->functionMap[calledFunction];
-      if (distanceToTargetFunction.count(calledKFunction) > 0) {
+  for (auto kCallBlock : currentKF->kCallBlocks) {
+    for (auto calledFunction : kCallBlock->calledFunctions) {
+      if (distanceToTargetFunction.count(calledFunction)) {
         localTargets.push_back(kCallBlock);
+        break;
       }
     }
   }
@@ -237,7 +200,7 @@ WeightResult DistanceCalculator::tryGetPreTargetWeight(
   if (localTargets.empty())
     return Miss;
 
-  WeightResult res = tryGetLocalWeight(kb, weight, localTargets, target);
+  WeightResult res = tryGetLocalWeight(kb, weight, localTargets);
   return res == Done ? Continue : res;
 }
 
@@ -250,7 +213,7 @@ WeightResult DistanceCalculator::tryGetPostTargetWeight(KBlock *kb,
   if (localTargets.empty())
     return Miss;
 
-  WeightResult res = tryGetLocalWeight(kb, weight, localTargets, target);
+  WeightResult res = tryGetLocalWeight(kb, weight, localTargets);
   return res == Done ? Continue : res;
 }
 
@@ -258,6 +221,6 @@ WeightResult DistanceCalculator::tryGetTargetWeight(KBlock *kb,
                                                     weight_type &weight,
                                                     KBlock *target) const {
   std::vector<KBlock *> localTargets = {target};
-  WeightResult res = tryGetLocalWeight(kb, weight, localTargets, target);
+  WeightResult res = tryGetLocalWeight(kb, weight, localTargets);
   return res;
 }

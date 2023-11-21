@@ -57,6 +57,11 @@ cl::opt<bool> UseBranchCache("use-branch-cache", cl::init(true),
                              cl::cat(SolvingCat));
 
 cl::opt<bool>
+    UseAlphaEquivalence("use-alpha-equivalence", cl::init(true),
+                        cl::desc("Use the alpha version builder(default=true)"),
+                        cl::cat(SolvingCat));
+
+cl::opt<bool>
     UseConcretizingSolver("use-concretizing-solver", cl::init(true),
                           cl::desc("Use concretization manager(default=true)"),
                           cl::cat(SolvingCat));
@@ -122,6 +127,13 @@ cl::opt<bool> UseAssignmentValidatingSolver(
     "debug-assignment-validating-solver", cl::init(false),
     cl::desc("Debug the correctness of generated assignments (default=false)"),
     cl::cat(SolvingCat));
+
+cl::opt<unsigned>
+    MaxSolversApproxTreeInc("max-solvers-approx-tree-inc",
+                            cl::desc("Maximum size of the Z3 solver pool for "
+                                     "approximating tree incrementality."
+                                     " Set to 0 to disable (default=0)"),
+                            cl::init(0), cl::cat(SolvingCat));
 
 void KCommandLine::HideOptions(llvm::cl::OptionCategory &Category) {
   StringMap<cl::Option *> &map = cl::getRegisteredOptions();
@@ -196,11 +208,12 @@ cl::opt<klee::MetaSMTBackendType> MetaSMTBackend(
 
 cl::opt<CoreSolverType> CoreSolverToUse(
     "solver-backend", cl::desc("Specifiy the core solver backend to use"),
-    cl::values(clEnumValN(STP_SOLVER, "stp", "STP" STP_IS_DEFAULT_STR),
-               clEnumValN(METASMT_SOLVER, "metasmt",
-                          "metaSMT" METASMT_IS_DEFAULT_STR),
-               clEnumValN(DUMMY_SOLVER, "dummy", "Dummy solver"),
-               clEnumValN(Z3_SOLVER, "z3", "Z3" Z3_IS_DEFAULT_STR)),
+    cl::values(
+        clEnumValN(STP_SOLVER, "stp", "STP" STP_IS_DEFAULT_STR),
+        clEnumValN(METASMT_SOLVER, "metasmt", "metaSMT" METASMT_IS_DEFAULT_STR),
+        clEnumValN(DUMMY_SOLVER, "dummy", "Dummy solver"),
+        clEnumValN(Z3_SOLVER, "z3", "Z3" Z3_IS_DEFAULT_STR),
+        clEnumValN(Z3_TREE_SOLVER, "z3-tree", "Z3 tree-incremental solver")),
     cl::init(DEFAULT_CORE_SOLVER), cl::cat(SolvingCat));
 
 cl::opt<CoreSolverType> DebugCrossCheckCoreSolverWith(

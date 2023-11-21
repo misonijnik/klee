@@ -734,7 +734,8 @@ void SpecialFunctionHandler::handleErrnoLocation(
          "invalid number of arguments to __errno_location/__error");
 
 #ifndef WINDOWS
-  int *errno_addr = executor.getErrnoLocation(state);
+  // int *errno_addr = executor.getErrnoLocation(state);
+  int *errno_addr = executor.errno_addr;
 #else
   int *errno_addr = nullptr;
 #endif
@@ -920,7 +921,7 @@ void SpecialFunctionHandler::handleMakeSymbolic(
     assert(success && "FIXME: Unhandled solver failure");
 
     if (res) {
-      uint64_t sid = 0;
+      uint64_t sid = 0; // TODO: unused variable
       if (state.arrayNames.count(name)) {
         sid = state.arrayNames[name];
       }

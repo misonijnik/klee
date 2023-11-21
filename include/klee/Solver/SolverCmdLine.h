@@ -32,6 +32,8 @@ extern llvm::cl::opt<bool> UseCexCache;
 
 extern llvm::cl::opt<bool> UseBranchCache;
 
+extern llvm::cl::opt<bool> UseAlphaEquivalence;
+
 extern llvm::cl::opt<bool> UseConcretizingSolver;
 
 extern llvm::cl::opt<bool> UseIndependentSolver;
@@ -50,6 +52,8 @@ extern llvm::cl::opt<bool> CoreSolverOptimizeDivides;
 
 extern llvm::cl::opt<bool> UseAssignmentValidatingSolver;
 
+extern llvm::cl::opt<unsigned> MaxSolversApproxTreeInc;
+
 /// The different query logging solvers that can be switched on/off
 enum QueryLoggingSolverType {
   ALL_KQUERY,    ///< Log all queries in .kquery (KQuery) format
@@ -65,6 +69,7 @@ enum CoreSolverType {
   METASMT_SOLVER,
   DUMMY_SOLVER,
   Z3_SOLVER,
+  Z3_TREE_SOLVER,
   NO_SOLVER
 };
 

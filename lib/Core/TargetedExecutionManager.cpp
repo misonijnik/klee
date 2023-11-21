@@ -14,7 +14,7 @@
 
 #include "ExecutionState.h"
 #include "klee/Core/TerminationTypes.h"
-#include "klee/Module/CodeGraphDistance.h"
+#include "klee/Module/CodeGraphInfo.h"
 #include "klee/Module/KInstruction.h"
 #include "klee/Support/ErrorHandling.h"
 
@@ -318,24 +318,27 @@ TargetedExecutionManager::LocationToBlocks
 TargetedExecutionManager::prepareAllLocations(KModule *kmodule,
                                               Locations &locations) const {
   LocationToBlocks locToBlocks;
-  const auto &infos = kmodule->infos;
+  std::unordered_map<std::string, std::unordered_set<const llvm::Function *>>
+      fileNameToFunctions;
+
+  for (const auto &kfunc : kmodule->functions) {
+    fileNameToFunctions[kfunc->getSourceFilepath()].insert(kfunc->function);
+  }
+
   for (auto it = locations.begin(); it != locations.end(); ++it) {
     auto loc = *it;
-    for (const auto &fileName : infos->getFilesNames()) {
-      if (kmodule->origInfos.count(fileName) == 0) {
+    for (const auto &[fileName, origInstsInFile] : kmodule->origInstructions) {
+      if (kmodule->origInstructions.count(fileName) == 0) {
         continue;
       }
       if (!loc->isInside(fileName)) {
         continue;
       }
 
-      const auto &relatedFunctions =
-          infos->getFileNameToFunctions().at(fileName);
+      const auto &relatedFunctions = fileNameToFunctions.at(fileName);
 
       for (const auto func : relatedFunctions) {
         const auto kfunc = kmodule->functionMap[func];
-        const auto &fi = infos->getFunctionInfo(*kfunc->function);
-        const auto &origInstsInFile = kmodule->origInfos.at(fi.file);
 
         for (const auto &kblock : kfunc->blocks) {
           auto b = kblock.get();
@@ -375,19 +378,19 @@ bool TargetedExecutionManager::canReach(const ref<Location> &from,
           return true;
         }
 
-        const auto &blockDist = codeGraphDistance.getDistance(fromBlock);
-        if (blockDist.count(toBlock) != 0) {
+        const auto &blockDist = codeGraphInfo.getDistance(fromBlock);
+        if (blockDist.count(toBlock->basicBlock) != 0) {
           return true;
         }
       } else {
-        const auto &funcDist = codeGraphDistance.getDistance(fromKf);
-        if (funcDist.count(toKf) != 0) {
+        const auto &funcDist = codeGraphInfo.getDistance(fromKf);
+        if (funcDist.count(toKf->function) != 0) {
           return true;
         }
 
         const auto &backwardFuncDist =
-            codeGraphDistance.getBackwardDistance(fromKf);
-        if (backwardFuncDist.count(toKf) != 0) {
+            codeGraphInfo.getBackwardDistance(fromKf);
+        if (backwardFuncDist.count(toKf->function) != 0) {
           return true;
         }
       }
@@ -449,7 +452,7 @@ KFunction *TargetedExecutionManager::tryResolveEntryFunction(
           if (i == j) {
             continue;
           }
-          const auto &funcDist = codeGraphDistance.getDistance(resKf);
+          const auto &funcDist = codeGraphInfo.getDistance(resKf);
 
           std::vector<KFunction *> currKFs;
           for (auto block : locToBlocks[result.locations[j]]) {
@@ -461,9 +464,9 @@ KFunction *TargetedExecutionManager::tryResolveEntryFunction(
           KFunction *curKf = nullptr;
           for (size_t m = 0; m < currKFs.size() && !curKf; ++m) {
             curKf = currKFs.at(m);
-            if (funcDist.count(curKf) == 0) {
-              const auto &curFuncDist = codeGraphDistance.getDistance(curKf);
-              if (curFuncDist.count(resKf) == 0) {
+            if (funcDist.count(curKf->function) == 0) {
+              const auto &curFuncDist = codeGraphInfo.getDistance(curKf);
+              if (curFuncDist.count(resKf->function) == 0) {
                 curKf = nullptr;
               } else {
                 i = j;
@@ -524,12 +527,13 @@ TargetedExecutionManager::prepareTargets(KModule *kmodule, SarifReport paths) {
 void TargetedExecutionManager::reportFalseNegative(ExecutionState &state,
                                                    ReachWithError error) {
   klee_warning("100.00%% %s False Negative at: %s", getErrorString(error),
-               state.prevPC->getSourceLocation().c_str());
+               state.prevPC->getSourceLocationString().c_str());
 }
 
 bool TargetedExecutionManager::reportTruePositive(ExecutionState &state,
                                                   ReachWithError error) {
   bool atLeastOneReported = false;
+  state.error = error;
   for (auto target : state.targetForest.getTargets()) {
     if (!target->shouldFailOnThisTarget())
       continue;
@@ -539,27 +543,10 @@ bool TargetedExecutionManager::reportTruePositive(ExecutionState &state,
         reportedTraces.count(errorTarget->getId()))
       continue;
 
-    /// The following code checks if target is a `call ...` instruction and we
-    /// failed somewhere *inside* call
-    auto possibleInstruction = state.prevPC;
-    int i = state.stack.size() - 1;
-    bool found = true;
-
-    while (!errorTarget->isTheSameAsIn(
-        possibleInstruction)) { // TODO: target->getBlock() ==
-                                // possibleInstruction should also be checked,
-                                // but more smartly
-      if (i <= 0) {
-        found = false;
-        break;
-      }
-      possibleInstruction = state.stack.callStack().at(i).caller;
-      i--;
-    }
-    if (!found)
+    if (!targetManager.isReachedTarget(state, errorTarget)) {
       continue;
+    }
 
-    state.error = error;
     atLeastOneReported = true;
     assert(!errorTarget->isReported);
     if (errorTarget->isThatError(ReachWithError::Reachable)) {

@@ -72,13 +72,12 @@ namespace klee {
 class AddressManager;
 class Array;
 struct Cell;
-class CodeGraphDistance;
+class CodeGraphInfo;
 class DistanceCalculator;
 class ExecutionState;
 class ExternalDispatcher;
 class Expr;
 template <class T> class ExprHashMap;
-class InstructionInfoTable;
 class KCallable;
 struct KFunction;
 struct KInstruction;
@@ -122,6 +121,8 @@ public:
   RNG theRNG;
 
 private:
+  int *errno_addr;
+
   using SetOfStates = std::set<ExecutionState *, ExecutionStateIDCompare>;
   /* Set of Intrinsic::ID. Plain type is used here to avoid including llvm in
    * the header */
@@ -146,7 +147,7 @@ private:
   TimerGroup timers;
   std::unique_ptr<PForest> processForest;
   GuidanceKind guidanceKind;
-  std::unique_ptr<CodeGraphDistance> codeGraphDistance;
+  std::unique_ptr<CodeGraphInfo> codeGraphInfo;
   std::unique_ptr<DistanceCalculator> distanceCalculator;
   std::unique_ptr<TargetCalculator> targetCalculator;
   std::unique_ptr<TargetManager> targetManager;
@@ -206,6 +207,9 @@ private:
 
   /// Disables forking, set by client. \see setInhibitForking()
   bool inhibitForking;
+
+  /// Should it generate test cases for each new covered block or branch
+  bool coverOnTheFly;
 
   /// Signals the executor to halt execution at the next instruction
   /// step.
@@ -286,7 +290,7 @@ private:
 
   ObjectState *bindObjectInState(ExecutionState &state, const MemoryObject *mo,
                                  KType *dynamicType, bool IsAlloca,
-                                 const Array *array = 0);
+                                 const Array *array = nullptr);
 
   /// Resolve a pointer to the memory objects it could point to the
   /// start of, forking execution when necessary and generating errors
@@ -480,7 +484,7 @@ private:
 
   ref<Expr> readDest(ExecutionState &state, StackFrame &frame,
                      const KInstruction *target) {
-    unsigned index = target->dest;
+    unsigned index = target->getDest();
     ref<Expr> reg = frame.locals[index].value;
     if (!reg) {
       prepareSymbolicRegister(state, frame, index);
@@ -494,7 +498,7 @@ private:
   }
 
   Cell &getDestCell(const StackFrame &frame, const KInstruction *target) {
-    return frame.locals[target->dest];
+    return frame.locals[target->getDest()];
   }
 
   const Cell &eval(const KInstruction *ki, unsigned index,
@@ -565,10 +569,9 @@ private:
                              const MemoryObject *mo = nullptr) const;
 
   // Determines the \param lastInstruction of the \param state which is not KLEE
-  // internal and returns its InstructionInfo
-  const InstructionInfo &
-  getLastNonKleeInternalInstruction(const ExecutionState &state,
-                                    llvm::Instruction **lastInstruction);
+  // internal and returns its KInstruction
+  const KInstruction *
+  getLastNonKleeInternalInstruction(const ExecutionState &state);
 
   /// Remove state from queue and delete state
   void terminateState(ExecutionState &state,
@@ -727,9 +730,9 @@ public:
   setModule(std::vector<std::unique_ptr<llvm::Module>> &userModules,
             std::vector<std::unique_ptr<llvm::Module>> &libsModules,
             const ModuleOptions &opts,
-            const std::unordered_set<std::string> &mainModuleFunctions,
-            const std::unordered_set<std::string> &mainModuleGlobals,
-            std::unique_ptr<InstructionInfoTable> origInfos) override;
+            std::set<std::string> &&mainModuleFunctions,
+            std::set<std::string> &&mainModuleGlobals,
+            FLCtoOpcode &&origInstructions) override;
 
   void useSeeds(const std::vector<struct KTest *> *seeds) override {
     usingSeeds = seeds;
@@ -791,6 +794,7 @@ public:
                    Interpreter::LogType logFormat = Interpreter::STP) override;
 
   void setInitializationGraph(const ExecutionState &state,
+                              const std::vector<klee::Symbolic> &symbolics,
                               const Assignment &model, KTest &tc);
 
   void logState(const ExecutionState &state, int id,
@@ -798,9 +802,8 @@ public:
 
   bool getSymbolicSolution(const ExecutionState &state, KTest &res) override;
 
-  void getCoveredLines(
-      const ExecutionState &state,
-      std::map<const std::string *, std::set<unsigned>> &res) override;
+  void getCoveredLines(const ExecutionState &state,
+                       std::map<std::string, std::set<unsigned>> &res) override;
 
   void getBlockPath(const ExecutionState &state,
                     std::string &blockPath) override;

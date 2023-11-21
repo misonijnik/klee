@@ -41,8 +41,8 @@ static ArrayCache ac;
 
 TEST(ArrayExprTest, HashCollisions) {
   klee::OptimizeArray = ALL;
-  std::vector<ref<ConstantExpr>> constVals(256,
-                                           ConstantExpr::create(5, Expr::Int8));
+  SparseStorage<ref<ConstantExpr>> constVals(
+      ConstantExpr::create(5, Expr::Int8));
   const Array *array = ac.CreateArray(
       ConstantExpr::create(256, sizeof(uint64_t) * CHAR_BIT),
       SourceBuilder::constant(constVals), Expr::Int32, Expr::Int8);
@@ -65,8 +65,7 @@ TEST(ArrayExprTest, HashCollisions) {
   SparseStorage<unsigned char> value({6, 0, 0, 0});
   std::vector<SparseStorage<unsigned char>> values = {value};
   std::vector<const Array *> assigmentArrays = {symArray};
-  auto a = std::make_unique<Assignment>(assigmentArrays, values,
-                                        /*_allowFreeValues=*/true);
+  auto a = std::make_unique<Assignment>(assigmentArrays, values);
 
   EXPECT_NE(a->evaluate(updatedRead), a->evaluate(firstRead));
   EXPECT_EQ(a->evaluate(updatedRead), getConstant(42, Expr::Int8));

@@ -43,6 +43,7 @@ public:
   SolverRunStatus getOperationStatusCode();
   char *getConstraintLog(const Query &);
   void setCoreSolverTimeout(time::Span timeout);
+  void notifyStateTermination(std::uint32_t id);
 };
 
 bool ValidatingSolver::computeTruth(const Query &query, bool &isValid) {
@@ -95,7 +96,6 @@ bool ValidatingSolver::computeInitialValues(
     const Query &query, const std::vector<const Array *> &objects,
     std::vector<SparseStorage<unsigned char>> &values, bool &hasSolution) {
   bool answer;
-  assert(!query.containsSymcretes());
 
   if (!solver->impl->computeInitialValues(query, objects, values, hasSolution))
     return false;
@@ -104,7 +104,7 @@ bool ValidatingSolver::computeInitialValues(
     // Assert the bindings as constraints, and verify that the
     // conjunction of the actual constraints is satisfiable.
     ConstraintSet bindings;
-    Assignment solutionAssignment(objects, values, true);
+    Assignment solutionAssignment(objects, values);
 
     for (unsigned i = 0; i != values.size(); ++i) {
       const Array *array = objects[i];
@@ -128,7 +128,8 @@ bool ValidatingSolver::computeInitialValues(
     for (auto const &constraint : query.constraints.cs())
       constraints = AndExpr::create(constraints, constraint);
 
-    if (!oracle->impl->computeTruth(Query(bindings, constraints), answer))
+    if (!oracle->impl->computeTruth(Query(bindings, constraints, query.id),
+                                    answer))
       return false;
     if (!answer)
       assert(0 && "invalid solver result (computeInitialValues)");
@@ -159,7 +160,7 @@ bool ValidatingSolver::check(const Query &query, ref<SolverResponse> &result) {
     // conjunction of the actual constraints is satisfiable.
 
     ConstraintSet bindings;
-    std::map<const Array *, SparseStorage<unsigned char>> initialValues;
+    Assignment::bindings_ty initialValues;
     cast<InvalidResponse>(result)->tryGetInitialValues(initialValues);
     Assignment solutionAssignment(initialValues);
     for (auto &arrayValues : initialValues) {
@@ -184,7 +185,8 @@ bool ValidatingSolver::check(const Query &query, ref<SolverResponse> &result) {
     for (auto const &constraint : query.constraints.cs())
       constraints = AndExpr::create(constraints, constraint);
 
-    if (!oracle->impl->computeTruth(Query(bindings, constraints), banswer))
+    if (!oracle->impl->computeTruth(Query(bindings, constraints, query.id),
+                                    banswer))
       return false;
     if (!banswer)
       assert(0 && "invalid solver result (computeInitialValues)");
@@ -227,6 +229,11 @@ char *ValidatingSolver::getConstraintLog(const Query &query) {
 
 void ValidatingSolver::setCoreSolverTimeout(time::Span timeout) {
   solver->impl->setCoreSolverTimeout(timeout);
+}
+
+void ValidatingSolver::notifyStateTermination(std::uint32_t id) {
+  solver->impl->notifyStateTermination(id);
+  oracle->impl->notifyStateTermination(id);
 }
 
 std::unique_ptr<Solver> createValidatingSolver(std::unique_ptr<Solver> s,

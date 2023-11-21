@@ -37,6 +37,8 @@ public:
     elts = b.elts;
     return *this;
   }
+  bool operator==(const PersistentMap &b) const { return elts == b.elts; }
+  bool operator<(const PersistentMap &b) const { return elts < b.elts; }
 
   bool empty() const { return elts.empty(); }
   size_t count(const key_type &key) const { return elts.count(key); }
@@ -55,6 +57,7 @@ public:
   void remove(const key_type &key) { elts = elts.remove(key); }
   void popMin(const value_type &valueOut) { elts = elts.popMin(valueOut); }
   void popMax(const value_type &valueOut) { elts = elts.popMax(valueOut); }
+  void clear() { elts = Map(); }
 
   iterator begin() const { return elts.begin(); }
   iterator end() const { return elts.end(); }
@@ -77,6 +80,8 @@ public:
       return *lookup(key);
     }
   }
+
+  const D &at(const key_type &key) const { return elts.at(key); }
 };
 } // namespace klee
 

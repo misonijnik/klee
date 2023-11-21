@@ -17,16 +17,16 @@ project(KLEE CXX C)
 # Project version
 ###############################################################################
 set(KLEE_VERSION_MAJOR 3)
-set(KLEE_VERSION_MINOR 0-utbot)
+set(KLEE_VERSION_MINOR 0)
 set(KLEE_VERSION "${KLEE_VERSION_MAJOR}.${KLEE_VERSION_MINOR}")
 
 # If a patch is needed, we can add KLEE_VERSION_PATCH
 # set(KLEE_VERSION_PATCH 0)
 # set(KLEE_VERSION "${KLEE_VERSION_MAJOR}.${KLEE_VERSION_MINOR}.${KLEE_VERSION_PATCH}")
 
-message(STATUS "KLEE version ${KLEE_VERSION}")
-set(PACKAGE_STRING "\"KLEE ${KLEE_VERSION}\"")
-set(PACKAGE_URL "\"https://klee.github.io\"")
+message(STATUS "KLEEF version ${KLEE_VERSION}")
+set(PACKAGE_STRING "\"KLEEF ${KLEE_VERSION}\"")
+set(PACKAGE_URL "\"https://toolchain-labs.com/projects/kleef.html\"")
 
 ################################################################################
 # Sanity check - Disallow building in source.
@@ -506,19 +506,29 @@ endif()
 # KLEE uclibc support
 ################################################################################
 set(KLEE_UCLIBC_PATH "" CACHE PATH "Path to klee-uclibc root directory")
-set(KLEE_UCLIBC_BCA_NAME "klee-uclibc.bca")
+
+set(KLEE_UCLIBC_BCA_32_NAME "klee-uclibc-32.bca")
+set(KLEE_UCLIBC_BCA_64_NAME "klee-uclibc-64.bca")
+
 if (NOT KLEE_UCLIBC_PATH STREQUAL "")
   # Find the C library bitcode archive
-  set(KLEE_UCLIBC_C_BCA "${KLEE_UCLIBC_PATH}/lib/libc.a")
-  if (NOT EXISTS "${KLEE_UCLIBC_C_BCA}")
+  set(KLEE_UCLIBC_C_32_BCA "${KLEE_UCLIBC_PATH}-32/lib/libc.a")
+  set(KLEE_UCLIBC_C_64_BCA "${KLEE_UCLIBC_PATH}-64/lib/libc.a")
+
+  if (NOT EXISTS "${KLEE_UCLIBC_C_32_BCA}" OR NOT EXISTS "${KLEE_UCLIBC_C_64_BCA}")
     message(FATAL_ERROR
-      "klee-uclibc library not found at \"${KLEE_UCLIBC_C_BCA}\". Set KLEE_UCLIBC_PATH to klee-uclibc root directory or empty string.")
+      "klee-uclibc library not found at \"${KLEE_UCLIBC_C_32_BCA}\" or \"${KLEE_UCLIBC_C_64_BCA}\". Set KLEE_UCLIBC_PATH to klee-uclibc root directory or empty string.")
   endif()
-  message(STATUS "Found klee-uclibc library: \"${KLEE_UCLIBC_C_BCA}\"")
+  message(STATUS "Found klee-uclibc library: \"${KLEE_UCLIBC_C_32_BCA}\" and \"${KLEE_UCLIBC_C_64_BCA}\"")
   # Copy KLEE_UCLIBC_C_BCA so KLEE can find it where it is expected.
+  # Create 32 and 64 bit versions
   execute_process(COMMAND ${CMAKE_COMMAND} -E copy
-    "${KLEE_UCLIBC_C_BCA}"
-    "${KLEE_RUNTIME_DIRECTORY}/${KLEE_UCLIBC_BCA_NAME}"
+    "${KLEE_UCLIBC_C_32_BCA}"
+    "${KLEE_RUNTIME_DIRECTORY}/${KLEE_UCLIBC_BCA_32_NAME}"
+  )
+  execute_process(COMMAND ${CMAKE_COMMAND} -E copy
+    "${KLEE_UCLIBC_C_64_BCA}"
+    "${KLEE_RUNTIME_DIRECTORY}/${KLEE_UCLIBC_BCA_64_NAME}"
   )
 else()
   message(STATUS "Skipping copying of klee-uclibc runtime")
@@ -632,6 +642,12 @@ unset(_flags)
 ################################################################################
 configure_file(${CMAKE_SOURCE_DIR}/include/klee/Config/config.h.cmin
   ${CMAKE_BINARY_DIR}/include/klee/Config/config.h)
+
+################################################################################
+# Generate `klee/klee.h` and `klee-test-comp.c`
+################################################################################
+configure_file(${CMAKE_SOURCE_DIR}/include/klee/klee.h ${CMAKE_BINARY_DIR}/include/klee/klee.h COPYONLY)
+configure_file(${CMAKE_SOURCE_DIR}/include/klee-test-comp.c ${CMAKE_BINARY_DIR}/include/klee-test-comp.c COPYONLY)
 
 ################################################################################
 # Generate `CompileTimeInfo.h`

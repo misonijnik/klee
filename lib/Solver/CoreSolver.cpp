@@ -28,6 +28,11 @@ DISABLE_WARNING_POP
 namespace klee {
 
 std::unique_ptr<Solver> createCoreSolver(CoreSolverType cst) {
+  bool isTreeSolver = cst == Z3_TREE_SOLVER;
+  if (!isTreeSolver && MaxSolversApproxTreeInc > 0)
+    klee_warning("--%s option is ignored because --%s is not z3-tree",
+                 MaxSolversApproxTreeInc.ArgStr.str().c_str(),
+                 CoreSolverToUse.ArgStr.str().c_str());
   switch (cst) {
   case STP_SOLVER:
 #ifdef ENABLE_STP
@@ -54,16 +59,25 @@ std::unique_ptr<Solver> createCoreSolver(CoreSolverType cst) {
 #endif
   case DUMMY_SOLVER:
     return createDummySolver();
+  case Z3_TREE_SOLVER:
   case Z3_SOLVER:
 #ifdef ENABLE_Z3
     klee_message("Using Z3 solver backend");
+    Z3BuilderType type;
 #ifdef ENABLE_FP
     klee_message("Using Z3 bitvector builder");
-    return std::make_unique<Z3Solver>(KLEE_BITVECTOR);
+    type = KLEE_BITVECTOR;
 #else
     klee_message("Using Z3 core builder");
-    return std::make_unique<Z3Solver>(KLEE_CORE);
+    type = KLEE_CORE;
 #endif
+    if (isTreeSolver) {
+      if (MaxSolversApproxTreeInc > 0)
+        return std::make_unique<Z3TreeSolver>(type, MaxSolversApproxTreeInc);
+      klee_warning("--%s is 0, so falling back to non tree-incremental solver",
+                   MaxSolversApproxTreeInc.ArgStr.str().c_str());
+    }
+    return std::make_unique<Z3Solver>(type);
 #else
     klee_message("Not compiled with Z3 support");
     return NULL;

@@ -15,6 +15,7 @@
 #include "klee/Expr/ExprHashMap.h"
 #include "klee/Expr/ExprUtil.h"
 #include "klee/Expr/ExprVisitor.h"
+#include "klee/Expr/IndependentSet.h"
 #include "klee/Expr/Path.h"
 #include "klee/Expr/Symcrete.h"
 #include "klee/Module/KModule.h"
@@ -181,18 +182,38 @@ public:
 
 ConstraintSet::ConstraintSet(constraints_ty cs, symcretes_ty symcretes,
                              Assignment concretization)
-    : _constraints(cs), _symcretes(symcretes), _concretization(concretization) {
+    : _constraints(cs), _symcretes(symcretes), _concretization(concretization),
+      _independentElements(_constraints, _symcretes, _concretization) {}
+
+ConstraintSet::ConstraintSet(ref<const IndependentConstraintSet> ics)
+    : _constraints(ics->getConstraints()), _symcretes(ics->getSymcretes()),
+      _concretization(ics->concretization), _independentElements(ics) {}
+
+ConstraintSet::ConstraintSet(
+    const std::vector<ref<const IndependentConstraintSet>> &factors) {
+  for (auto ics : factors) {
+    constraints_ty constraints = ics->getConstraints();
+    SymcreteOrderedSet symcretes = ics->getSymcretes();
+    IndependentConstraintSetUnion icsu(ics);
+    _constraints.insert(constraints.begin(), constraints.end());
+    _symcretes.insert(symcretes.begin(), symcretes.end());
+    _concretization.addIndependentAssignment(ics->concretization);
+    _independentElements.addIndependentConstraintSetUnion(icsu);
+  }
 }
 
-ConstraintSet::ConstraintSet() : _concretization(Assignment(true)) {}
+ConstraintSet::ConstraintSet(constraints_ty cs) : ConstraintSet(cs, {}, {}) {}
+
+ConstraintSet::ConstraintSet() {}
 
 void ConstraintSet::addConstraint(ref<Expr> e, const Assignment &delta) {
   _constraints.insert(e);
-
   // Update bindings
-  for (auto i : delta.bindings) {
-    _concretization.bindings[i.first] = i.second;
+  for (auto &i : delta.bindings) {
+    _concretization.bindings.replace({i.first, i.second});
   }
+  _independentElements.updateConcretization(delta);
+  _independentElements.addExpr(e);
 }
 
 IDType Symcrete::idCounter = 0;
@@ -200,9 +221,14 @@ IDType Symcrete::idCounter = 0;
 void ConstraintSet::addSymcrete(ref<Symcrete> s,
                                 const Assignment &concretization) {
   _symcretes.insert(s);
+  _independentElements.addSymcrete(s);
+  Assignment dependentConcretization;
   for (auto i : s->dependentArrays()) {
-    _concretization.bindings[i] = concretization.bindings.at(i);
+    _concretization.bindings.replace({i, concretization.bindings.at(i)});
+    dependentConcretization.bindings.replace(
+        {i, concretization.bindings.at(i)});
   }
+  _independentElements.updateConcretization(dependentConcretization);
 }
 
 bool ConstraintSet::isSymcretized(ref<Expr> expr) const {
@@ -217,9 +243,33 @@ bool ConstraintSet::isSymcretized(ref<Expr> expr) const {
 void ConstraintSet::rewriteConcretization(const Assignment &a) {
   for (auto i : a.bindings) {
     if (concretization().bindings.count(i.first)) {
-      _concretization.bindings[i.first] = i.second;
+      _concretization.bindings.replace({i.first, i.second});
     }
   }
+  _independentElements.updateConcretization(a);
+}
+
+ConstraintSet ConstraintSet::getConcretizedVersion() const {
+  ConstraintSet cs;
+  cs._independentElements = _independentElements.getConcretizedVersion();
+
+  for (auto &e : cs._independentElements.is()) {
+    if (isa<ExprEitherSymcrete::left>(e)) {
+      cs._constraints.insert(cast<ExprEitherSymcrete::left>(e)->value());
+    }
+  }
+  return cs;
+}
+
+ConstraintSet ConstraintSet::getConcretizedVersion(
+    const Assignment &newConcretization) const {
+  ConstraintSet cs;
+  cs._independentElements =
+      _independentElements.getConcretizedVersion(newConcretization);
+  for (auto &e : cs._independentElements.is()) {
+    cs._constraints.insert(cast<ExprEitherSymcrete::left>(e)->value());
+  }
+  return cs;
 }
 
 void ConstraintSet::print(llvm::raw_ostream &os) const {
@@ -240,11 +290,20 @@ void ConstraintSet::print(llvm::raw_ostream &os) const {
 
 void ConstraintSet::dump() const { this->print(llvm::errs()); }
 
-void ConstraintSet::changeCS(constraints_ty &cs) { _constraints = cs; }
+void ConstraintSet::changeCS(constraints_ty &cs) {
+  _constraints = cs;
+  _independentElements =
+      IndependentConstraintSetUnion(_constraints, _symcretes, _concretization);
+}
 
 const constraints_ty &ConstraintSet::cs() const { return _constraints; }
 
 const symcretes_ty &ConstraintSet::symcretes() const { return _symcretes; }
+
+const IndependentConstraintSetUnion &
+ConstraintSet::independentElements() const {
+  return _independentElements;
+}
 
 const Path &PathConstraints::path() const { return _path; }
 
@@ -271,10 +330,6 @@ PathConstraints::orderedCS() const {
 
 void PathConstraints::advancePath(KInstruction *ki) { _path.advance(ki); }
 
-void PathConstraints::advancePath(const Path &path) {
-  _path = Path::concat(_path, path);
-}
-
 ExprHashSet PathConstraints::addConstraint(ref<Expr> e, const Assignment &delta,
                                            Path::PathIndex currIndex) {
   auto expr = Simplificator::simplifyExpr(constraints, e);
@@ -293,7 +348,9 @@ ExprHashSet PathConstraints::addConstraint(ref<Expr> e, const Assignment &delta,
       added.insert(expr);
       pathIndexes.insert({expr, currIndex});
       _simplificationMap[expr].insert(expr);
-      orderedConstraints[currIndex].insert(expr);
+      auto indexConstraints = orderedConstraints[currIndex].second;
+      indexConstraints.insert(expr);
+      orderedConstraints.replace({currIndex, indexConstraints});
       constraints.addConstraint(expr, delta);
     }
   }
@@ -301,10 +358,12 @@ ExprHashSet PathConstraints::addConstraint(ref<Expr> e, const Assignment &delta,
   if (RewriteEqualities != RewriteEqualitiesPolicy::None) {
     auto simplified =
         Simplificator::simplify(constraints.cs(), RewriteEqualities);
-    constraints.changeCS(simplified.simplified);
+    if (simplified.wasSimplified) {
+      constraints.changeCS(simplified.simplified);
 
-    _simplificationMap = Simplificator::composeExprDependencies(
-        _simplificationMap, simplified.dependency);
+      _simplificationMap = Simplificator::composeExprDependencies(
+          _simplificationMap, simplified.dependency);
+    }
   }
 
   return added;
@@ -328,29 +387,6 @@ void PathConstraints::rewriteConcretization(const Assignment &a) {
   constraints.rewriteConcretization(a);
 }
 
-PathConstraints PathConstraints::concat(const PathConstraints &l,
-                                        const PathConstraints &r) {
-  // TODO : How to handle symcretes and concretization?
-  PathConstraints path = l;
-  path._path = Path::concat(l._path, r._path);
-  auto offset = l._path.KBlockSize();
-  for (const auto &i : r._original) {
-    path._original.insert(i);
-    auto index = r.pathIndexes.at(i);
-    index.block += offset;
-    path.pathIndexes.insert({i, index});
-    path.orderedConstraints[index].insert(i);
-  }
-  for (const auto &i : r.constraints.cs()) {
-    path.constraints.addConstraint(i, {});
-    if (r._simplificationMap.count(i)) {
-      path._simplificationMap.insert({i, r._simplificationMap.at(i)});
-    }
-  }
-  // Run the simplificator on the newly constructed set?
-  return path;
-}
-
 Simplificator::ExprResult
 Simplificator::simplifyExpr(const constraints_ty &constraints,
                             const ref<Expr> &expr) {
@@ -362,27 +398,23 @@ Simplificator::simplifyExpr(const constraints_ty &constraints,
 
   for (auto &constraint : constraints) {
     if (const EqExpr *ee = dyn_cast<EqExpr>(constraint)) {
-      ref<Expr> left = ee->left;
-      ref<Expr> right = ee->right;
-      if (right < left) {
-        left = ee->right;
-        right = ee->left;
+      ref<Expr> small = ee->left;
+      ref<Expr> big = ee->right;
+      if (!isa<ConstantExpr>(small)) {
+        auto hr = big->height(), hl = small->height();
+        if (hr < hl || (hr == hl && big < small))
+          std::swap(small, big);
+        equalities.emplace(constraint, Expr::createTrue());
+        equalitiesParents.emplace(constraint, constraint);
       }
-      if (isa<ConstantExpr>(ee->left)) {
-        equalities.insert(std::make_pair(ee->right, ee->left));
-        equalitiesParents.insert({ee->right, constraint});
-      } else {
-        equalities.insert(std::make_pair(constraint, Expr::createTrue()));
-        equalities.insert(std::make_pair(right, left));
-        equalitiesParents.insert({constraint, constraint});
-        equalitiesParents.insert({right, constraint});
-      }
+      equalities.emplace(big, small);
+      equalitiesParents.emplace(big, constraint);
     } else {
-      equalities.insert(std::make_pair(constraint, Expr::createTrue()));
-      equalitiesParents.insert({constraint, constraint});
+      equalities.emplace(constraint, Expr::createTrue());
+      equalitiesParents.emplace(constraint, constraint);
       if (const NotExpr *ne = dyn_cast<NotExpr>(constraint)) {
-        equalities.insert(std::make_pair(ne->expr, Expr::createFalse()));
-        equalitiesParents.insert({ne->expr, constraint});
+        equalities.emplace(ne->expr, Expr::createFalse());
+        equalitiesParents.emplace(ne->expr, constraint);
       }
     }
   }
@@ -409,6 +441,7 @@ Simplificator::simplify(const constraints_ty &constraints,
     dependencies.insert({constraint, {constraint}});
   }
 
+  bool actuallyChanged = false;
   bool changed = true;
   while (changed) {
     changed = false;
@@ -441,6 +474,7 @@ Simplificator::simplify(const constraints_ty &constraints,
         currentDependencies[part].insert(constraint);
       }
       if (constraint != simplifiedConstraint || andsSplit.size() > 1) {
+        actuallyChanged = true;
         changed = true;
       }
     }
@@ -454,7 +488,7 @@ Simplificator::simplify(const constraints_ty &constraints,
   simplified.erase(ConstantExpr::createTrue());
   dependencies.erase(ConstantExpr::createTrue());
 
-  return {simplified, dependencies};
+  return {simplified, dependencies, actuallyChanged};
 }
 
 Simplificator::Replacements
@@ -521,6 +555,18 @@ Simplificator::composeExprDependencies(const ExprHashMap<ExprHashSet> &upper,
     }
   }
   return result;
+}
+
+void ConstraintSet::getAllIndependentConstraintsSets(
+    ref<Expr> queryExpr,
+    std::vector<ref<const IndependentConstraintSet>> &result) const {
+  _independentElements.getAllIndependentConstraintSets(queryExpr, result);
+}
+
+void ConstraintSet::getAllDependentConstraintsSets(
+    ref<Expr> queryExpr,
+    std::vector<ref<const IndependentConstraintSet>> &result) const {
+  _independentElements.getAllDependentConstraintSets(queryExpr, result);
 }
 
 std::vector<const Array *> ConstraintSet::gatherArrays() const {

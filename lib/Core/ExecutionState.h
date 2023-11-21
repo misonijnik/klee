@@ -12,6 +12,7 @@
 
 #include "AddressSpace.h"
 
+#include "klee/ADT/ImmutableList.h"
 #include "klee/ADT/ImmutableSet.h"
 #include "klee/ADT/PersistentMap.h"
 #include "klee/ADT/PersistentSet.h"
@@ -28,6 +29,7 @@
 #include "klee/Module/TargetHash.h"
 #include "klee/Solver/Solver.h"
 #include "klee/System/Time.h"
+#include "klee/Utilities/Math.h"
 
 #include "klee/Support/CompilerWarning.h"
 DISABLE_WARNING_PUSH
@@ -35,6 +37,7 @@ DISABLE_WARNING_DEPRECATED_DECLARATIONS
 #include "llvm/IR/Function.h"
 DISABLE_WARNING_POP
 
+#include <deque>
 #include <map>
 #include <memory>
 #include <set>
@@ -53,9 +56,7 @@ struct KBlock;
 struct KInstruction;
 class MemoryObject;
 class PTreeNode;
-struct InstructionInfo;
 class Target;
-struct TranstionHash;
 
 llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const MemoryMap &mm);
 
@@ -68,7 +69,6 @@ struct CallStackFrame {
   CallStackFrame(KInstIterator caller_, KFunction *kf_)
       : caller(caller_), kf(kf_) {}
   ~CallStackFrame() = default;
-  CallStackFrame(const CallStackFrame &s);
 
   bool equals(const CallStackFrame &other) const;
 
@@ -105,7 +105,6 @@ struct InfoStackFrame {
   unsigned minDistToUncoveredOnReturn = 0;
 
   InfoStackFrame(KFunction *kf);
-  InfoStackFrame(const InfoStackFrame &s);
   ~InfoStackFrame() = default;
 };
 
@@ -129,6 +128,7 @@ public:
   inline value_stack_ty &valueStack() { return valueStack_; }
   inline const value_stack_ty &valueStack() const { return valueStack_; }
   inline const call_stack_ty &callStack() const { return callStack_; }
+  inline const info_stack_ty &infoStack() const { return infoStack_; }
   inline info_stack_ty &infoStack() { return infoStack_; }
   inline const call_stack_ty &uniqueFrames() const { return uniqueFrames_; }
 
@@ -218,7 +218,8 @@ struct Symbolic {
   const Array *array;
   KType *type;
   Symbolic(ref<const MemoryObject> mo, const Array *a, KType *t)
-      : memoryObject(mo), array(a), type(t) {}
+      : memoryObject(std::move(mo)), array(a), type(t) {}
+  Symbolic(const Symbolic &other) = default;
   Symbolic &operator=(const Symbolic &other) = default;
 
   friend bool operator==(const Symbolic &lhs, const Symbolic &rhs) {
@@ -230,9 +231,8 @@ struct Symbolic {
 struct MemorySubobject {
   ref<Expr> address;
   unsigned size;
-  MemorySubobject(ref<Expr> address, unsigned size)
+  explicit MemorySubobject(ref<Expr> address, unsigned size)
       : address(address), size(size) {}
-  MemorySubobject &operator=(const MemorySubobject &other) = default;
 };
 
 struct MemorySubobjectHash {
@@ -290,8 +290,7 @@ public:
   std::uint32_t depth = 0;
 
   /// @brief Exploration level, i.e., number of times KLEE cycled for this state
-  std::unordered_set<llvm::BasicBlock *> level;
-  std::unordered_set<Transition, TransitionHash> transitionLevel;
+  PersistentSet<KBlock *, KBlockCompare> level;
 
   /// @brief Address space used by this state (e.g. Global and Heap)
   AddressSpace addressSpace;
@@ -320,16 +319,14 @@ public:
   TreeOStream symPathOS;
 
   /// @brief Set containing which lines in which files are covered by this state
-  std::map<const std::string *, std::set<std::uint32_t>> coveredLines;
+  std::map<std::string, std::set<unsigned>> coveredLines;
 
   /// @brief Pointer to the process tree of the current state
   /// Copies of ExecutionState should not copy ptreeNode
   PTreeNode *ptreeNode = nullptr;
 
   /// @brief Ordered list of symbolics: used to generate test cases.
-  //
-  // FIXME: Move to a shared list structure (not critical).
-  std::vector<Symbolic> symbolics;
+  ImmutableList<Symbolic> symbolics;
 
   /// @brief map from memory accesses to accessed objects and access offsets.
   ExprHashMap<std::set<IDType>> resolvedPointers;
@@ -369,7 +366,8 @@ public:
   std::uint32_t id = 0;
 
   /// @brief Whether a new instruction was covered in this state
-  bool coveredNew = false;
+  mutable std::deque<ref<box<bool>>> coveredNew;
+  mutable ref<box<bool>> coveredNewError;
 
   /// @brief Disables forking for this state. Set by user code
   bool forkDisabled = false;
@@ -431,17 +429,22 @@ public:
                             unsigned size = 0);
   void addUniquePointerResolution(ref<Expr> address, const MemoryObject *mo,
                                   unsigned size = 0);
-  bool resolveOnSymbolics(const ref<ConstantExpr> &addr, IDType &result) const;
 
   void addConstraint(ref<Expr> e, const Assignment &c);
   void addCexPreference(const ref<Expr> &cond);
+
+  Query toQuery(ref<Expr> head) const;
+  Query toQuery() const;
 
   void dumpStack(llvm::raw_ostream &out) const;
 
   bool visited(KBlock *block) const;
 
   std::uint32_t getID() const { return id; };
-  void setID() { id = nextID++; };
+  void setID() {
+    id = nextID++;
+    queryMetaData.id = id;
+  };
   llvm::BasicBlock *getInitPCBlock() const;
   llvm::BasicBlock *getPrevPCBlock() const;
   llvm::BasicBlock *getPCBlock() const;
@@ -489,19 +492,49 @@ public:
   bool reachedTarget(ref<ReachBlockTarget> target) const;
   static std::uint32_t getLastID() { return nextID - 1; };
 
-  inline bool isStuck(unsigned long long bound) {
-    KInstruction *prevKI = prevPC;
-    if (prevKI->inst->isTerminator() && stack.size() > 0) {
-      auto level = stack.infoStack().back().multilevel[getPCBlock()].second;
-      return bound && level > bound;
+  inline bool isCycled(unsigned long long bound) const {
+    if (bound == 0)
+      return false;
+    if (prevPC->inst->isTerminator() && stack.size() > 0) {
+      auto &ml = stack.infoStack().back().multilevel;
+      auto level = ml.find(getPCBlock());
+      return level != ml.end() && level->second > bound;
     }
     if (pc == pc->parent->getFirstInstruction() &&
         pc->parent == pc->parent->parent->entryKBlock) {
-      auto level = stack.multilevel[stack.callStack().back().kf].second;
-      return bound && level > bound;
+      auto level = stack.multilevel.at(stack.callStack().back().kf);
+      return level > bound;
     }
     return false;
   }
+
+  inline bool isStuck(unsigned long long bound) const {
+    if (depth == 0)
+      return false;
+    return isCycled(bound) && klee::util::ulog2(depth) > bound;
+  }
+
+  bool isCoveredNew() const {
+    return !coveredNew.empty() && coveredNew.back()->value;
+  }
+  bool isCoveredNewError() const { return coveredNewError->value; }
+  void coverNew() const {
+    coveredNew.push_back(new box<bool>(true));
+    coveredNewError->value = false;
+    coveredNewError = new box<bool>(true);
+  }
+  void updateCoveredNew() const {
+    while (!coveredNew.empty() && !coveredNew.front()->value) {
+      coveredNew.pop_front();
+    }
+  }
+  void clearCoveredNew() const {
+    for (auto signal : coveredNew) {
+      signal->value = false;
+    }
+    coveredNew.clear();
+  }
+  void clearCoveredNewError() const { coveredNewError->value = false; }
 };
 
 struct ExecutionStateIDCompare {

@@ -1,4 +1,5 @@
 #include "klee/Expr/SourceBuilder.h"
+#include "klee/ADT/SparseStorage.h"
 #include "klee/Expr/Expr.h"
 #include "klee/Expr/SymbolicSource.h"
 #include "klee/Module/KModule.h"
@@ -6,23 +7,23 @@
 using namespace klee;
 
 ref<SymbolicSource>
-SourceBuilder::constant(const std::vector<ref<ConstantExpr>> &constantValues) {
+SourceBuilder::constant(SparseStorage<ref<ConstantExpr>> constantValues) {
   ref<SymbolicSource> r(new ConstantSource(constantValues));
   r->computeHash();
   return r;
 }
 
-ref<SymbolicSource> SourceBuilder::symbolicSizeConstant(unsigned defaultValue) {
-  ref<SymbolicSource> r(new SymbolicSizeConstantSource(defaultValue));
+ref<SymbolicSource>
+SourceBuilder::uninitialized(unsigned version, const KInstruction *allocSite) {
+  ref<SymbolicSource> r(new UninitializedSource(version, allocSite));
   r->computeHash();
   return r;
 }
 
-ref<SymbolicSource>
-SourceBuilder::symbolicSizeConstantAddress(unsigned defaultValue,
-                                           unsigned version) {
+ref<SymbolicSource> SourceBuilder::symbolicSizeConstantAddress(
+    unsigned version, const KInstruction *allocSite, ref<Expr> size) {
   ref<SymbolicSource> r(
-      new SymbolicSizeConstantAddressSource(defaultValue, version));
+      new SymbolicSizeConstantAddressSource(version, allocSite, size));
   r->computeHash();
   return r;
 }
@@ -84,6 +85,12 @@ ref<SymbolicSource> SourceBuilder::value(const llvm::Value &_allocSite,
 ref<SymbolicSource> SourceBuilder::irreproducible(const std::string &name) {
   static unsigned id = 0;
   ref<SymbolicSource> r(new IrreproducibleSource(name + llvm::utostr(++id)));
+  r->computeHash();
+  return r;
+}
+
+ref<SymbolicSource> SourceBuilder::alpha(int _index) {
+  ref<SymbolicSource> r(new AlphaSource(_index));
   r->computeHash();
   return r;
 }

@@ -6,7 +6,9 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
+#include "klee/ADT/SparseStorage.h"
 #include "klee/Config/config.h"
+#include "llvm/Support/Casting.h"
 #ifdef ENABLE_Z3
 #include "Z3Builder.h"
 
@@ -30,14 +32,14 @@ using namespace klee;
 namespace klee {
 
 // Declared here rather than `Z3Builder.h` so they can be called in gdb.
-template <> void Z3NodeHandle<Z3_sort>::dump() {
+template <> void Z3NodeHandle<Z3_sort>::dump() const {
   llvm::errs() << "Z3SortHandle:\n"
                << ::Z3_sort_to_string(context, node) << "\n";
 }
 template <> unsigned Z3NodeHandle<Z3_sort>::hash() {
   return Z3_get_ast_hash(context, as_ast());
 }
-template <> void Z3NodeHandle<Z3_ast>::dump() {
+template <> void Z3NodeHandle<Z3_ast>::dump() const {
   llvm::errs() << "Z3ASTHandle:\n"
                << ::Z3_ast_to_string(context, as_ast()) << "\n";
 }
@@ -252,35 +254,62 @@ Z3ASTHandle Z3Builder::getInitialArray(const Array *root) {
     // using the size of the array hash as a counter.
     std::string unique_id = llvm::utostr(_arr_hash._array_hash.size());
     std::string unique_name = root->getIdentifier() + unique_id;
-    if (ref<SymbolicSizeConstantSource> symbolicSizeConstantSource =
-            dyn_cast<SymbolicSizeConstantSource>(root->source)) {
+
+    auto source = dyn_cast<ConstantSource>(root->source);
+    auto value = (source ? source->constantValues.defaultV() : nullptr);
+    if (source) {
+      assert(value);
+    }
+
+    if (source && !isa<ConstantExpr>(root->size)) {
       array_expr = buildConstantArray(unique_name.c_str(), root->getDomain(),
-                                      root->getRange(),
-                                      symbolicSizeConstantSource->defaultValue);
+                                      root->getRange(), value->getZExtValue(8));
     } else {
       array_expr =
           buildArray(unique_name.c_str(), root->getDomain(), root->getRange());
     }
 
-    if (root->isConstantArray() && constant_array_assertions.count(root) == 0) {
-      std::vector<Z3ASTHandle> array_assertions;
-      if (ref<ConstantSource> constantSource =
-              dyn_cast<ConstantSource>(root->source)) {
-        for (unsigned i = 0, e = constantSource->constantValues.size(); i != e;
-             ++i) {
+    if (source) {
+      if (auto constSize = dyn_cast<ConstantExpr>(root->size)) {
+        std::vector<Z3ASTHandle> array_assertions;
+        for (size_t i = 0; i < constSize->getZExtValue(); i++) {
+          auto value = source->constantValues.load(i);
           // construct(= (select i root) root->value[i]) to be asserted in
           // Z3Solver.cpp
           int width_out;
-          Z3ASTHandle array_value =
-              construct(constantSource->constantValues[i], &width_out);
+          Z3ASTHandle array_value = construct(value, &width_out);
           assert(width_out == (int)root->getRange() &&
                  "Value doesn't match root range");
           array_assertions.push_back(
               eqExpr(readExpr(array_expr, bvConst32(root->getDomain(), i)),
                      array_value));
         }
+        constant_array_assertions[root] = std::move(array_assertions);
+      } else {
+        if (auto storage =
+                llvm::dyn_cast<SparseStorage_RegularMap<ref<ConstantExpr>>>(
+                    source->constantValues.storage())) {
+          for (const auto &[index, value] : storage->getMap()) {
+            int width_out;
+            Z3ASTHandle array_value = construct(value, &width_out);
+            assert(width_out == (int)root->getRange() &&
+                   "Value doesn't match root range");
+            array_expr = writeExpr(
+                array_expr, bvConst32(root->getDomain(), index), array_value);
+          }
+        } else if (auto storage = llvm::dyn_cast<
+                       SparseStorage_PersistentMap<ref<ConstantExpr>>>(
+                       source->constantValues.storage())) {
+          for (const auto &[index, value] : storage->getMap()) {
+            int width_out;
+            Z3ASTHandle array_value = construct(value, &width_out);
+            assert(width_out == (int)root->getRange() &&
+                   "Value doesn't match root range");
+            array_expr = writeExpr(
+                array_expr, bvConst32(root->getDomain(), index), array_value);
+          }
+        }
       }
-      constant_array_assertions[root] = std::move(array_assertions);
     }
 
     _arr_hash.hashArrayExpr(root, array_expr);

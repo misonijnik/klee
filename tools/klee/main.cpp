@@ -15,7 +15,7 @@
 #include "klee/Core/Context.h"
 #include "klee/Core/Interpreter.h"
 #include "klee/Core/TargetedExecutionReporter.h"
-#include "klee/Expr/Expr.h"
+#include "klee/Module/LocationInfo.h"
 #include "klee/Module/SarifReport.h"
 #include "klee/Module/TargetForest.h"
 #include "klee/Solver/SolverCmdLine.h"
@@ -34,9 +34,8 @@ DISABLE_WARNING_DEPRECATED_DECLARATIONS
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instruction.h"
-#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Support/CommandLine.h"
@@ -52,8 +51,8 @@ DISABLE_WARNING_DEPRECATED_DECLARATIONS
 #include "llvm/Support/TargetSelect.h"
 DISABLE_WARNING_POP
 
+#include <csignal>
 #include <dirent.h>
-#include <signal.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <thread>
@@ -88,6 +87,11 @@ cl::opt<bool>
     WriteNone("write-no-tests", cl::init(false),
               cl::desc("Do not generate any test files (default=false)"),
               cl::cat(TestCaseCat));
+
+cl::opt<bool> WriteKTests(
+    "write-ktests", cl::init(true),
+    cl::desc("Write .ktest files for each test case (default=true)"),
+    cl::cat(TestCaseCat));
 
 cl::opt<bool>
     WriteCVCs("write-cvcs",
@@ -341,10 +345,30 @@ cl::opt<bool> Libcxx(
     "libcxx",
     cl::desc("Link the llvm libc++ library into the bitcode (default=false)"),
     cl::init(false), cl::cat(LinkCat));
+
+cl::OptionCategory
+    TestCompCat("Options specific to Test-Comp",
+                "These are options specific to the Test-Comp competition.");
+
+cl::opt<bool> WriteXMLTests("write-xml-tests",
+                            cl::desc("Write XML-formated tests"),
+                            cl::init(false), cl::cat(TestCompCat));
+
+cl::opt<std::string>
+    XMLMetadataProgramFile("xml-metadata-programfile",
+                           cl::desc("Original file name for xml metadata"),
+                           cl::cat(TestCompCat));
+
+cl::opt<std::string> XMLMetadataProgramHash(
+    "xml-metadata-programhash",
+    llvm::cl::desc("Test-Comp hash sum of original file for xml metadata"),
+    llvm::cl::cat(TestCompCat));
+
 } // namespace
 
 namespace klee {
 extern cl::opt<std::string> MaxTime;
+extern cl::opt<std::string> FunctionCallReproduce;
 class ExecutionState;
 } // namespace klee
 
@@ -384,12 +408,16 @@ public:
   void processTestCase(const ExecutionState &state, const char *message,
                        const char *suffix, bool isError = false);
 
+  void writeTestCaseXML(bool isError, const KTest &out, unsigned id,
+                        unsigned version = 0);
+
   std::string getOutputFilename(const std::string &filename);
   std::unique_ptr<llvm::raw_fd_ostream>
   openOutputFile(const std::string &filename);
-  std::string getTestFilename(const std::string &suffix, unsigned id);
-  std::unique_ptr<llvm::raw_fd_ostream> openTestFile(const std::string &suffix,
-                                                     unsigned id);
+  std::string getTestFilename(const std::string &suffix, unsigned id,
+                              unsigned version = 0);
+  std::unique_ptr<llvm::raw_fd_ostream>
+  openTestFile(const std::string &suffix, unsigned id, unsigned version = 0);
 
   // load a .path file
   static void loadPathFile(std::string name, std::vector<bool> &buffer);
@@ -530,11 +558,14 @@ KleeHandler::openOutputFile(const std::string &filename) {
   return f;
 }
 
-std::string KleeHandler::getTestFilename(const std::string &suffix,
-                                         unsigned id) {
+std::string KleeHandler::getTestFilename(const std::string &suffix, unsigned id,
+                                         unsigned version) {
   std::stringstream filename;
-  filename << "test" << std::setfill('0') << std::setw(6) << id << '.'
-           << suffix;
+  filename << "test" << std::setfill('0') << std::setw(6) << id;
+  if (version) {
+    filename << '_' << version;
+  }
+  filename << '.' << suffix;
   return filename.str();
 }
 
@@ -543,8 +574,9 @@ SmallString<128> KleeHandler::getOutputDirectory() const {
 }
 
 std::unique_ptr<llvm::raw_fd_ostream>
-KleeHandler::openTestFile(const std::string &suffix, unsigned id) {
-  return openOutputFile(getTestFilename(suffix, id));
+KleeHandler::openTestFile(const std::string &suffix, unsigned id,
+                          unsigned version) {
+  return openOutputFile(getTestFilename(suffix, id, version));
 }
 
 /* Outputs all files (.ktest, .kquery, .cov etc.) describing a test case */
@@ -552,7 +584,9 @@ void KleeHandler::processTestCase(const ExecutionState &state,
                                   const char *message, const char *suffix,
                                   bool isError) {
   unsigned id = ++m_numTotalTests;
-  if (!WriteNone) {
+  if (!WriteNone &&
+      (FunctionCallReproduce == "" || strcmp(suffix, "assert.err") == 0 ||
+       strcmp(suffix, "reachable.err") == 0)) {
     KTest ktest;
     ktest.numArgs = m_argc;
     ktest.args = m_argv;
@@ -565,27 +599,39 @@ void KleeHandler::processTestCase(const ExecutionState &state,
       klee_warning("unable to get symbolic solution, losing test case");
 
     const auto start_time = time::getWallTime();
+    bool atLeastOneGenerated = false;
 
     if (success) {
-      if (!kTest_toFile(
-              &ktest,
-              getOutputFilename(getTestFilename("ktest", id)).c_str())) {
-        klee_warning("unable to write output test case, losing it");
-      } else {
-        ++m_numGeneratedTests;
+      if (WriteKTests) {
+        for (unsigned i = 0; i < ktest.uninitCoeff + 1; ++i) {
+          if (!kTest_toFile(
+                  &ktest,
+                  getOutputFilename(getTestFilename("ktest", id, i)).c_str())) {
+            klee_warning("unable to write output test case, losing it");
+          } else {
+            atLeastOneGenerated = true;
+          }
+        }
+
+        if (WriteStates) {
+          auto f = openTestFile("state", id);
+          m_interpreter->logState(state, id, f);
+        }
       }
 
-      if (WriteStates) {
-        auto f = openTestFile("state", id);
-        m_interpreter->logState(state, id, f);
+      if (WriteXMLTests) {
+        for (unsigned i = 0; i < ktest.uninitCoeff + 1; ++i) {
+          writeTestCaseXML(message != nullptr, ktest, id, i);
+          atLeastOneGenerated = true;
+        }
       }
-    }
 
-    for (unsigned i = 0; i < ktest.numObjects; i++) {
-      delete[] ktest.objects[i].bytes;
-      delete[] ktest.objects[i].pointers;
+      for (unsigned i = 0; i < ktest.numObjects; i++) {
+        delete[] ktest.objects[i].bytes;
+        delete[] ktest.objects[i].pointers;
+      }
+      delete[] ktest.objects;
     }
-    delete[] ktest.objects;
 
     if (message) {
       auto f = openTestFile(suffix, id);
@@ -615,6 +661,10 @@ void KleeHandler::processTestCase(const ExecutionState &state,
           *f << branch << '\n';
         }
       }
+    }
+
+    if (atLeastOneGenerated) {
+      ++m_numGeneratedTests;
     }
 
     if (m_numGeneratedTests == MaxTests)
@@ -663,13 +713,13 @@ void KleeHandler::processTestCase(const ExecutionState &state,
   }
 
   if (WriteCov) {
-    std::map<const std::string *, std::set<unsigned>> cov;
+    std::map<std::string, std::set<unsigned>> cov;
     m_interpreter->getCoveredLines(state, cov);
     auto f = openTestFile("cov", id);
     if (f) {
       for (const auto &entry : cov) {
         for (const auto &line : entry.second) {
-          *f << *entry.first << ':' << line << '\n';
+          *f << entry.first << ':' << line << '\n';
         }
       }
     }
@@ -679,6 +729,66 @@ void KleeHandler::processTestCase(const ExecutionState &state,
     m_interpreter->prepareForEarlyExit();
     klee_error("EXITING ON ERROR:\n%s\n", message);
   }
+}
+
+void KleeHandler::writeTestCaseXML(bool isError, const KTest &assignments,
+                                   unsigned id, unsigned version) {
+
+  // TODO: This is super specific to test-comp and assumes that the name is the
+  // type information
+  auto file = openTestFile("xml", id, version);
+  if (!file)
+    return;
+
+  *file << "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n";
+  *file << "<!DOCTYPE testcase PUBLIC \"+//IDN sosy-lab.org//DTD test-format "
+           "testcase 1.0//EN\" "
+           "\"https://sosy-lab.org/test-format/testcase-1.0.dtd\">\n";
+  *file << "<testcase";
+  if (isError)
+    *file << " coversError=\"true\"";
+  *file << ">\n";
+  for (unsigned i = 0; i < assignments.numObjects; i++) {
+    auto item = assignments.objects[i];
+    std::string name(item.name);
+
+    *file << "\t<input variable=\"" << name << "\" ";
+    *file << "type =\"";
+    // print type of the input
+    *file << item.name;
+    *file << "\">";
+    // Ignore the type
+    auto type_size_bytes = item.numBytes * 8;
+    llvm::APInt v(type_size_bytes, 0, false);
+    for (int i = item.numBytes - 1; i >= 0; i--) {
+      v <<= 8;
+      v |= item.bytes[i];
+    }
+    // print value
+
+    // Check if this is an unsigned type
+    if (name.find("u") == 0) {
+      v.print(*file, false);
+    } else if (name.rfind("*") != std::string::npos) {
+      // Pointer types
+      v.print(*file, false);
+    } else if (name.find("float") == 0) {
+      llvm::APFloat(APFloatBase::IEEEhalf(), v).print(*file);
+    } else if (name.find("double") == 0) {
+      llvm::APFloat(APFloatBase::IEEEdouble(), v).print(*file);
+    } else if (name.rfind("_t") != std::string::npos) {
+      // arbitrary type, e.g. sector_t
+      v.print(*file, false);
+    } else if (name.find("_") == 0) {
+      // _Bool
+      v.print(*file, false);
+    } else {
+      // the rest must be signed
+      v.print(*file, true);
+    }
+    *file << "</input>\n";
+  }
+  *file << "</testcase>\n";
 }
 
 // load a .path file
@@ -1112,22 +1222,6 @@ static void halt_via_gdb(int pid) {
     perror("system");
 }
 
-static void replaceOrRenameFunction(llvm::Module *module, const char *old_name,
-                                    const char *new_name) {
-  Function *new_function, *old_function;
-  new_function = module->getFunction(new_name);
-  old_function = module->getFunction(old_name);
-  if (old_function) {
-    if (new_function) {
-      old_function->replaceAllUsesWith(new_function);
-      old_function->eraseFromParent();
-    } else {
-      old_function->setName(new_name);
-      assert(old_function->getName() == new_name);
-    }
-  }
-}
-
 static void
 createLibCWrapper(std::vector<std::unique_ptr<llvm::Module>> &userModules,
                   std::vector<std::unique_ptr<llvm::Module>> &libsModules,
@@ -1204,7 +1298,7 @@ createLibCWrapper(std::vector<std::unique_ptr<llvm::Module>> &userModules,
 }
 
 static void
-linkWithUclibc(StringRef libDir, std::string opt_suffix,
+linkWithUclibc(StringRef libDir, std::string bit_suffix, std::string opt_suffix,
                std::vector<std::unique_ptr<llvm::Module>> &userModules,
                std::vector<std::unique_ptr<llvm::Module>> &libsModules) {
   LLVMContext &ctx = userModules[0]->getContext();
@@ -1221,7 +1315,17 @@ linkWithUclibc(StringRef libDir, std::string opt_suffix,
 
   // Ensure that klee-uclibc exists
   SmallString<128> uclibcBCA(libDir);
-  llvm::sys::path::append(uclibcBCA, KLEE_UCLIBC_BCA_NAME);
+  // Hack to find out bitness of .bc file
+
+  if (bit_suffix == "64") {
+    llvm::sys::path::append(uclibcBCA, KLEE_UCLIBC_BCA_64_NAME);
+  } else if (bit_suffix == "32") {
+    llvm::sys::path::append(uclibcBCA, KLEE_UCLIBC_BCA_32_NAME);
+  } else {
+    klee_error("Cannot determine bitness of source file from the name %s",
+               uclibcBCA.c_str());
+  }
+
   if (!klee::loadFileAsOneModule(uclibcBCA.c_str(), ctx, libsModules, errorMsg))
     klee_error("Cannot find klee-uclibc '%s': %s", uclibcBCA.c_str(),
                errorMsg.c_str());
@@ -1268,6 +1372,47 @@ static int run_klee_on_function(int pArgc, char **pArgv, char **pEnvp,
   }
 
   auto startTime = std::time(nullptr);
+
+  if (WriteXMLTests) {
+    // Write metadata.xml
+    auto meta_file = handler->openOutputFile("metadata.xml");
+    if (!meta_file)
+      klee_error("Could not write metadata.xml");
+
+    *meta_file
+        << "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n";
+    *meta_file
+        << "<!DOCTYPE test-metadata PUBLIC \"+//IDN sosy-lab.org//DTD "
+           "test-format test-metadata 1.0//EN\" "
+           "\"https://sosy-lab.org/test-format/test-metadata-1.0.dtd\">\n";
+    *meta_file << "<test-metadata>\n";
+    *meta_file << "\t<sourcecodelang>C</sourcecodelang>\n";
+    *meta_file << "\t<producer>" << PACKAGE_STRING << "</producer>\n";
+
+    // Assume with early exit a bug finding mode and otherwise coverage
+    if (OptExitOnError)
+      *meta_file << "\t<specification>COVER( init(main()), FQL(COVER "
+                    "EDGES(@CALL(__VERIFIER_error))) )</specification>\n";
+    else
+      *meta_file << "\t<specification>COVER( init(main()), FQL(COVER "
+                    "EDGES(@DECISIONEDGE)) )</specification>\n";
+
+    // Assume the input file resembles the original source file; just exchange
+    // extension
+    *meta_file << "\t<programfile>" << XMLMetadataProgramFile
+               << ".c</programfile>\n";
+    *meta_file << "\t<programhash>" << XMLMetadataProgramHash
+               << "</programhash>\n";
+    *meta_file << "\t<entryfunction>" << EntryPoint << "</entryfunction>\n";
+    *meta_file << "\t<architecture>"
+               << finalModule->getDataLayout().getPointerSizeInBits()
+               << "bit</architecture>\n";
+    std::stringstream t;
+    t << std::put_time(std::localtime(&startTime), "%Y-%m-%dT%H:%M:%SZ");
+    *meta_file << "\t<creationtime>" << t.str() << "</creationtime>\n";
+    *meta_file << "</test-metadata>\n";
+  }
+
   { // output clock info and start time
     std::stringstream startInfo;
     startInfo << time::getClockInfo() << "Started: "
@@ -1543,13 +1688,19 @@ int main(int argc, char **argv, char **envp) {
   }
 
   llvm::Module *mainModule = loadedUserModules.front().get();
-  std::unique_ptr<InstructionInfoTable> origInfos;
-  std::unique_ptr<llvm::raw_fd_ostream> assemblyFS;
+  FLCtoOpcode origInstructions;
 
   if (UseGuidedSearch == Interpreter::GuidanceKind::ErrorGuidance) {
+    for (const auto &Func : *mainModule) {
+      for (const auto &instr : llvm::instructions(Func)) {
+        auto locationInfo = getLocationInfo(&instr);
+        origInstructions[locationInfo.file][locationInfo.line]
+                        [locationInfo.column]
+                            .insert(instr.getOpcode());
+      }
+    }
+
     std::vector<llvm::Type *> args;
-    origInfos = std::make_unique<InstructionInfoTable>(
-        *mainModule, std::move(assemblyFS), true);
     args.push_back(llvm::Type::getInt32Ty(ctx)); // argc
     args.push_back(llvm::PointerType::get(
         Type::getInt8PtrTy(ctx),
@@ -1568,15 +1719,16 @@ int main(int argc, char **argv, char **envp) {
     EntryPoint = stubEntryPoint;
   }
 
-  std::unordered_set<std::string> mainModuleFunctions;
+  std::set<std::string> mainModuleFunctions;
   for (auto &Function : *mainModule) {
     if (!Function.isDeclaration()) {
       mainModuleFunctions.insert(Function.getName().str());
     }
   }
-  std::unordered_set<std::string> mainModuleGlobals;
-  for (const auto &gv : mainModule->globals())
+  std::set<std::string> mainModuleGlobals;
+  for (const auto &gv : mainModule->globals()) {
     mainModuleGlobals.insert(gv.getName().str());
+  }
 
   const std::string &module_triple = mainModule->getTargetTriple();
   std::string host_triple = llvm::sys::getDefaultTargetTriple();
@@ -1587,16 +1739,16 @@ int main(int argc, char **argv, char **envp) {
                  module_triple.c_str(), host_triple.c_str());
 
   // Detect architecture
-  std::string opt_suffix = "64"; // Fall back to 64bit
+  std::string bit_suffix = "64"; // Fall back to 64bit
   if (module_triple.find("i686") != std::string::npos ||
       module_triple.find("i586") != std::string::npos ||
       module_triple.find("i486") != std::string::npos ||
       module_triple.find("i386") != std::string::npos ||
       module_triple.find("arm") != std::string::npos)
-    opt_suffix = "32";
+    bit_suffix = "32";
 
   // Add additional user-selected suffix
-  opt_suffix += "_" + RuntimeBuild.getValue();
+  std::string opt_suffix = bit_suffix + "_" + RuntimeBuild.getValue();
 
   if (UseGuidedSearch == Interpreter::GuidanceKind::ErrorGuidance) {
     SimplifyModule = false;
@@ -1728,7 +1880,7 @@ int main(int argc, char **argv, char **envp) {
     break;
   }
   case LibcType::UcLibc:
-    linkWithUclibc(LibraryDir, opt_suffix, loadedUserModules,
+    linkWithUclibc(LibraryDir, bit_suffix, opt_suffix, loadedUserModules,
                    loadedLibsModules);
     break;
   }
@@ -1790,6 +1942,10 @@ int main(int argc, char **argv, char **envp) {
 
   if (UseGuidedSearch == Interpreter::GuidanceKind::ErrorGuidance) {
     paths = parseStaticAnalysisInput();
+  } else if (FunctionCallReproduce != "") {
+    klee_warning("Turns on error-guided mode to cover %s function",
+                 FunctionCallReproduce.c_str());
+    UseGuidedSearch = Interpreter::GuidanceKind::ErrorGuidance;
   }
 
   Interpreter::InterpreterOptions IOpts(paths);
@@ -1810,8 +1966,9 @@ int main(int argc, char **argv, char **envp) {
   // locale and other data and then calls main.
 
   auto finalModule = interpreter->setModule(
-      loadedUserModules, loadedLibsModules, Opts, mainModuleFunctions,
-      mainModuleGlobals, std::move(origInfos));
+      loadedUserModules, loadedLibsModules, Opts,
+      std::move(mainModuleFunctions), std::move(mainModuleGlobals),
+      std::move(origInstructions));
 
   externalsAndGlobalsCheck(finalModule);
   if (InteractiveMode) {

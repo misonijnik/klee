@@ -10,16 +10,17 @@
 #ifndef KLEE_KINSTRUCTION_H
 #define KLEE_KINSTRUCTION_H
 
+#include "KModule.h"
 #include "klee/Config/Version.h"
-#include "klee/Module/InstructionInfoTable.h"
-
 #include "klee/Support/CompilerWarning.h"
+#include "llvm/IR/Argument.h"
 DISABLE_WARNING_PUSH
 DISABLE_WARNING_DEPRECATED_DECLARATIONS
 #include "llvm/Support/DataTypes.h"
 #include "llvm/Support/raw_ostream.h"
 DISABLE_WARNING_POP
 
+#include <unordered_map>
 #include <vector>
 
 namespace llvm {
@@ -28,34 +29,98 @@ class Instruction;
 
 namespace klee {
 class Executor;
-struct InstructionInfo;
 class KModule;
 struct KBlock;
+struct KFunction;
+
+static const unsigned MAGIC_HASH_CONSTANT = 39;
 
 /// KInstruction - Intermediate instruction representation used
 /// during execution.
 struct KInstruction {
+
+  struct Index {
+    unsigned long instID;
+    unsigned long blockID;
+    unsigned long funcID;
+
+    bool operator==(const Index &other) const {
+      return std::tie(instID, blockID, funcID) ==
+             std::tie(other.instID, other.blockID, other.funcID);
+    }
+
+    bool operator<(const Index &other) const {
+      return std::tie(instID, blockID, funcID) <
+             std::tie(other.instID, other.blockID, other.funcID);
+    }
+
+    unsigned hash() const {
+      unsigned res = instID;
+      res = res * MAGIC_HASH_CONSTANT + blockID;
+      res = res * MAGIC_HASH_CONSTANT + funcID;
+      return res;
+    }
+
+    void print(llvm::raw_ostream &os) const {
+      os << "[" << instID << ", " << blockID << ", " << funcID << "]";
+    }
+  };
+
   llvm::Instruction *inst;
-  const InstructionInfo *info;
 
   /// Value numbers for each operand. -1 is an invalid value,
   /// otherwise negative numbers are indices (negated and offset by
   /// 2) into the module constant table and positive numbers are
   /// register indices.
   int *operands;
-  /// Destination register index.
-  unsigned dest;
   KBlock *parent;
 
+private:
   // Instruction index in the basic block
-  unsigned index;
+  const unsigned globalIndex;
 
 public:
-  KInstruction() = default;
-  explicit KInstruction(const KInstruction &ki);
+  /// Unique index for KFunction and KInstruction inside KModule
+  /// from 0 to [KFunction + KInstruction]
+  [[nodiscard]] unsigned getGlobalIndex() const;
+  /// Instruction index in the basic block
+  [[nodiscard]] unsigned getIndex() const;
+  /// Destination register index.
+  [[nodiscard]] unsigned getDest() const;
+
+  KInstruction(const std::unordered_map<llvm::Instruction *, unsigned>
+                   &_instructionToRegisterMap,
+               llvm::Instruction *_inst, KModule *_km, KBlock *_kb,
+               unsigned &_globalIndexInc);
+
+  KInstruction() = delete;
+  explicit KInstruction(const KInstruction &ki) = delete;
   virtual ~KInstruction();
   std::string getSourceLocation() const;
-  std::string toString() const;
+
+  [[nodiscard]] size_t getLine() const;
+  [[nodiscard]] size_t getColumn() const;
+  [[nodiscard]] std::string getSourceFilepath() const;
+  Index getID() const;
+
+  [[nodiscard]] std::string getSourceLocationString() const;
+  [[nodiscard]] std::string toString() const;
+  bool operator==(const KInstruction &other) const {
+    return getID() == other.getID();
+  }
+
+  [[nodiscard]] inline KBlock *getKBlock() const { return parent; }
+  [[nodiscard]] inline KFunction *getKFunction() const {
+    return getKBlock()->parent;
+  }
+  bool operator<(const KInstruction &other) const {
+    return getID() < other.getID();
+  }
+  [[nodiscard]] inline KModule *getKModule() const {
+    return getKFunction()->parent;
+  }
+
+  unsigned hash() const { return getID().hash(); }
 };
 
 struct KGEPInstruction : KInstruction {
@@ -70,8 +135,14 @@ struct KGEPInstruction : KInstruction {
   uint64_t offset;
 
 public:
-  KGEPInstruction() = default;
-  explicit KGEPInstruction(const KGEPInstruction &ki);
+  KGEPInstruction(const std::unordered_map<llvm::Instruction *, unsigned>
+                      &_instructionToRegisterMap,
+                  llvm::Instruction *_inst, KModule *_km, KBlock *_kb,
+                  unsigned &_globalIndexInc)
+      : KInstruction(_instructionToRegisterMap, _inst, _km, _kb,
+                     _globalIndexInc) {}
+  KGEPInstruction() = delete;
+  explicit KGEPInstruction(const KGEPInstruction &ki) = delete;
 };
 } // namespace klee
 

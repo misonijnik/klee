@@ -385,19 +385,16 @@ public:
   void printSource(ref<SymbolicSource> source, PrintContext &PC) {
     PC << "(";
     PC << source->getName() << " ";
+
     if (auto s = dyn_cast<ConstantSource>(source)) {
-      PC << " [";
-      for (unsigned i = 0; i < s->constantValues.size(); i++) {
-        PC << s->constantValues[i];
-        if (i != s->constantValues.size() - 1) {
-          PC << " ";
-        }
-      }
-      PC << "]";
-    } else if (auto s = dyn_cast<SymbolicSizeConstantSource>(source)) {
-      PC << s->defaultValue;
+      s->constantValues.print(PC.getStream(), Density::Sparse);
     } else if (auto s = dyn_cast<SymbolicSizeConstantAddressSource>(source)) {
-      PC << s->defaultValue << " " << s->version;
+      PC << s->version << " ";
+      s->allocSite->getID().print(PC.getStream());
+      PC << " " << s->size;
+    } else if (auto s = dyn_cast<UninitializedSource>(source)) {
+      PC << s->version << " ";
+      s->allocSite->getID().print(PC.getStream());
     } else if (auto s = dyn_cast<MakeSymbolicSource>(source)) {
       PC << s->name << " " << s->version;
     } else if (auto s = dyn_cast<LazyInitializationSource>(source)) {
@@ -409,10 +406,12 @@ public:
       auto kf = s->km->functionMap.at(s->allocSite.getFunction());
       auto ki = kf->instructionMap.at(&s->allocSite);
       auto kb = ki->parent;
-      PC << ki->index << " " << kb->getLabel() << " " << kf->getName().str()
-         << " " << s->index;
+      PC << ki->getIndex() << " " << kb->getLabel() << " "
+         << kf->getName().str() << " " << s->index;
     } else if (auto s = dyn_cast<IrreproducibleSource>(source)) {
       PC << s->name;
+    } else if (auto s = dyn_cast<AlphaSource>(source)) {
+      PC << s->index;
     } else {
       assert(0 && "Not implemented");
     }

@@ -104,6 +104,7 @@ public:
   void setCoreSolverTimeout(time::Span timeout) override {
     this->timeout = timeout;
   }
+  void notifyStateTermination(std::uint32_t id) override {}
 
   bool computeTruth(const Query &, bool &isValid) override;
   bool computeValue(const Query &, ref<Expr> &result) override;
@@ -391,7 +392,7 @@ runAndGetCexForked(::VC vc, STPBuilder *builder, ::VCExpr q,
       values.reserve(objects.size());
       for (unsigned idx = 0; idx < objects.size(); ++idx) {
         uint64_t objectSize = shared_memory_object_sizes[idx];
-        values.emplace_back(objectSize, 0);
+        values.emplace_back(0);
         values.back().store(0, pos, pos + objectSize);
         pos += objectSize;
       }

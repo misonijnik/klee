@@ -60,7 +60,7 @@ extern llvm::cl::opt<std::string> TimerInterval;
 
 extern llvm::cl::opt<unsigned long long> MaxCycles;
 
-class CodeGraphDistance;
+class CodeGraphInfo;
 
 class TargetedHaltsOnTraces {
   using HaltTypeToConfidence =
@@ -96,12 +96,6 @@ private:
   using StatesSet = std::unordered_set<ExecutionState *>;
   using TargetToStateUnorderedSetMap = TargetHashMap<StatesSet>;
 
-  using Instructions = std::unordered_map<
-      std::string,
-      std::unordered_map<
-          unsigned int,
-          std::unordered_map<unsigned int, std::unordered_set<unsigned int>>>>;
-
   std::unordered_set<std::string> brokenTraces;
   std::unordered_set<std::string> reportedTraces;
 
@@ -116,7 +110,7 @@ private:
   KFunction *tryResolveEntryFunction(const Result &result,
                                      LocationToBlocks &locToBlocks) const;
 
-  CodeGraphDistance &codeGraphDistance;
+  CodeGraphInfo &codeGraphInfo;
   TargetManager &targetManager;
   StatesSet localStates;
 
@@ -127,9 +121,9 @@ public:
     }
   };
 
-  explicit TargetedExecutionManager(CodeGraphDistance &codeGraphDistance_,
+  explicit TargetedExecutionManager(CodeGraphInfo &codeGraphInfo_,
                                     TargetManager &targetManager_)
-      : codeGraphDistance(codeGraphDistance_), targetManager(targetManager_) {}
+      : codeGraphInfo(codeGraphInfo_), targetManager(targetManager_) {}
   ~TargetedExecutionManager() = default;
   std::map<KFunction *, ref<TargetForest>, KFunctionLess>
   prepareTargets(KModule *kmodule, SarifReport paths);

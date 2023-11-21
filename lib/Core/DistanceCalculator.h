@@ -11,13 +11,14 @@
 #define KLEE_DISTANCE_CALCULATOR_H
 
 #include "ExecutionState.h"
+#include "klee/Module/CodeGraphInfo.h"
 
 namespace llvm {
 class BasicBlock;
 } // namespace llvm
 
 namespace klee {
-class CodeGraphDistance;
+class CodeGraphInfo;
 class Target;
 
 enum WeightResult : std::uint8_t {
@@ -45,8 +46,8 @@ struct DistanceResult {
 
 class DistanceCalculator {
 public:
-  explicit DistanceCalculator(CodeGraphDistance &codeGraphDistance_)
-      : codeGraphDistance(codeGraphDistance_) {}
+  explicit DistanceCalculator(CodeGraphInfo &codeGraphInfo_)
+      : codeGraphInfo(codeGraphInfo_) {}
 
   DistanceResult getDistance(const ExecutionState &es, KBlock *target);
 
@@ -97,7 +98,7 @@ private:
 
   using StatesSet = std::unordered_set<ExecutionState *>;
 
-  CodeGraphDistance &codeGraphDistance;
+  CodeGraphInfo &codeGraphInfo;
   TargetToSpeculativeStateToDistanceResultMap distanceResultCache;
   StatesSet localStates;
 
@@ -107,22 +108,14 @@ private:
                                  KBlock *target) const;
 
   bool distanceInCallGraph(KFunction *kf, KBlock *kb, unsigned int &distance,
-                           const std::unordered_map<KFunction *, unsigned int>
-                               &distanceToTargetFunction,
-                           KBlock *target) const;
-  bool distanceInCallGraph(KFunction *kf, KBlock *kb, unsigned int &distance,
-                           const std::unordered_map<KFunction *, unsigned int>
-                               &distanceToTargetFunction,
+                           const FunctionDistanceMap &distanceToTargetFunction,
                            KBlock *target, bool strictlyAfterKB) const;
 
-  WeightResult tryGetLocalWeight(KBlock *kb, weight_type &weight,
-                                 const std::vector<KBlock *> &localTargets,
-                                 KBlock *target) const;
   WeightResult
-  tryGetPreTargetWeight(KBlock *kb, weight_type &weight,
-                        const std::unordered_map<KFunction *, unsigned int>
-                            &distanceToTargetFunction,
-                        KBlock *target) const;
+  tryGetLocalWeight(KBlock *kb, weight_type &weight,
+                    const std::vector<KBlock *> &localTargets) const;
+  WeightResult tryGetPreTargetWeight(KBlock *kb, weight_type &weight,
+                                     KBlock *target) const;
   WeightResult tryGetTargetWeight(KBlock *kb, weight_type &weight,
                                   KBlock *target) const;
   WeightResult tryGetPostTargetWeight(KBlock *kb, weight_type &weight,
