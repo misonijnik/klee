@@ -3337,6 +3337,18 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     BitCastInst *bc = cast<BitCastInst>(ki->inst);
 
     llvm::Type *castToType = bc->getType();
+
+    if (X86FPAsX87FP80 && result->getWidth() == Expr::Fl80 &&
+        Context::get().getPointerWidth() == 32) {
+      Expr::Width width = getWidthForLLVMType(castToType);
+      result = ZExtExpr::create(result, width);
+    }
+
+    if (X86FPAsX87FP80 && castToType->isFloatingPointTy() &&
+        Context::get().getPointerWidth() == 32) {
+      result = FPToX87FP80Ext(result);
+    }
+
     if (castToType->isPointerTy()) {
       castToType = castToType->getPointerElementType();
     }
@@ -3717,6 +3729,9 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     ref<Expr> result = arg;
     if (arg->getWidth() > resultType)
       result = FPTruncExpr::create(arg, resultType, state.roundingMode);
+    if (X86FPAsX87FP80 && Context::get().getPointerWidth() == 32) {
+      result = FPToX87FP80Ext(result);
+    }
     bindLocal(ki, state, result);
     break;
   }
@@ -3731,6 +3746,9 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     if (arg->getWidth() < resultType) {
       // return terminateStateOnExecError(state, "Invalid FPExt");
       result = FPExtExpr::create(arg, resultType);
+    }
+    if (X86FPAsX87FP80 && Context::get().getPointerWidth() == 32) {
+      result = FPToX87FP80Ext(result);
     }
     bindLocal(ki, state, result);
     break;

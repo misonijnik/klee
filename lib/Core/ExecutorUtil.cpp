@@ -339,8 +339,21 @@ ref<ConstantExpr> Executor::evalConstantExpr(const llvm::ConstantExpr *ce,
     return op1->LShr(op2);
   case Instruction::AShr:
     return op1->AShr(op2);
-  case Instruction::BitCast:
-    return op1;
+  case Instruction::BitCast: {
+    ref<klee::Expr> result = op1;
+
+    if (X86FPAsX87FP80 && result->getWidth() == Expr::Fl80 &&
+        Context::get().getPointerWidth() == 32) {
+      Expr::Width width = getWidthForLLVMType(ce->getType());
+      result = ZExtExpr::create(result, width);
+    }
+
+    if (X86FPAsX87FP80 && ce->getType()->isFloatingPointTy() &&
+        Context::get().getPointerWidth() == 32) {
+      result = cast<klee::ConstantExpr>(FPToX87FP80Ext(result));
+    }
+    return result;
+  }
 
   case Instruction::IntToPtr:
     return op1->ZExt(getWidthForLLVMType(type));
