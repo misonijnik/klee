@@ -170,6 +170,17 @@ cl::opt<bool>
                                       "and return null (default=false)"),
                              cl::cat(ExecCat));
 
+cl::opt<size_t> OSCopySizeMemoryCheckThreshold(
+    "os-copy-size-mem-check-threshold", cl::init(100000),
+    cl::desc("Check memory usage when this amount of bytes dense OS is copied"),
+    cl::cat(ExecCat));
+
+cl::opt<size_t> StackCopySizeMemoryCheckThreshold(
+    "stack-copy-size-mem-check-threshold", cl::init(100000),
+    cl::desc("Check memory usage when state with stack this big (in bytes) is "
+             "copied"),
+    cl::cat(ExecCat));
+
 enum class MockMutableGlobalsPolicy {
   None,
   PrimitiveFields,
@@ -2645,6 +2656,12 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       Executor::StatePair branches =
           fork(state, cond, ifTrueBlock, ifFalseBlock, BranchType::Conditional);
 
+      if (branches.first && branches.second) {
+        maxNewStateStackSize =
+            std::max(maxNewStateStackSize,
+                     branches.first->stack.stackRegisterSize() * 8);
+      }
+
       // NOTE: There is a hidden dependency here, markBranchVisited
       // requires that we still be in the context of the branch
       // instruction (it reuses its statistic id). Should be cleaned
@@ -4165,7 +4182,10 @@ bool Executor::checkMemoryUsage() {
   // We need to avoid calling GetTotalMallocUsage() often because it
   // is O(elts on freelist). This is really bad since we start
   // to pummel the freelist once we hit the memory cap.
-  if ((stats::instructions & 0xFFFFU) != 0) // every 65536 instructions
+  // every 65536 instructions
+  if ((stats::instructions & 0xFFFFU) != 0 &&
+      maxNewWriteableOSSize < OSCopySizeMemoryCheckThreshold &&
+      maxNewStateStackSize < StackCopySizeMemoryCheckThreshold)
     return true;
 
   // check memory limit
@@ -4503,6 +4523,8 @@ void Executor::executeStep(ExecutionState &state) {
     terminateStateEarly(state, "max-cycles exceeded.",
                         StateTerminationType::MaxCycles);
   } else {
+    maxNewWriteableOSSize = 0;
+    maxNewStateStackSize = 0;
     KInstruction *ki = state.pc;
     stepInstruction(state);
     executeInstruction(state, ki);
@@ -6011,6 +6033,8 @@ void Executor::collectReads(
         !targetType->getRawType()->isPointerTy()) {
       result = makeMockValue(state, "mockGlobalValue", result->getWidth());
       ObjectState *wos = state.addressSpace.getWriteable(mo, os);
+      maxNewWriteableOSSize =
+          std::max(maxNewWriteableOSSize, wos->getSparseStorageEntries());
       wos->write(mo->getOffsetExpr(address), result);
     }
 
@@ -6160,6 +6184,8 @@ void Executor::executeMemoryOperation(
       state->addPointerResolution(address, mo);
       if (isWrite) {
         ObjectState *wos = state->addressSpace.getWriteable(mo, os);
+        maxNewWriteableOSSize =
+            std::max(maxNewWriteableOSSize, wos->getSparseStorageEntries());
         wos->getDynamicType()->handleMemoryAccess(
             targetType, mo->getOffsetExpr(address),
             ConstantExpr::alloc(size, Context::get().getPointerWidth()), true);
@@ -6185,6 +6211,8 @@ void Executor::executeMemoryOperation(
             !targetType->getRawType()->isPointerTy()) {
           result = makeMockValue(*state, "mockGlobalValue", result->getWidth());
           ObjectState *wos = state->addressSpace.getWriteable(mo, os);
+          maxNewWriteableOSSize =
+              std::max(maxNewWriteableOSSize, wos->getSparseStorageEntries());
           wos->write(mo->getOffsetExpr(address), result);
         }
 
@@ -6280,6 +6308,8 @@ void Executor::executeMemoryOperation(
           const ObjectState *os = op.second;
 
           ObjectState *wos = state->addressSpace.getWriteable(mo, os);
+          maxNewWriteableOSSize =
+              std::max(maxNewWriteableOSSize, wos->getSparseStorageEntries());
           if (wos->readOnly) {
             branches =
                 forkInternal(*state, Expr::createIsZero(unboundConditions[i]),
@@ -6349,6 +6379,8 @@ void Executor::executeMemoryOperation(
 
       if (isWrite) {
         ObjectState *wos = bound->addressSpace.getWriteable(mo, os);
+        maxNewWriteableOSSize =
+            std::max(maxNewWriteableOSSize, wos->getSparseStorageEntries());
         wos->getDynamicType()->handleMemoryAccess(
             targetType, mo->getOffsetExpr(address),
             ConstantExpr::alloc(size, Context::get().getPointerWidth()), true);
@@ -6371,6 +6403,8 @@ void Executor::executeMemoryOperation(
             !targetType->getRawType()->isPointerTy()) {
           result = makeMockValue(*bound, "mockGlobalValue", result->getWidth());
           ObjectState *wos = bound->addressSpace.getWriteable(mo, os);
+          maxNewWriteableOSSize =
+              std::max(maxNewWriteableOSSize, wos->getSparseStorageEntries());
           wos->write(mo->getOffsetExpr(address), result);
         }
 
@@ -6560,6 +6594,8 @@ void Executor::updateStateWithSymcretes(ExecutionState &state,
 
     auto wos = new ObjectState(
         *(state.addressSpace.getWriteable(op.first, op.second)));
+    maxNewWriteableOSSize =
+        std::max(maxNewWriteableOSSize, wos->getSparseStorageEntries());
     wos->swapObjectHack(newMO);
     state.addressSpace.unbindObject(op.first);
     state.addressSpace.bindObject(newMO, wos);
@@ -7400,6 +7436,8 @@ void Executor::doImpliedValueConcretization(ExecutionState &state, ref<Expr> e,
         assert(!os->readOnly &&
                "not possible? read only object with static read?");
         ObjectState *wos = state.addressSpace.getWriteable(mo, os);
+        maxNewWriteableOSSize =
+            std::max(maxNewWriteableOSSize, wos->getSparseStorageEntries());
         wos->write(CE, it->second);
       }
     }
