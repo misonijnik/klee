@@ -3,9 +3,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [main, utbot-main]
+    branches: [persistent_object_state]
   push:
-    branches: [main, utbot-main]
+    branches: [persistent_object_state]
 
 # Defaults for building KLEE
 env:
