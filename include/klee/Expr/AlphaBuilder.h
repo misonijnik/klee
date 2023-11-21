@@ -42,4 +42,4 @@ public:
 
 } // namespace klee
 
-#endif /*KLEE_ALPHA_VERSION_BUILDER_H*/
+#endif /*KLEE_ALPHA_BUILDER_H*/
