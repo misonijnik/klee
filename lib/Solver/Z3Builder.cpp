@@ -6,7 +6,9 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
+#include "klee/ADT/SparseStorage.h"
 #include "klee/Config/config.h"
+#include "llvm/Support/Casting.h"
 #ifdef ENABLE_Z3
 #include "Z3Builder.h"
 
@@ -284,13 +286,28 @@ Z3ASTHandle Z3Builder::getInitialArray(const Array *root) {
         }
         constant_array_assertions[root] = std::move(array_assertions);
       } else {
-        for (auto &[index, value] : source->constantValues.storage()) {
-          int width_out;
-          Z3ASTHandle array_value = construct(value, &width_out);
-          assert(width_out == (int)root->getRange() &&
-                 "Value doesn't match root range");
-          array_expr = writeExpr(
-              array_expr, bvConst32(root->getDomain(), index), array_value);
+        if (auto storage =
+                llvm::dyn_cast<SparseStorage_RegularMap<ref<ConstantExpr>>>(
+                    source->constantValues.storage())) {
+          for (const auto &[index, value] : storage->getMap()) {
+            int width_out;
+            Z3ASTHandle array_value = construct(value, &width_out);
+            assert(width_out == (int)root->getRange() &&
+                   "Value doesn't match root range");
+            array_expr = writeExpr(
+                array_expr, bvConst32(root->getDomain(), index), array_value);
+          }
+        } else if (auto storage = llvm::dyn_cast<
+                       SparseStorage_PersistentMap<ref<ConstantExpr>>>(
+                       source->constantValues.storage())) {
+          for (const auto &[index, value] : storage->getMap()) {
+            int width_out;
+            Z3ASTHandle array_value = construct(value, &width_out);
+            assert(width_out == (int)root->getRange() &&
+                   "Value doesn't match root range");
+            array_expr = writeExpr(
+                array_expr, bvConst32(root->getDomain(), index), array_value);
+          }
         }
       }
     }

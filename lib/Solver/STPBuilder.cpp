@@ -575,12 +575,24 @@ ExprHandle STPBuilder::constructActual(ref<Expr> e, int *width_out) {
             dyn_cast<ConstantSource>(re->updates.root->source)) {
       if (!isa<ConstantExpr>(re->updates.root->size)) {
         ref<Expr> selectExpr = constantSource->constantValues.defaultV();
-        for (const auto &[index, value] :
-             constantSource->constantValues.storage()) {
-          selectExpr = SelectExpr::create(
-              EqExpr::create(re->index, ConstantExpr::create(
-                                            index, re->index->getWidth())),
-              value, selectExpr);
+        if (auto storage =
+                llvm::dyn_cast<SparseStorage_RegularMap<ref<ConstantExpr>>>(
+                    source->constantValues.storage())) {
+          for (const auto &[index, value] : storage->getMap()) {
+            selectExpr = SelectExpr::create(
+                EqExpr::create(re->index, ConstantExpr::create(
+                                              index, re->index->getWidth())),
+                value, selectExpr);
+          }
+        } else if (auto storage = llvm::dyn_cast<
+                       SparseStorage_PersistentMap<ref<ConstantExpr>>>(
+                       source->constantValues.storage())) {
+          for (const auto &[index, value] : storage->getMap()) {
+            selectExpr = SelectExpr::create(
+                EqExpr::create(re->index, ConstantExpr::create(
+                                              index, re->index->getWidth())),
+                value, selectExpr);
+          }
         }
         std::vector<const UpdateNode *> update_nodes;
         auto un = re->updates.head.get();

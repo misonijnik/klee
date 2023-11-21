@@ -24,7 +24,7 @@ void Assignment::dump() const {
        ++i) {
     llvm::errs() << (*i).first->getName() << "\n";
     Density d =
-        ((*i).second.storage().size() * 2 < (*i).second.sizeOfSetRange())
+        ((*i).second.storage()->mapSize() * 2 < (*i).second.sizeOfSetRange())
             ? Density::Sparse
             : Density::Dense;
     (*i).second.print(llvm::errs(), d);

@@ -101,7 +101,7 @@ const UpdateList &ObjectState::getUpdates() const {
 
   if (auto sizeExpr = dyn_cast<ConstantExpr>(size)) {
     auto size = sizeExpr->getZExtValue();
-    if (knownSymbolics.storage().size() == size) {
+    if (knownSymbolics.storage()->mapSize() == size) {
       SparseStorage<ref<ConstantExpr>> values(
           ConstantExpr::create(0, Expr::Int8));
       UpdateList symbolicUpdates = UpdateList(nullptr, nullptr);
@@ -136,11 +136,20 @@ const UpdateList &ObjectState::getUpdates() const {
 }
 
 void ObjectState::flushForRead() const {
-  for (const auto &unflushed : unflushedMask.storage()) {
-    auto offset = unflushed.first;
-    auto value = knownSymbolics.load(offset);
-    assert(value);
-    updates.extend(ConstantExpr::create(offset, Expr::Int32), value);
+  if (auto storage = dyn_cast<SparseStorage_RegularMap<bool>>(unflushedMask.storage())) {
+    for (const auto &unflushed : storage->getMap()) {
+      auto offset = unflushed.first;
+      auto value = knownSymbolics.load(offset);
+      assert(value);
+      updates.extend(ConstantExpr::create(offset, Expr::Int32), value);
+    }
+  } else if (auto storage = dyn_cast<SparseStorage_PersistentMap<bool>>(unflushedMask.storage())) {
+    for (const auto &unflushed : storage->getMap()) {
+      auto offset = unflushed.first;
+      auto value = knownSymbolics.load(offset);
+      assert(value);
+      updates.extend(ConstantExpr::create(offset, Expr::Int32), value);
+    }
   }
   unflushedMask.reset(false);
 }

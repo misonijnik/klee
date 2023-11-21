@@ -57,6 +57,7 @@ public:
   void remove(const key_type &key) { elts = elts.remove(key); }
   void popMin(const value_type &valueOut) { elts = elts.popMin(valueOut); }
   void popMax(const value_type &valueOut) { elts = elts.popMax(valueOut); }
+  void clear() { elts = Map(); }
 
   iterator begin() const { return elts.begin(); }
   iterator end() const { return elts.end(); }
