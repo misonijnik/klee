@@ -33,13 +33,14 @@ def klee_options(
         "--external-calls=all",
         "--use-forked-solver=false",
         # "--solver-backend=stp",
+        # "--solver-backend=z3-tree",
         "--solver-backend=bitwuzla-tree",
         "--max-solvers-approx-tree-inc=16",
         f"--max-memory={int(max_memory * 0.9)}",  # Just use half of the memory in case we have to fork
         "--optimize",
         "--skip-not-lazy-initialized",
         f"--output-dir={test_output_dir}",  # Output files into specific directory
-        "--output-source=false",  # Do not output assembly.ll - it can be too large
+        # "--output-source=false",  # Do not output assembly.ll - it can be too large
         "--output-stats=false",
         "--output-istats=false",
         # "--istats-write-interval=90s", # Istats file can be large as well
@@ -94,6 +95,7 @@ def klee_options(
         cmd += [
             "--mem-trigger-cof", # Start on the fly tests generation after approaching memory cup
             "--use-alpha-equivalence=true",
+            "--optimize-aggressive=false",
             "--track-coverage=all", # Only branches and only instructions are wrong in real life. E.g., ternary operators are sometimes counted as different branches, while we stick to look at them as a single instruction from a single branch
             "--use-iterative-deepening-search=max-cycles",
             f"--max-solver-time={MAX_SOLVER_TIME}s",
@@ -268,6 +270,7 @@ class KLEEF(object):
 
     def run(self):
         test_output_dir = self.test_results_path / self.source.name
+        test_output_dir = self.test_results_path
         # Clean-up from previous runs if needed
         shutil.rmtree(test_output_dir, ignore_errors=True)
 
