@@ -3367,13 +3367,9 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
 
     if (X86FPAsX87FP80 && result->getWidth() == Expr::Fl80 &&
         Context::get().getPointerWidth() == 32) {
-      Expr::Width width = getWidthForLLVMType(castToType);
-      result = ZExtExpr::create(result, width);
-    }
-
-    if (X86FPAsX87FP80 && castToType->isFloatingPointTy() &&
-        Context::get().getPointerWidth() == 32) {
-      result = FPToX87FP80Ext(result);
+      result = X87FP80ToFPTrunc(
+          result, getWidthForLLVMType(bc->getOperand(0)->getType()),
+          state.roundingMode);
     }
 
     if (castToType->isPointerTy()) {
