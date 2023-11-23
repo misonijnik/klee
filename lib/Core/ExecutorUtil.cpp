@@ -35,6 +35,39 @@ DISABLE_WARNING_POP
 using namespace llvm;
 
 namespace klee {
+extern llvm::cl::opt<unsigned> X86FPAsX87FP80;
+ref<Expr> X87FP80ToFPTrunc(ref<Expr> arg, Expr::Width type,
+                           llvm::APFloat::roundingMode rm) {
+  ref<Expr> result = arg;
+#ifdef ENABLE_FP
+  Expr::Width resultType = type;
+  if (Context::get().getPointerWidth() == 32 && arg->getWidth() == Expr::Fl80) {
+    result = FPTruncExpr::create(arg, resultType, rm);
+  }
+#else
+  klee_message(
+      "You may enable x86-as-x87FP80 behaviour by passing the following options"
+      " to cmake:\n"
+      "\"-DENABLE_FLOATING_POINT=ON\"\n");
+#endif // ENABLE_FP
+  return result;
+}
+
+ref<Expr> FPToX87FP80Ext(ref<Expr> arg) {
+  ref<Expr> result = arg;
+#ifdef ENABLE_FP
+  Expr::Width resultType = Expr::Fl80;
+  if (Context::get().getPointerWidth() == 32) {
+    result = FPExtExpr::create(arg, resultType);
+  }
+#else
+  klee_message(
+      "You may enable x86-as-x87FP80 behaviour by passing the following options"
+      " to cmake:\n"
+      "\"-DENABLE_FLOATING_POINT=ON\"\n");
+#endif // ENABLE_FP
+  return result;
+}
 
 ref<klee::ConstantExpr> Executor::evalConstant(const Constant *c,
                                                llvm::APFloat::roundingMode rm,
@@ -51,7 +84,12 @@ ref<klee::ConstantExpr> Executor::evalConstant(const Constant *c,
     if (const ConstantInt *ci = dyn_cast<ConstantInt>(c)) {
       return ConstantExpr::alloc(ci->getValue());
     } else if (const ConstantFP *cf = dyn_cast<ConstantFP>(c)) {
-      return ConstantExpr::alloc(cf->getValueAPF());
+      ref<klee::ConstantExpr> result = ConstantExpr::alloc(cf->getValueAPF());
+      if (X86FPAsX87FP80 && c->getType()->isFloatingPointTy() &&
+          Context::get().getPointerWidth() == 32) {
+        result = cast<klee::ConstantExpr>(FPToX87FP80Ext(result));
+      }
+      return result;
     } else if (const GlobalValue *gv = dyn_cast<GlobalValue>(c)) {
       auto it = globalAddresses.find(gv);
       assert(it != globalAddresses.end());
@@ -134,7 +172,7 @@ ref<klee::ConstantExpr> Executor::evalConstant(const Constant *c,
       std::string msg("Cannot handle constant ");
       llvm::raw_string_ostream os(msg);
       os << "'" << *c << "' at location "
-         << (ki ? ki->getSourceLocation() : "[unknown]");
+         << (ki ? ki->getSourceLocationString() : "[unknown]");
       klee_error("%s", os.str().c_str());
     }
   }
@@ -261,7 +299,7 @@ ref<ConstantExpr> Executor::evalConstantExpr(const llvm::ConstantExpr *ce,
       std::string msg(
           "Division/modulo by zero during constant folding at location ");
       llvm::raw_string_ostream os(msg);
-      os << (ki ? ki->getSourceLocation() : "[unknown]");
+      os << (ki ? ki->getSourceLocationString() : "[unknown]");
       klee_error("%s", os.str().c_str());
     }
     break;
@@ -271,7 +309,7 @@ ref<ConstantExpr> Executor::evalConstantExpr(const llvm::ConstantExpr *ce,
     if (op2->getLimitedValue() >= op1->getWidth()) {
       std::string msg("Overshift during constant folding at location ");
       llvm::raw_string_ostream os(msg);
-      os << (ki ? ki->getSourceLocation() : "[unknown]");
+      os << (ki ? ki->getSourceLocationString() : "[unknown]");
       klee_error("%s", os.str().c_str());
     }
   }
@@ -282,7 +320,7 @@ ref<ConstantExpr> Executor::evalConstantExpr(const llvm::ConstantExpr *ce,
   switch (ce->getOpcode()) {
   default:
     os << "'" << *ce << "' at location "
-       << (ki ? ki->getSourceLocation() : "[unknown]");
+       << (ki ? ki->getSourceLocationString() : "[unknown]");
     klee_error("%s", os.str().c_str());
 
   case Instruction::Trunc:
@@ -317,8 +355,22 @@ ref<ConstantExpr> Executor::evalConstantExpr(const llvm::ConstantExpr *ce,
     return op1->LShr(op2);
   case Instruction::AShr:
     return op1->AShr(op2);
-  case Instruction::BitCast:
-    return op1;
+  case Instruction::BitCast: {
+    ref<klee::Expr> result = op1;
+
+    if (X86FPAsX87FP80 && result->getWidth() == Expr::Fl80 &&
+        !ce->getType()->isFloatingPointTy() &&
+        Context::get().getPointerWidth() == 32) {
+      result = cast<klee::ConstantExpr>(
+          X87FP80ToFPTrunc(result, getWidthForLLVMType(type), rm));
+    }
+
+    if (X86FPAsX87FP80 && ce->getType()->isFloatingPointTy() &&
+        Context::get().getPointerWidth() == 32) {
+      result = cast<klee::ConstantExpr>(FPToX87FP80Ext(result));
+    }
+    return result;
+  }
 
   case Instruction::IntToPtr:
     return op1->ZExt(getWidthForLLVMType(type));

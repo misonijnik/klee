@@ -32,60 +32,50 @@ DISABLE_WARNING_POP
 #include <vector>
 
 namespace klee {
-class CodeGraphDistance;
+class CodeGraphInfo;
 class ExecutionState;
-struct TransitionHash;
 
-enum TargetCalculateBy { Default, Blocks, Transitions };
+enum class TrackCoverageBy { None, Blocks, Branches, All };
 
-typedef std::pair<llvm::BasicBlock *, llvm::BasicBlock *> Transition;
 typedef std::pair<llvm::BasicBlock *, unsigned> Branch;
 
 class TargetCalculator {
-  typedef std::unordered_set<llvm::BasicBlock *> VisitedBlocks;
-  typedef std::unordered_set<Transition, TransitionHash> VisitedTransitions;
+  using StatesSet = std::unordered_set<ExecutionState *>;
+
+  typedef std::unordered_set<KBlock *> VisitedBlocks;
   typedef std::unordered_set<Branch, BranchHash> VisitedBranches;
 
   enum HistoryKind { Blocks, Transitions };
 
-  typedef std::unordered_map<
-      llvm::Function *, std::unordered_map<llvm::BasicBlock *, VisitedBlocks>>
-      BlocksHistory;
-  typedef std::unordered_map<
-      llvm::Function *,
-      std::unordered_map<llvm::BasicBlock *, VisitedTransitions>>
-      TransitionsHistory;
-
-  typedef std::unordered_map<
-      llvm::Function *,
-      std::unordered_map<llvm::BasicBlock *, std::set<unsigned>>>
+  typedef std::unordered_map<KFunction *,
+                             std::map<KBlock *, std::set<unsigned>>>
       CoveredBranches;
 
-  typedef std::unordered_map<llvm::Function *, VisitedBlocks> CoveredBlocks;
-
-public:
-  TargetCalculator(CodeGraphDistance &codeGraphDistance)
-      : codeGraphDistance(codeGraphDistance) {}
+  typedef std::unordered_set<KFunction *> CoveredFunctionsBranches;
 
   void update(const ExecutionState &state);
 
+public:
+  TargetCalculator(CodeGraphInfo &codeGraphInfo)
+      : codeGraphInfo(codeGraphInfo) {}
+
+  void update(ExecutionState *current,
+              const std::vector<ExecutionState *> &addedStates,
+              const std::vector<ExecutionState *> &removedStates);
+
   TargetHashSet calculate(ExecutionState &state);
 
-private:
-  CodeGraphDistance &codeGraphDistance;
-  BlocksHistory blocksHistory;
-  TransitionsHistory transitionsHistory;
-  CoveredBranches coveredBranches;
-  CoveredBlocks coveredBlocks;
+  bool isCovered(KFunction *kf) const;
 
-  bool differenceIsEmpty(
-      const ExecutionState &state,
-      const std::unordered_map<llvm::BasicBlock *, VisitedBlocks> &history,
-      KBlock *target);
-  bool differenceIsEmpty(
-      const ExecutionState &state,
-      const std::unordered_map<llvm::BasicBlock *, VisitedTransitions> &history,
-      KBlock *target);
+private:
+  CodeGraphInfo &codeGraphInfo;
+  CoveredBranches coveredBranches;
+  CoveredFunctionsBranches coveredFunctionsInBranches;
+  CoveredFunctionsBranches fullyCoveredFunctions;
+  StatesSet localStates;
+
+  const std::map<KBlock *, std::set<unsigned>> &
+  getCoverageTargets(KFunction *kf);
 
   bool uncoveredBlockPredicate(ExecutionState *state, KBlock *kblock);
 };

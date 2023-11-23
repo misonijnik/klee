@@ -37,6 +37,12 @@ KType *TypeManager::getWrappedType(llvm::Type *type) {
   if (typesMap.count(type) == 0) {
     types.emplace_back(new KType(type, this));
     typesMap.emplace(type, types.back().get());
+    if (type && type->isPointerTy()) {
+      getWrappedType(type->getPointerElementType());
+    }
+    if (type && type->isArrayTy()) {
+      getWrappedType(type->getArrayElementType());
+    }
   }
   return typesMap[type];
 }
@@ -61,15 +67,21 @@ void TypeManager::initTypesFromStructs() {
    * and pull types to top.
    */
 
-  std::vector<llvm::StructType *> collectedStructTypes =
-      parent->module->getIdentifiedStructTypes();
-  for (auto &structType : collectedStructTypes) {
+  for (auto &structType : parent->module->getIdentifiedStructTypes()) {
     getWrappedType(structType);
+  }
+
+  std::unordered_set<llvm::StructType *> collectedStructTypes;
+  for (const auto &it : typesMap) {
+    if (llvm::StructType *itStruct =
+            llvm::dyn_cast<llvm::StructType>(it.first)) {
+      collectedStructTypes.insert(itStruct);
+    }
   }
 
   for (auto &typesToOffsets : typesMap) {
     if (llvm::isa<llvm::StructType>(typesToOffsets.first)) {
-      collectedStructTypes.emplace_back(
+      collectedStructTypes.insert(
           llvm::cast<llvm::StructType>(typesToOffsets.first));
     }
   }
@@ -141,20 +153,13 @@ void TypeManager::initTypesFromGlobals() {
  */
 void TypeManager::initTypesFromInstructions() {
   for (auto &function : *(parent->module)) {
-    auto kf = parent->functionMap[&function];
-
     for (auto &BasicBlock : function) {
-      unsigned numInstructions = kf->blockMap[&BasicBlock]->numInstructions;
-      KBlock *kb = kf->blockMap[&BasicBlock];
-
-      for (unsigned i = 0; i < numInstructions; ++i) {
-        llvm::Instruction *inst = kb->instructions[i]->inst;
-
+      for (auto &inst : BasicBlock) {
         /* Register return type */
-        getWrappedType(inst->getType());
+        getWrappedType(inst.getType());
 
         /* Register types for arguments */
-        for (auto opb = inst->op_begin(), ope = inst->op_end(); opb != ope;
+        for (auto opb = inst.op_begin(), ope = inst.op_end(); opb != ope;
              ++opb) {
           getWrappedType((*opb)->getType());
         }

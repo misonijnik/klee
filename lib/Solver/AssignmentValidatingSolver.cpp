@@ -44,6 +44,7 @@ public:
   SolverRunStatus getOperationStatusCode();
   char *getConstraintLog(const Query &);
   void setCoreSolverTimeout(time::Span timeout);
+  void notifyStateTermination(std::uint32_t id);
 };
 
 // TODO: use computeInitialValues for all queries for more stress testing
@@ -65,9 +66,8 @@ void AssignmentValidatingSolver::validateAssigment(
     std::vector<SparseStorage<unsigned char>> &values) {
   // Use `_allowFreeValues` so that if we are missing an assignment
   // we can't compute a constant and flag this as a problem.
-  Assignment assignment(objects, values, /*_allowFreeValues=*/true);
+  Assignment assignment(objects, values);
   // Check computed assignment satisfies query
-  assert(!query.containsSymcretes());
   for (const auto &constraint : query.constraints.cs()) {
     ref<Expr> constraintEvaluated = assignment.evaluate(constraint);
     ConstantExpr *CE = dyn_cast<ConstantExpr>(constraintEvaluated);
@@ -142,14 +142,8 @@ bool AssignmentValidatingSolver::check(const Query &query,
     return true;
   }
 
-  ExprHashSet expressions;
-  assert(!query.containsSymcretes());
-  expressions.insert(query.constraints.cs().begin(),
-                     query.constraints.cs().end());
-  expressions.insert(query.expr);
-
   std::vector<const Array *> objects;
-  findSymbolicObjects(expressions.begin(), expressions.end(), objects);
+  findSymbolicObjects(query, objects);
   std::vector<SparseStorage<unsigned char>> values;
 
   assert(isa<InvalidResponse>(result));
@@ -170,14 +164,13 @@ void AssignmentValidatingSolver::dumpAssignmentQuery(
     const Query &query, const Assignment &assignment) {
   // Create a Query that is augmented with constraints that
   // enforce the given assignment.
-  auto constraints = assignment.createConstraintsFromAssignment();
+  ConstraintSet constraints(assignment.createConstraintsFromAssignment());
 
   // Add Constraints from `query`
-  assert(!query.containsSymcretes());
   for (const auto &constraint : query.constraints.cs())
     constraints.addConstraint(constraint, {});
 
-  Query augmentedQuery(constraints, query.expr);
+  Query augmentedQuery = query.withConstraints(constraints);
 
   // Ask the solver for the log for this query.
   char *logText = solver->getConstraintLog(augmentedQuery);
@@ -196,6 +189,10 @@ char *AssignmentValidatingSolver::getConstraintLog(const Query &query) {
 
 void AssignmentValidatingSolver::setCoreSolverTimeout(time::Span timeout) {
   return solver->impl->setCoreSolverTimeout(timeout);
+}
+
+void AssignmentValidatingSolver::notifyStateTermination(std::uint32_t id) {
+  solver->impl->notifyStateTermination(id);
 }
 
 std::unique_ptr<Solver>

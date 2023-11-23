@@ -1,19 +1,12 @@
-// REQUIRES: not-darwin, z3
+// REQUIRES: not-darwin
 // RUN: %clang %s -emit-llvm %O0opt -c -o %t.bc
 // RUN: rm -rf %t.klee-out
-// RUN: %klee --output-dir=%t.klee-out --libc=klee --posix-runtime --solver-backend=z3 --skip-not-lazy-initialized --skip-not-symbolic-objects %t.bc > %t.log
-
-// RUN: test -f %t.klee-out/test000006.ktest
+// RUN: %klee --output-dir=%t.klee-out --libc=klee --posix-runtime --skip-not-lazy-initialized --skip-not-symbolic-objects %t.bc > %t.log
 
 // RUN: %cc %s %libkleeruntest -Wl,-rpath %libkleeruntestdir -o %t_runner
 
-// RUN: env KTEST_FILE=%t.klee-out/test000001.ktest %t_runner >> %t_runner.log
-// RUN: env KTEST_FILE=%t.klee-out/test000002.ktest %t_runner >> %t_runner.log
-// RUN: env KTEST_FILE=%t.klee-out/test000003.ktest %t_runner >> %t_runner.log
-// RUN: env KTEST_FILE=%t.klee-out/test000004.ktest %t_runner >> %t_runner.log
-// RUN: env KTEST_FILE=%t.klee-out/test000005.ktest %t_runner >> %t_runner.log
-// RUN: env KTEST_FILE=%t.klee-out/test000006.ktest %t_runner >> %t_runner.log
-
+// RUN: rm -f %t_runner.log
+// RUN: %replay %t.klee-out %t_runner > %t_runner.log
 // RUN: FileCheck -input-file=%t_runner.log %s
 
 #include <stdlib.h>

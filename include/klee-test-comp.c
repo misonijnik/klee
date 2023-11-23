@@ -7,11 +7,11 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <stdint.h>
 #ifdef EXTERNAL
 #include "klee.h"
 #include <assert.h>
 #include <stddef.h>
-#include <stdint.h>
 #include <stdlib.h>
 #else
 void klee_make_symbolic(void *addr, unsigned int nbytes, const char *name);
@@ -19,19 +19,30 @@ void klee_assume(_Bool condition);
 __attribute__((noreturn)) void klee_silent_exit(int status);
 void __assert_fail(const char *assertion, const char *file, unsigned int line,
                    const char *function);
+void klee_prefer_cex(void *, uintptr_t);
 #endif
 
 int __VERIFIER_nondet_int(void) {
   int x;
   klee_make_symbolic(&x, sizeof(x), "int");
+  klee_prefer_cex(&x, x < 1024);
   return x;
 }
 
 unsigned int __VERIFIER_nondet_uint(void) {
   unsigned int x;
   klee_make_symbolic(&x, sizeof(x), "unsigned int");
+  klee_prefer_cex(&x, x < 1024);
   return x;
 }
+
+#ifdef __x86_64__
+unsigned __int128 __VERIFIER_nondet_uint128(void) {
+  unsigned __int128 x;
+  klee_make_symbolic(&x, sizeof(x), "unsigned __int128");
+  return x;
+}
+#endif
 
 unsigned __VERIFIER_nondet_unsigned(void) {
   unsigned x;
@@ -82,7 +93,7 @@ unsigned long __VERIFIER_nondet_ulong(void) {
 }
 
 double __VERIFIER_nondet_double(void) {
-  long x;
+  double x;
   klee_make_symbolic(&x, sizeof(x), "double");
   return x;
 }
@@ -96,7 +107,7 @@ void *__VERIFIER_nondet_pointer(void) {
 }
 
 float __VERIFIER_nondet_float(void) {
-  int x;
+  float x;
   klee_make_symbolic(&x, sizeof(x), "float");
   return x;
 }

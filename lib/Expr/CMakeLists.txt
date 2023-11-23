@@ -7,6 +7,7 @@
 #
 #===------------------------------------------------------------------------===#
 add_library(kleaverExpr
+  AlphaBuilder.cpp
   APFloatEval.cpp
   ArrayCache.cpp
   ArrayExprOptimizer.cpp
@@ -22,6 +23,7 @@ add_library(kleaverExpr
   ExprSMTLIBPrinter.cpp
   ExprUtil.cpp
   ExprVisitor.cpp
+  IndependentConstraintSetUnion.cpp
   IndependentSet.cpp
   Path.cpp
   SourceBuilder.cpp
@@ -29,6 +31,10 @@ add_library(kleaverExpr
   Lexer.cpp
   Parser.cpp
   Updates.cpp
+)
+
+target_link_libraries(kleaverExpr PRIVATE
+  kleeADT
 )
 
 llvm_config(kleaverExpr "${USE_LLVM_SHARED}" support)

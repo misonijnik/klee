@@ -5,6 +5,7 @@
 #include "klee/Expr/Constraints.h"
 #include "klee/Expr/Expr.h"
 #include "klee/Expr/ExprHashMap.h"
+#include "klee/Expr/IndependentSet.h"
 #include "klee/System/Time.h"
 
 namespace klee {
@@ -41,6 +42,9 @@ enum class Validity { True = 1, False = -1, Unknown = 0 };
 struct SolverQueryMetaData {
   /// @brief Costs for all queries issued for this state
   time::Span queryCost;
+
+  /// @brief Caller state id
+  std::uint32_t id = 0;
 };
 
 struct Query {
@@ -48,25 +52,36 @@ public:
   const ConstraintSet constraints;
   ref<Expr> expr;
 
-  Query(const ConstraintSet &_constraints, ref<Expr> _expr)
-      : constraints(_constraints), expr(_expr) {}
+  /// @brief id of the state initiated this query
+  const std::uint32_t id;
+
+  Query(const ConstraintSet &_constraints, ref<Expr> _expr, std::uint32_t _id)
+      : constraints(_constraints), expr(_expr), id(_id) {}
+
+  /// This constructor should be used *only* if
+  /// this query is created *not* from some known ExecutionState
+  /// Otherwise consider using the above constructor
+  Query(const constraints_ty &cs, ref<Expr> e)
+      : Query(ConstraintSet(cs), e, 0) {}
 
   Query(const Query &query)
-      : constraints(query.constraints), expr(query.expr) {}
+      : constraints(query.constraints), expr(query.expr), id(query.id) {}
 
   /// withExpr - Return a copy of the query with the given expression.
-  Query withExpr(ref<Expr> _expr) const { return Query(constraints, _expr); }
+  Query withExpr(ref<Expr> _expr) const {
+    return Query(constraints, _expr, id);
+  }
 
   /// withFalse - Return a copy of the query with a false expression.
   Query withFalse() const {
-    return Query(constraints, ConstantExpr::alloc(0, Expr::Bool));
+    return Query(constraints, Expr::createFalse(), id);
   }
 
   /// negateExpr - Return a copy of the query with the expression negated.
   Query negateExpr() const { return withExpr(Expr::createIsZero(expr)); }
 
   Query withConstraints(const ConstraintSet &_constraints) const {
-    return Query(_constraints, expr);
+    return Query(_constraints, expr, id);
   }
   /// Get all arrays that figure in the query
   std::vector<const Array *> gatherArrays() const;
@@ -78,6 +93,16 @@ public:
   friend bool operator<(const Query &lhs, const Query &rhs) {
     return lhs.constraints < rhs.constraints ||
            (lhs.constraints == rhs.constraints && lhs.expr < rhs.expr);
+  }
+
+  void getAllIndependentConstraintsSets(
+      std::vector<ref<const IndependentConstraintSet>> &result) const {
+    constraints.getAllIndependentConstraintsSets(expr, result);
+  }
+
+  void getAllDependentConstraintsSets(
+      std::vector<ref<const IndependentConstraintSet>> &result) const {
+    constraints.getAllDependentConstraintsSets(expr, result);
   }
 
   /// Dump query
@@ -97,11 +122,8 @@ public:
   ValidityCore(const constraints_typ &_constraints, ref<Expr> _expr)
       : constraints(_constraints), expr(_expr) {}
 
-  ValidityCore(const ExprHashSet &_constraints, ref<Expr> _expr) : expr(_expr) {
-    for (auto e : _constraints) {
-      constraints.insert(e);
-    }
-  }
+  ValidityCore(const ExprHashSet &_constraints, ref<Expr> _expr)
+      : constraints(_constraints.begin(), _constraints.end()), expr(_expr) {}
 
   /// withExpr - Return a copy of the validity core with the given expression.
   ValidityCore withExpr(ref<Expr> _expr) const {
@@ -116,6 +138,8 @@ public:
   /// negateExpr - Return a copy of the validity core with the expression
   /// negated.
   ValidityCore negateExpr() const { return withExpr(Expr::createIsZero(expr)); }
+
+  Query toQuery() const;
 
   /// Dump validity core
   void dump() const;
@@ -220,6 +244,8 @@ public:
   InvalidResponse(Assignment::bindings_ty &initialValues)
       : result(initialValues) {}
 
+  explicit InvalidResponse() : result() {}
+
   bool tryGetInitialValuesFor(
       const std::vector<const Array *> &objects,
       std::vector<SparseStorage<unsigned char>> &values) const {
@@ -228,31 +254,27 @@ public:
       if (result.bindings.count(object)) {
         values.push_back(result.bindings.at(object));
       } else {
-        ref<ConstantExpr> constantSize =
-            dyn_cast<ConstantExpr>(result.evaluate(object->size));
-        assert(constantSize);
-        values.push_back(
-            SparseStorage<unsigned char>(constantSize->getZExtValue(), 0));
+        values.push_back(SparseStorage<unsigned char>(0));
       }
     }
     return true;
   }
 
   bool tryGetInitialValues(Assignment::bindings_ty &values) const {
-    values.insert(result.bindings.begin(), result.bindings.end());
+    values = result.bindings;
     return true;
   }
 
   Assignment initialValuesFor(const std::vector<const Array *> objects) const {
     std::vector<SparseStorage<unsigned char>> values;
     tryGetInitialValuesFor(objects, values);
-    return Assignment(objects, values, true);
+    return Assignment(objects, values);
   }
 
   Assignment initialValues() const {
     Assignment::bindings_ty values;
     tryGetInitialValues(values);
-    return Assignment(values, true);
+    return Assignment(values);
   }
 
   ResponseKind getResponseKind() const { return Invalid; };
@@ -276,15 +298,20 @@ public:
     return result.bindings < ib.result.bindings;
   }
 
-  bool satisfies(std::set<ref<Expr>> &key) {
-    return result.satisfies(key.begin(), key.end());
+  bool satisfies(const std::set<ref<Expr>> &key, bool allowFreeValues = true) {
+    return result.satisfies(key.begin(), key.end(), allowFreeValues);
   }
 
-  ref<Expr> evaluate(ref<Expr> &e) { return result.evaluate(e); }
+  bool satisfiesOrConstant(const std::set<ref<Expr>> &key,
+                           bool allowFreeValues = true) {
+    return result.satisfiesOrConstant(key.begin(), key.end(), allowFreeValues);
+  }
 
   void dump() { result.dump(); }
 
-  ref<Expr> evaluate(ref<Expr> e) { return (result.evaluate(e)); }
+  ref<Expr> evaluate(ref<Expr> e, bool allowFreeValues = true) {
+    return (result.evaluate(e, allowFreeValues));
+  }
 };
 
 class UnknownResponse : public SolverResponse {

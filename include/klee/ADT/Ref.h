@@ -215,6 +215,19 @@ public:
   bool operator!=(const ref &rhs) const { return !equals(rhs); }
 };
 
+template <typename T> class OptionalRefEq {
+public:
+  bool operator()(const ref<T> &lhs, const ref<T> &rhs) {
+    if (lhs.isNull() && rhs.isNull()) {
+      return true;
+    }
+    if (lhs.isNull() || rhs.isNull()) {
+      return false;
+    }
+    return lhs.get()->equals(*rhs.get());
+  }
+};
+
 template <class T>
 inline llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const ref<T> &e) {
   os << *e;
@@ -227,6 +240,18 @@ inline std::stringstream &operator<<(std::stringstream &os, const ref<T> &e) {
   return os;
 }
 
+template <class T> class box {
+  friend class ref<box<T>>;
+
+private:
+  /// @brief Required by klee::ref-managed objects
+  class ReferenceCounter _refCount;
+
+public:
+  box(T value_) : value(value_) {}
+  ReferenceCounter count() { return _refCount; }
+  T value;
+};
 } // end namespace klee
 
 namespace llvm {

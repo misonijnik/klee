@@ -41,7 +41,11 @@ void TargetManager::updateDone(ExecutionState &state, ref<Target> target) {
   setHistory(state, stateTargetForest.getHistory());
   if (guidance == Interpreter::GuidanceKind::CoverageGuidance ||
       target->shouldFailOnThisTarget()) {
-    reachedTargets.insert(target);
+    if (target->shouldFailOnThisTarget() ||
+        !isa<KCallBlock>(target->getBlock())) {
+      reachedTargets.insert(target);
+    }
+
     for (auto es : states) {
       if (isTargeted(*es)) {
         auto &esTargetForest = targetForest(*es);
@@ -112,7 +116,7 @@ void TargetManager::updateReached(ExecutionState &state) {
 
     if (state.getPrevPCBlock()->getTerminator()->getNumSuccessors() == 0) {
       target = ReachBlockTarget::create(state.prevPC->parent, true);
-    } else {
+    } else if (!isa<KCallBlock>(state.prevPC->parent)) {
       unsigned index = 0;
       for (auto succ : successors(state.getPrevPCBlock())) {
         if (succ == state.getPCBlock()) {
@@ -270,9 +274,23 @@ bool TargetManager::isReachedTarget(const ExecutionState &state,
   }
 
   if (target->shouldFailOnThisTarget()) {
-    if (state.pc->parent == target->getBlock()) {
-      if (cast<ReproduceErrorTarget>(target)->isTheSameAsIn(state.prevPC) &&
-          cast<ReproduceErrorTarget>(target)->isThatError(state.error)) {
+    bool found = true;
+    auto possibleInstruction = state.prevPC;
+    int i = state.stack.size() - 1;
+
+    while (!cast<ReproduceErrorTarget>(target)->isTheSameAsIn(
+        possibleInstruction)) { // TODO: target->getBlock() ==
+                                // possibleInstruction should also be checked,
+                                // but more smartly
+      if (i <= 0) {
+        found = false;
+        break;
+      }
+      possibleInstruction = state.stack.callStack().at(i).caller;
+      i--;
+    }
+    if (found) {
+      if (cast<ReproduceErrorTarget>(target)->isThatError(state.error)) {
         result = Done;
       } else {
         result = Continue;

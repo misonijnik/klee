@@ -191,6 +191,10 @@ public:
 
   virtual char *getConstraintLog(const Query &query);
   virtual void setCoreSolverTimeout(time::Span timeout);
+
+  /// @brief Notify the solver that the state with specified id has been
+  /// terminated
+  void notifyStateTermination(std::uint32_t id);
 };
 
 /* *** */
@@ -240,6 +244,14 @@ std::unique_ptr<Solver> createFastCexSolver(std::unique_ptr<Solver> s);
 /// \param s - The underlying solver to use.
 std::unique_ptr<Solver> createIndependentSolver(std::unique_ptr<Solver> s);
 
+/// createAlphaEquivalenceSolver - Create a solver which will change
+/// independent queries to their alpha-equvalent version
+///
+/// \param s - The underlying solver to use.
+/// \param arrayCache - Class to create new arrays.
+std::unique_ptr<Solver> createAlphaEquivalenceSolver(std::unique_ptr<Solver> s,
+                                                     ArrayCache &arrayCache);
+
 /// createKQueryLoggingSolver - Create a solver which will forward all queries
 /// after writing them to the given path in .kquery format.
 std::unique_ptr<Solver> createKQueryLoggingSolver(std::unique_ptr<Solver> s,
@@ -264,6 +276,11 @@ std::unique_ptr<Solver> createCoreSolver(CoreSolverType cst);
 std::unique_ptr<Solver>
 createConcretizingSolver(std::unique_ptr<Solver> s,
                          AddressGenerator *addressGenerator);
+
+/// Return a list of all unique symbolic objects referenced by the
+/// given Query.
+void findSymbolicObjects(const Query &query,
+                         std::vector<const Array *> &results);
 } // namespace klee
 
 #endif /* KLEE_SOLVER_H */

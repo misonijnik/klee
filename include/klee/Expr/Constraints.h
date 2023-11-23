@@ -12,10 +12,13 @@
 
 #include "klee/ADT/Ref.h"
 
+#include "klee/ADT/PersistentMap.h"
 #include "klee/Expr/Assignment.h"
 #include "klee/Expr/Expr.h"
 #include "klee/Expr/ExprHashMap.h"
 #include "klee/Expr/ExprUtil.h"
+#include "klee/Expr/IndependentConstraintSetUnion.h"
+#include "klee/Expr/IndependentSet.h"
 #include "klee/Expr/Path.h"
 #include "klee/Expr/Symcrete.h"
 
@@ -35,14 +38,23 @@ class ConstraintSet {
 public:
   ConstraintSet(constraints_ty cs, symcretes_ty symcretes,
                 Assignment concretization);
-  ConstraintSet();
+  explicit ConstraintSet(ref<const IndependentConstraintSet> ics);
+  explicit ConstraintSet(
+      const std::vector<ref<const IndependentConstraintSet>> &ics);
+  explicit ConstraintSet(constraints_ty cs);
+  explicit ConstraintSet();
+  void fork();
 
   void addConstraint(ref<Expr> e, const Assignment &delta);
   void addSymcrete(ref<Symcrete> s, const Assignment &concretization);
   bool isSymcretized(ref<Expr> expr) const;
 
   void rewriteConcretization(const Assignment &a);
-  ConstraintSet withExpr(ref<Expr> e) const;
+  ConstraintSet withExpr(ref<Expr> e) const {
+    ConstraintSet copy = ConstraintSet(*this);
+    copy.addConstraint(e, Assignment());
+    return copy;
+  }
 
   std::vector<const Array *> gatherArrays() const;
   std::vector<const Array *> gatherSymcretizedArrays() const;
@@ -55,7 +67,8 @@ public:
     return _constraints < b._constraints ||
            (_constraints == b._constraints && _symcretes < b._symcretes);
   }
-
+  ConstraintSet getConcretizedVersion() const;
+  ConstraintSet getConcretizedVersion(const Assignment &c) const;
   void dump() const;
   void print(llvm::raw_ostream &os) const;
 
@@ -64,20 +77,32 @@ public:
   const constraints_ty &cs() const;
   const symcretes_ty &symcretes() const;
   const Assignment &concretization() const;
+  const IndependentConstraintSetUnion &independentElements() const;
+
+  void getAllIndependentConstraintsSets(
+      ref<Expr> queryExpr,
+      std::vector<ref<const IndependentConstraintSet>> &result) const;
+
+  void getAllDependentConstraintsSets(
+      ref<Expr> queryExpr,
+      std::vector<ref<const IndependentConstraintSet>> &result) const;
 
 private:
   constraints_ty _constraints;
   symcretes_ty _symcretes;
   Assignment _concretization;
+  std::shared_ptr<IndependentConstraintSetUnion> _independentElements;
 };
 
 class PathConstraints {
 public:
   using ordered_constraints_ty =
-      std::map<Path::PathIndex, constraints_ty, Path::PathIndexCompare>;
+      PersistentMap<Path::PathIndex, constraints_ty, Path::PathIndexCompare>;
 
   void advancePath(KInstruction *ki);
   void advancePath(const Path &path);
+  void fork();
+
   ExprHashSet addConstraint(ref<Expr> e, const Assignment &delta,
                             Path::PathIndex currIndex);
   ExprHashSet addConstraint(ref<Expr> e, const Assignment &delta);
@@ -135,6 +160,7 @@ public:
   struct SetResult {
     constraints_ty simplified;
     ExprHashMap<ExprHashSet> dependency;
+    bool wasSimplified;
   };
 
 public:
