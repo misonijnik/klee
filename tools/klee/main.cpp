@@ -674,11 +674,6 @@ void KleeHandler::processTestCase(const ExecutionState &state,
     if (m_numGeneratedTests == MaxTests)
       m_interpreter->setHaltExecution(HaltExecution::MaxTests);
 
-    if (FunctionCallReproduce != "" && (strcmp(suffix, "assert.err") == 0 ||
-                                        strcmp(suffix, "reachable.err"))) {
-      m_interpreter->setHaltExecution(HaltExecution::ReachedTarget);
-    }
-
     if (WriteTestInfo) {
       time::Span elapsed_time(time::getWallTime() - start_time);
       auto f = openTestFile("info", id);

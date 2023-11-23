@@ -7386,6 +7386,9 @@ bool Executor::getSymbolicSolution(const ExecutionState &state, KTest &res) {
   if (allObjects.size() != uninitObjects.size() ||
       state.symbolics.size() != symbolics.size()) {
     state.error = ReachWithError::None;
+  } else if (FunctionCallReproduce != "" &&
+             state.error == ReachWithError::Reachable) {
+    setHaltExecution(HaltExecution::ReachedTarget);
   }
 
   std::vector<SparseStorage<unsigned char>> values;
