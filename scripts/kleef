@@ -76,7 +76,6 @@ def klee_options(
             "--optimize=true",
             "--use-alpha-equivalence=true",
             "--function-call-reproduce=reach_error",
-            "--dump-states-on-halt-with-function-call-reproduce",
             # "--max-cycles=0",
             # "--tc-type=bug",
             "--dump-states-on-halt=unreached",  # Explicitly do not dump states
