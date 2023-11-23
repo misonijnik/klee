@@ -7383,8 +7383,7 @@ bool Executor::getSymbolicSolution(const ExecutionState &state, KTest &res) {
 
   // we cannot be sure that an irreproducible state proves the presence of an
   // error
-  if (allObjects.size() != uninitObjects.size() ||
-      state.symbolics.size() != symbolics.size()) {
+  if (uninitObjects.size() > 0 || state.symbolics.size() != symbolics.size()) {
     state.error = ReachWithError::None;
   } else if (FunctionCallReproduce != "" &&
              state.error == ReachWithError::Reachable) {
