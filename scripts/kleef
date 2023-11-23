@@ -22,15 +22,16 @@ def klee_options(
     write_ktests,
 ):
     if max_time and int(max_time) > 30:
-        MAX_SOLVER_TIME = 10
+        MAX_SOLVER_TIME = 15
     else:
-        MAX_SOLVER_TIME = 5
+        MAX_SOLVER_TIME = 10
     cmd = [
         "--strip-unwanted-calls",  # removes llvm.dbg.* instructions, exponentially reduces time on some benchmarks
         "--delete-dead-loops=false",  # without this optimizer removes some code, which decreases coverage
         "--emit-all-errors",  # without this we generate only one test for assertion failures, which decreases coverage
         "--mock-all-externals",  # this helps for some linux benchmarks, which have unused extern globals. without this flag we will not even start on them.
         "--external-calls=all",
+        "--optimize=true",
         "--use-forked-solver=false",
         # "--solver-backend=stp",
         # "--solver-backend=z3-tree",
@@ -73,7 +74,6 @@ def klee_options(
 
     if f_err:
         cmd += [
-            "--optimize=true",
             "--use-alpha-equivalence=true",
             "--function-call-reproduce=reach_error",
             # "--max-cycles=0",
@@ -99,7 +99,6 @@ def klee_options(
 
     if f_cov:
         cmd += [
-            "--optimize=false",
             "--mem-trigger-cof", # Start on the fly tests generation after approaching memory cup
             "--use-alpha-equivalence=true",
             "--optimize-aggressive=false",
