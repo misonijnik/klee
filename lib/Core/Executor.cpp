@@ -3943,6 +3943,11 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     FPToUIInst *fi = cast<FPToUIInst>(i);
     Expr::Width resultType = getWidthForLLVMType(fi->getType());
     ref<Expr> arg = eval(ki, 0, state).value;
+    if (X86FPAsX87FP80 && Context::get().getPointerWidth() == 32) {
+      arg = X87FP80ToFPTrunc(arg,
+                             getWidthForLLVMType(fi->getOperand(0)->getType()),
+                             state.roundingMode);
+    }
     if (!fpWidthToSemantics(arg->getWidth()))
       return terminateStateOnExecError(state, "Unsupported FPToUI operation");
     // LLVM IR Ref manual says that it rounds toward zero
@@ -3956,6 +3961,11 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     FPToSIInst *fi = cast<FPToSIInst>(i);
     Expr::Width resultType = getWidthForLLVMType(fi->getType());
     ref<Expr> arg = eval(ki, 0, state).value;
+    if (X86FPAsX87FP80 && Context::get().getPointerWidth() == 32) {
+      arg = X87FP80ToFPTrunc(arg,
+                             getWidthForLLVMType(fi->getOperand(0)->getType()),
+                             state.roundingMode);
+    }
     if (!fpWidthToSemantics(arg->getWidth()))
       return terminateStateOnExecError(state, "Unsupported FPToSI operation");
     // LLVM IR Ref manual says that it rounds toward zero
