@@ -2723,10 +2723,8 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
 
           if (X86FPAsX87FP80 && t->isFloatingPointTy() &&
               Context::get().getPointerWidth() == 32) {
-            to = Expr::Fl80;
-          }
-
-          if (from != to) {
+            result = FPToX87FP80Ext(result);
+          } else if (from != to) {
             const CallBase &cb = cast<CallBase>(*caller);
 
             // XXX need to check other param attrs ?
