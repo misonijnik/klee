@@ -7822,7 +7822,12 @@ ref<Expr> Executor::makeSymbolicValue(llvm::Value *value,
                     : SourceBuilder::instruction(*dyn_cast<Instruction>(value),
                                                  index, kmodule.get());
   auto array = makeArray(Expr::createPointer(size), source);
-  return Expr::createTempRead(array, width);
+  ref<Expr> result = Expr::createTempRead(array, width);
+  if (X86FPAsX87FP80 && value->getType()->isFloatingPointTy() &&
+      Context::get().getPointerWidth() == 32) {
+    result = FPToX87FP80Ext(result);
+  }
+  return result;
 }
 
 void Executor::prepareSymbolicValue(ExecutionState &state, StackFrame &frame,
