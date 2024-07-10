@@ -16,7 +16,9 @@
 #include "klee/Solver/SolverImpl.h"
 #include "klee/Solver/SolverStats.h"
 
+#include <memory>
 #include <unordered_map>
+#include <utility>
 
 using namespace klee;
 
@@ -62,30 +64,29 @@ private:
                              CacheEntryHash>
       cache_map;
 
-  Solver *solver;
+  std::unique_ptr<Solver> solver;
   cache_map cache;
 
 public:
-  CachingSolver(Solver *s) : solver(s) {}
-  ~CachingSolver() { cache.clear(); delete solver; }
+  CachingSolver(std::unique_ptr<Solver> solver) : solver(std::move(solver)) {}
 
-  bool computeValidity(const Query&, Solver::Validity &result);
-  bool computeTruth(const Query&, bool &isValid);
-  bool computeValue(const Query& query, ref<Expr> &result) {
+  bool computeValidity(const Query &, Solver::Validity &result) override;
+  bool computeTruth(const Query &, bool &isValid) override;
+  bool computeValue(const Query &query, ref<Expr> &result) override {
     ++stats::queryCacheMisses;
     return solver->impl->computeValue(query, result);
   }
-  bool computeInitialValues(const Query& query,
-                            const std::vector<const Array*> &objects,
-                            std::vector< std::vector<unsigned char> > &values,
-                            bool &hasSolution) {
+  bool computeInitialValues(const Query &query,
+                            const std::vector<const Array *> &objects,
+                            std::vector<std::vector<unsigned char>> &values,
+                            bool &hasSolution) override {
     ++stats::queryCacheMisses;
-    return solver->impl->computeInitialValues(query, objects, values, 
+    return solver->impl->computeInitialValues(query, objects, values,
                                               hasSolution);
   }
-  SolverRunStatus getOperationStatusCode();
-  char *getConstraintLog(const Query&);
-  void setCoreSolverTimeout(time::Span timeout);
+  SolverRunStatus getOperationStatusCode() override;
+  std::string getConstraintLog(const Query &) override;
+  void setCoreSolverTimeout(time::Span timeout) override;
 };
 
 /** @returns the canonical version of the given query.  The reference
@@ -245,7 +246,7 @@ SolverImpl::SolverRunStatus CachingSolver::getOperationStatusCode() {
   return solver->impl->getOperationStatusCode();
 }
 
-char *CachingSolver::getConstraintLog(const Query& query) {
+std::string CachingSolver::getConstraintLog(const Query& query) {
   return solver->impl->getConstraintLog(query);
 }
 
@@ -255,6 +256,8 @@ void CachingSolver::setCoreSolverTimeout(time::Span timeout) {
 
 ///
 
-Solver *klee::createCachingSolver(Solver *_solver) {
-  return new Solver(new CachingSolver(_solver));
+std::unique_ptr<Solver>
+klee::createCachingSolver(std::unique_ptr<Solver> solver) {
+  return std::make_unique<Solver>(
+      std::make_unique<CachingSolver>(std::move(solver)));
 }

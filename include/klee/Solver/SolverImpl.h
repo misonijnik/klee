@@ -23,12 +23,12 @@ namespace klee {
 
   /// SolverImpl - Abstract base clase for solver implementations.
   class SolverImpl {
-    // DO NOT IMPLEMENT.
-    SolverImpl(const SolverImpl&);
-    void operator=(const SolverImpl&);
-    
   public:
-    SolverImpl() {}
+    SolverImpl() = default;
+
+    SolverImpl(const SolverImpl&) = delete;
+    SolverImpl& operator=(const SolverImpl&) = delete;
+
     virtual ~SolverImpl();
 
     enum SolverRunStatus { SOLVER_RUN_STATUS_SUCCESS_SOLVABLE,
@@ -101,9 +101,9 @@ namespace klee {
     /// status code
     static const char* getOperationStatusString(SolverRunStatus statusCode);
 
-    virtual char *getConstraintLog(const Query& query)  {
-        // dummy
-        return nullptr;
+    virtual std::string getConstraintLog(const Query &query) {
+      // dummy
+      return {};
     }
 
     virtual void setCoreSolverTimeout(time::Span timeout) {};

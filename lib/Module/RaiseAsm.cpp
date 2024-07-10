@@ -11,6 +11,9 @@
 #include "klee/Config/Version.h"
 #include "klee/Support/ErrorHandling.h"
 
+#include "klee/Support/CompilerWarning.h"
+DISABLE_WARNING_PUSH
+DISABLE_WARNING_DEPRECATED_DECLARATIONS
 #include "llvm/CodeGen/TargetLowering.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/IR/Function.h"
@@ -19,9 +22,13 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/Host.h"
+#if LLVM_VERSION_CODE >= LLVM_VERSION(14, 0)
+#include "llvm/MC/TargetRegistry.h"
+#else
 #include "llvm/Support/TargetRegistry.h"
+#endif
 #include "llvm/Target/TargetMachine.h"
-
+DISABLE_WARNING_POP
 
 using namespace llvm;
 using namespace klee;
@@ -42,11 +49,7 @@ bool RaiseAsmPass::runOnInstruction(Module &M, Instruction *I) {
   if (!ci)
     return false;
 
-#if LLVM_VERSION_CODE >= LLVM_VERSION(8, 0)
   InlineAsm *ia = dyn_cast<InlineAsm>(ci->getCalledOperand());
-#else
-  InlineAsm *ia = dyn_cast<InlineAsm>(ci->getCalledValue());
-#endif
   if (!ia)
     return false;
 
@@ -88,8 +91,14 @@ bool RaiseAsmPass::runOnModule(Module &M) {
     klee_warning("Warning: unable to select target: %s", Err.c_str());
     TLI = 0;
   } else {
+#if LLVM_VERSION_CODE >= LLVM_VERSION(16, 0)
+    TM = Target->createTargetMachine(TargetTriple, "", "", TargetOptions(),
+                                     std::nullopt);
+#else
     TM = Target->createTargetMachine(TargetTriple, "", "", TargetOptions(),
                                      None);
+#endif
+
     TLI = TM->getSubtargetImpl(*(M.begin()))->getTargetLowering();
 
     triple = llvm::Triple(TargetTriple);

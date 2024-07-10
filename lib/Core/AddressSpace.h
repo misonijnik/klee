@@ -126,7 +126,11 @@ namespace klee {
 
     /// Copy the concrete values of all managed ObjectStates into the
     /// actual system memory location they were allocated at.
-    void copyOutConcretes();
+    /// Returns the (hypothetical) number of pages needed provided each written
+    /// object occupies (at least) a single page.
+    std::size_t copyOutConcretes();
+
+    void copyOutConcrete(const MemoryObject *mo, const ObjectState *os) const;
 
     /// Copy the concrete values of all managed ObjectStates back from
     /// the actual system memory location they were allocated
@@ -134,18 +138,22 @@ namespace klee {
     /// potentially copied) if the memory values are different from
     /// the current concrete values.
     ///
-    /// \retval true The copy succeeded. 
-    /// \retval false The copy failed because a read-only object was modified.
-    bool copyInConcretes();
+    /// \param concretize fully concretize the object representation if changed
+    /// externally
+    /// \return true if copy succeeded, otherwise false (e.g. try to modify
+    /// read-only object)
+    bool copyInConcretes(bool concretize);
 
     /// Updates the memory object with the raw memory from the address
     ///
     /// @param mo The MemoryObject to update
     /// @param os The associated memory state containing the actual data
     /// @param src_address the address to copy from
+    /// @param concretize fully concretize the object representation if changed
+    /// externally
     /// @return
     bool copyInConcrete(const MemoryObject *mo, const ObjectState *os,
-                        uint64_t src_address);
+                        uint64_t src_address, bool concretize);
   };
 } // End klee namespace
 

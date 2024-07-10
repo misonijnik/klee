@@ -11,6 +11,10 @@
 
 #include "klee/Config/Version.h"
 #include "klee/Support/ErrorHandling.h"
+
+#include "klee/Support/CompilerWarning.h"
+DISABLE_WARNING_PUSH
+DISABLE_WARNING_DEPRECATED_DECLARATIONS
 #include "llvm/Analysis/MemoryBuiltins.h"
 #include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/IR/Constants.h"
@@ -21,15 +25,13 @@
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
-#if LLVM_VERSION_CODE >= LLVM_VERSION(10, 0)
 #include "llvm/IR/IntrinsicsX86.h"
-#endif
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Pass.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
-
+DISABLE_WARNING_POP
 using namespace llvm;
 
 namespace klee {
@@ -66,10 +68,10 @@ bool IntrinsicCleanerPass::runOnBasicBlock(BasicBlock &b, Module &M) {
       case Intrinsic::vastart:
       case Intrinsic::vaend:
       case Intrinsic::fabs:
-#if LLVM_VERSION_CODE >= LLVM_VERSION(7, 0)
+      case Intrinsic::fma:
+      case Intrinsic::fmuladd:
       case Intrinsic::fshr:
       case Intrinsic::fshl:
-#endif
 #if LLVM_VERSION_CODE >= LLVM_VERSION(12, 0)
       case Intrinsic::abs:
       case Intrinsic::smax:
@@ -96,9 +98,14 @@ bool IntrinsicCleanerPass::runOnBasicBlock(BasicBlock &b, Module &M) {
               Builder.CreatePointerCast(dst, i8pp, "vacopy.cast.dst");
           auto castedSrc =
               Builder.CreatePointerCast(src, i8pp, "vacopy.cast.src");
+#if LLVM_VERSION_CODE >= LLVM_VERSION(15, 0)
+          auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), castedSrc,
+                                         "vacopy.read");
+#else
           auto load =
               Builder.CreateLoad(castedSrc->getType()->getPointerElementType(),
                                  castedSrc, "vacopy.read");
+#endif
           Builder.CreateStore(load, castedDst, false /* isVolatile */);
         } else {
           assert(WordSize == 8 && "Invalid word size!");
@@ -106,9 +113,13 @@ bool IntrinsicCleanerPass::runOnBasicBlock(BasicBlock &b, Module &M) {
           auto pDst = Builder.CreatePointerCast(dst, i64p, "vacopy.cast.dst");
           auto pSrc = Builder.CreatePointerCast(src, i64p, "vacopy.cast.src");
 
+#if LLVM_VERSION_CODE >= LLVM_VERSION(15, 0)
+          auto pSrcType = Builder.getPtrTy();
+          auto pDstType = Builder.getPtrTy();
+#else
           auto pSrcType = pSrc->getType()->getPointerElementType();
           auto pDstType = pDst->getType()->getPointerElementType();
-
+#endif
           auto val = Builder.CreateLoad(pSrcType, pSrc);
           Builder.CreateStore(val, pDst, ii);
 
@@ -214,7 +225,6 @@ bool IntrinsicCleanerPass::runOnBasicBlock(BasicBlock &b, Module &M) {
         dirty = true;
         break;
       }
-#if LLVM_VERSION_CODE >= LLVM_VERSION(8, 0)
       case Intrinsic::sadd_sat:
       case Intrinsic::ssub_sat:
       case Intrinsic::uadd_sat:
@@ -282,17 +292,12 @@ bool IntrinsicCleanerPass::runOnBasicBlock(BasicBlock &b, Module &M) {
         dirty = true;
         break;
       }
-#endif
 
       case Intrinsic::trap: {
         // Intrinsic instruction "llvm.trap" found. Directly lower it to
         // a call of the abort() function.
         auto C = M.getOrInsertFunction("abort", Type::getVoidTy(ctx));
-#if LLVM_VERSION_CODE >= LLVM_VERSION(9, 0)
         if (auto *F = dyn_cast<Function>(C.getCallee())) {
-#else
-        if (auto *F = dyn_cast<Function>(C)) {
-#endif
           F->setDoesNotReturn();
           F->setDoesNotThrow();
         }
@@ -324,7 +329,6 @@ bool IntrinsicCleanerPass::runOnBasicBlock(BasicBlock &b, Module &M) {
         dirty = true;
         break;
       }
-#if LLVM_VERSION_CODE >= LLVM_VERSION(8, 0)
       case Intrinsic::is_constant: {
         if(auto* constant = llvm::ConstantFoldInstruction(ii, ii->getModule()->getDataLayout()))
           ii->replaceAllUsesWith(constant);
@@ -334,7 +338,6 @@ bool IntrinsicCleanerPass::runOnBasicBlock(BasicBlock &b, Module &M) {
         dirty = true;
         break;
       }
-#endif
 
       // The following intrinsics are currently handled by LowerIntrinsicCall
       // (Invoking LowerIntrinsicCall with any intrinsics not on this
@@ -350,17 +353,22 @@ bool IntrinsicCleanerPass::runOnBasicBlock(BasicBlock &b, Module &M) {
       case Intrinsic::ctpop:
       case Intrinsic::cttz:
       case Intrinsic::dbg_declare:
-#if LLVM_VERSION_CODE >= LLVM_VERSION(7, 0)
       case Intrinsic::dbg_label:
-#endif
 #ifndef SUPPORT_KLEE_EH_CXX
       case Intrinsic::eh_typeid_for:
 #endif
       case Intrinsic::exp2:
       case Intrinsic::exp:
       case Intrinsic::expect:
+#if LLVM_VERSION_CODE >= LLVM_VERSION(12, 0)
+      case Intrinsic::experimental_noalias_scope_decl:
+#endif
       case Intrinsic::floor:
+#if LLVM_VERSION_CODE < LLVM_VERSION(16, 0)
       case Intrinsic::flt_rounds:
+#else
+      case Intrinsic::get_rounding:
+#endif
       case Intrinsic::frameaddress:
       case Intrinsic::get_dynamic_area_offset:
       case Intrinsic::invariant_end:
@@ -381,9 +389,7 @@ bool IntrinsicCleanerPass::runOnBasicBlock(BasicBlock &b, Module &M) {
       case Intrinsic::readcyclecounter:
       case Intrinsic::returnaddress:
       case Intrinsic::round:
-#if LLVM_VERSION_CODE >= LLVM_VERSION(11, 0)
       case Intrinsic::roundeven:
-#endif
       case Intrinsic::sin:
       case Intrinsic::sqrt:
       case Intrinsic::stackrestore:

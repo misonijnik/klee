@@ -17,6 +17,8 @@
 
 #include "llvm/Support/raw_ostream.h"
 
+#include <memory>
+
 using namespace klee;
 
 /// This abstract class represents a solver that is capable of logging
@@ -26,7 +28,7 @@ using namespace klee;
 class QueryLoggingSolver : public SolverImpl {
 
 protected:
-  Solver *solver;
+  std::unique_ptr<Solver> solver;
   std::unique_ptr<llvm::raw_ostream> os;
   // @brief Buffer used by logBuffer
   std::string BufferString;
@@ -56,22 +58,21 @@ protected:
   void flushBufferConditionally(bool writeToFile);
 
 public:
-  QueryLoggingSolver(Solver *_solver, std::string path, const std::string &commentSign,
-                     time::Span queryTimeToLog, bool logTimedOut);
-
-  virtual ~QueryLoggingSolver();
+  QueryLoggingSolver(std::unique_ptr<Solver> solver, std::string path,
+                     const std::string &commentSign, time::Span queryTimeToLog,
+                     bool logTimedOut);
 
   /// implementation of the SolverImpl interface
-  bool computeTruth(const Query &query, bool &isValid);
-  bool computeValidity(const Query &query, Solver::Validity &result);
-  bool computeValue(const Query &query, ref<Expr> &result);
+  bool computeTruth(const Query &query, bool &isValid) override;
+  bool computeValidity(const Query &query, Solver::Validity &result) override;
+  bool computeValue(const Query &query, ref<Expr> &result) override;
   bool computeInitialValues(const Query &query,
                             const std::vector<const Array *> &objects,
-                            std::vector<std::vector<unsigned char> > &values,
-                            bool &hasSolution);
-  SolverRunStatus getOperationStatusCode();
-  char *getConstraintLog(const Query &);
-  void setCoreSolverTimeout(time::Span timeout);
+                            std::vector<std::vector<unsigned char>> &values,
+                            bool &hasSolution) override;
+  SolverRunStatus getOperationStatusCode() override;
+  std::string getConstraintLog(const Query &) override;
+  void setCoreSolverTimeout(time::Span timeout) override;
 };
 
 #endif /* KLEE_QUERYLOGGINGSOLVER_H */

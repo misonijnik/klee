@@ -23,8 +23,8 @@ llvm::cl::OptionCategory MergeCat("Path merging options",
 
 llvm::cl::opt<bool> UseMerge(
     "use-merge", llvm::cl::init(false),
-    llvm::cl::desc("Enable support for path merging via klee_open_merge() and "
-                   "klee_close_merge() (default=false)"),
+    llvm::cl::desc("Enable support for path merging via klee_open_merge and "
+                   "klee_close_merge (default=false)"),
     llvm::cl::cat(klee::MergeCat));
 
 llvm::cl::opt<bool> DebugLogMerge(
@@ -106,7 +106,7 @@ void MergeHandler::addClosedState(ExecutionState *es,
 
     for (auto& mState: cpv) {
       if (mState->merge(*es)) {
-        executor->terminateStateEarly(*es, "merged state.", StateTerminationType::Merge);
+        executor->terminateStateEarlyAlgorithm(*es, "merged state.", StateTerminationType::Merge);
         executor->mergingSearcher->inCloseMerge.erase(es);
         mergedSuccessful = true;
         break;

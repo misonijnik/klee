@@ -9,44 +9,28 @@
 
 #define DEBUG_TYPE "KModule"
 
+#include "klee/Module/KModule.h"
+
+#include "ModuleHelper.h"
 #include "Passes.h"
 
 #include "klee/Config/Version.h"
 #include "klee/Core/Interpreter.h"
-#include "klee/Support/OptionCategories.h"
 #include "klee/Module/Cell.h"
 #include "klee/Module/InstructionInfoTable.h"
 #include "klee/Module/KInstruction.h"
-#include "klee/Module/KModule.h"
 #include "klee/Support/Debug.h"
 #include "klee/Support/ErrorHandling.h"
 #include "klee/Support/ModuleUtil.h"
+#include "klee/Support/OptionCategories.h"
 
+#include "klee/Support/CompilerWarning.h"
+
+DISABLE_WARNING_PUSH
+DISABLE_WARNING_DEPRECATED_DECLARATIONS
 #include "llvm/Bitcode/BitcodeWriter.h"
-#if LLVM_VERSION_CODE < LLVM_VERSION(8, 0)
-#include "llvm/IR/CallSite.h"
-#endif
-#include "llvm/IR/DataLayout.h"
 #include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/Instructions.h"
-#include "llvm/IR/LegacyPassManager.h"
-#include "llvm/IR/LLVMContext.h"
-#include "llvm/IR/Module.h"
-#include "llvm/IR/ValueSymbolTable.h"
-#include "llvm/IR/Verifier.h"
-#include "llvm/Linker/Linker.h"
-#include "llvm/Support/CommandLine.h"
-#include "llvm/Support/Path.h"
-#include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/raw_os_ostream.h"
-#include "llvm/Transforms/Scalar.h"
-#if LLVM_VERSION_CODE >= LLVM_VERSION(8, 0)
-#include "llvm/Transforms/Scalar/Scalarizer.h"
-#endif
-#include "llvm/Transforms/Utils/Cloning.h"
-#if LLVM_VERSION_CODE >= LLVM_VERSION(7, 0)
-#include "llvm/Transforms/Utils.h"
-#endif
+DISABLE_WARNING_POP
 
 #include <sstream>
 
@@ -60,12 +44,6 @@ cl::OptionCategory
 }
 
 namespace {
-  enum SwitchImplType {
-    eSwitchTypeSimple,
-    eSwitchTypeLLVM,
-    eSwitchTypeInternal
-  };
-
   cl::opt<bool>
   OutputSource("output-source",
                cl::desc("Write the assembly for the final transformed source (default=true)"),
@@ -74,20 +52,10 @@ namespace {
 
   cl::opt<bool>
   OutputModule("output-module",
-               cl::desc("Write the bitcode for the final transformed module"),
+               cl::desc("Write the bitcode for the final transformed module (default=false)"),
                cl::init(false),
 	       cl::cat(ModuleCat));
 
-  cl::opt<SwitchImplType>
-  SwitchType("switch-type", cl::desc("Select the implementation of switch (default=internal)"),
-             cl::values(clEnumValN(eSwitchTypeSimple, "simple", 
-                                   "lower to ordered branches"),
-                        clEnumValN(eSwitchTypeLLVM, "llvm", 
-                                   "lower using LLVM"),
-                        clEnumValN(eSwitchTypeInternal, "internal", 
-                                   "execute switch internally")),
-             cl::init(eSwitchTypeInternal),
-	     cl::cat(ModuleCat));
   
   cl::opt<bool>
   DebugPrintEscapingFunctions("debug-print-escaping-functions", 
@@ -105,13 +73,20 @@ namespace {
                              cl::desc("Allow optimization of functions that "
                                       "contain KLEE calls (default=true)"),
                              cl::init(true), cl::cat(ModuleCat));
-}
+cl::opt<SwitchImplType> SwitchType(
+    "switch-type",
+    cl::desc("Select the implementation of switch (default=internal)"),
+    cl::values(clEnumValN(SwitchImplType::eSwitchTypeSimple, "simple",
+                          "lower to ordered branches"),
+               clEnumValN(SwitchImplType::eSwitchTypeLLVM, "llvm",
+                          "lower using LLVM"),
+               clEnumValN(SwitchImplType::eSwitchTypeInternal, "internal",
+                          "execute switch internally")),
+    cl::init(SwitchImplType::eSwitchTypeInternal), cl::cat(ModuleCat));
+
+} // namespace
 
 /***/
-
-namespace llvm {
-extern void Optimize(Module *, llvm::ArrayRef<const char *> preservedFunctions);
-}
 
 // what a hack
 static Function *getStubFunctionForCtorList(Module *m,
@@ -138,14 +113,8 @@ static Function *getStubFunctionForCtorList(Module *m,
     for (unsigned i=0; i<arr->getNumOperands(); i++) {
       auto cs = cast<ConstantStruct>(arr->getOperand(i));
       // There is a third element in global_ctor elements (``i8 @data``).
-#if LLVM_VERSION_CODE >= LLVM_VERSION(9, 0)
       assert(cs->getNumOperands() == 3 &&
              "unexpected element in ctor initializer list");
-#else
-      // before LLVM 9.0, the third operand was optional
-      assert((cs->getNumOperands() == 2 || cs->getNumOperands() == 3) &&
-             "unexpected element in ctor initializer list");
-#endif
       auto fp = cs->getOperand(1);
       if (!fp->isNullValue()) {
         if (auto ce = dyn_cast<llvm::ConstantExpr>(fp))
@@ -165,9 +134,8 @@ static Function *getStubFunctionForCtorList(Module *m,
   return fn;
 }
 
-static void
-injectStaticConstructorsAndDestructors(Module *m,
-                                       llvm::StringRef entryFunction) {
+void klee::injectStaticConstructorsAndDestructors(
+    Module *m, llvm::StringRef entryFunction) {
   GlobalVariable *ctors = m->getNamedGlobal("llvm.global_ctors");
   GlobalVariable *dtors = m->getNamedGlobal("llvm.global_dtors");
 
@@ -225,44 +193,12 @@ bool KModule::link(std::vector<std::unique_ptr<llvm::Module>> &modules,
 }
 
 void KModule::instrument(const Interpreter::ModuleOptions &opts) {
-  // Inject checks prior to optimization... we also perform the
-  // invariant transformations that we will end up doing later so that
-  // optimize is seeing what is as close as possible to the final
-  // module.
-  legacy::PassManager pm;
-  pm.add(new RaiseAsmPass());
-
-  // This pass will scalarize as much code as possible so that the Executor
-  // does not need to handle operands of vector type for most instructions
-  // other than InsertElementInst and ExtractElementInst.
-  //
-  // NOTE: Must come before division/overshift checks because those passes
-  // don't know how to handle vector instructions.
-  pm.add(createScalarizerPass());
-
-  // This pass will replace atomic instructions with non-atomic operations
-  pm.add(createLowerAtomicPass());
-  if (opts.CheckDivZero) pm.add(new DivCheckPass());
-  if (opts.CheckOvershift) pm.add(new OvershiftCheckPass());
-
-  pm.add(new IntrinsicCleanerPass(*targetData));
-  pm.run(*module);
+  klee::instrument(opts.CheckDivZero, opts.CheckOvershift, module.get());
 }
 
 void KModule::optimiseAndPrepare(
     const Interpreter::ModuleOptions &opts,
     llvm::ArrayRef<const char *> preservedFunctions) {
-  // Preserve all functions containing klee-related function calls from being
-  // optimised around
-  if (!OptimiseKLEECall) {
-    legacy::PassManager pm;
-    pm.add(new OptNonePass());
-    pm.run(*module);
-  }
-
-  if (opts.Optimize)
-    Optimize(module.get(), preservedFunctions);
-
   // Add internal functions which are not used to check if instructions
   // have been already visited
   if (opts.CheckDivZero)
@@ -270,28 +206,8 @@ void KModule::optimiseAndPrepare(
   if (opts.CheckOvershift)
     addInternalFunction("klee_overshift_check");
 
-  // Needs to happen after linking (since ctors/dtors can be modified)
-  // and optimization (since global optimization can rewrite lists).
-  injectStaticConstructorsAndDestructors(module.get(), opts.EntryPoint);
-
-  // Finally, run the passes that maintain invariants we expect during
-  // interpretation. We run the intrinsic cleaner just in case we
-  // linked in something with intrinsics but any external calls are
-  // going to be unresolved. We really need to handle the intrinsics
-  // directly I think?
-  legacy::PassManager pm3;
-  pm3.add(createCFGSimplificationPass());
-  switch(SwitchType) {
-  case eSwitchTypeInternal: break;
-  case eSwitchTypeSimple: pm3.add(new LowerSwitchPass()); break;
-  case eSwitchTypeLLVM:  pm3.add(createLowerSwitchPass()); break;
-  default: klee_error("invalid --switch-type");
-  }
-  pm3.add(new IntrinsicCleanerPass(*targetData));
-  pm3.add(createScalarizerPass());
-  pm3.add(new PhiCleanerPass());
-  pm3.add(new FunctionAliasPass());
-  pm3.run(*module);
+  klee::optimiseAndPrepare(OptimiseKLEECall, opts.Optimize, SwitchType,
+                           opts.EntryPoint, preservedFunctions, module.get());
 }
 
 void KModule::manifest(InterpreterHandler *ih, bool forceSourceOutput) {
@@ -303,11 +219,7 @@ void KModule::manifest(InterpreterHandler *ih, bool forceSourceOutput) {
 
   if (OutputModule) {
     std::unique_ptr<llvm::raw_fd_ostream> f(ih->openOutputFile("final.bc"));
-#if LLVM_VERSION_CODE >= LLVM_VERSION(7, 0)
-    WriteBitcodeToFile(*module, *f);
-#else
-    WriteBitcodeToFile(module.get(), *f);
-#endif
+    llvm::WriteBitcodeToFile(*module, *f);
   }
 
   /* Build shadow structures */
@@ -320,7 +232,6 @@ void KModule::manifest(InterpreterHandler *ih, bool forceSourceOutput) {
   for (auto &Function : *module) {
     if (Function.isDeclaration()) {
       declarations.push_back(&Function);
-      continue;
     }
 
     auto kf = std::unique_ptr<KFunction>(new KFunction(&Function, this));
@@ -357,23 +268,7 @@ void KModule::manifest(InterpreterHandler *ih, bool forceSourceOutput) {
   }
 }
 
-void KModule::checkModule() {
-  InstructionOperandTypeCheckPass *operandTypeCheckPass =
-      new InstructionOperandTypeCheckPass();
-
-  legacy::PassManager pm;
-  if (!DontVerify)
-    pm.add(createVerifierPass());
-  pm.add(operandTypeCheckPass);
-  pm.run(*module);
-
-  // Enforce the operand type invariants that the Executor expects.  This
-  // implicitly depends on the "Scalarizer" pass to be run in order to succeed
-  // in the presence of vector instructions.
-  if (!operandTypeCheckPass->checkPassed()) {
-    klee_error("Unexpected instruction operand types detected");
-  }
-}
+void KModule::checkModule() { klee::checkModule(DontVerify, module.get()); }
 
 KConstant* KModule::getKConstant(const Constant *c) {
   auto it = constantMap.find(c);
@@ -423,7 +318,8 @@ static int getOperandNum(Value *v,
 
 KFunction::KFunction(llvm::Function *_function,
                      KModule *km) 
-  : function(_function),
+  : KCallable(CK_Function),
+    function(_function),
     numArgs(function->arg_size()),
     numInstructions(0),
     trackCoverage(true) {
@@ -468,18 +364,13 @@ KFunction::KFunction(llvm::Function *_function,
       ki->dest = registerMap[inst];
 
       if (isa<CallInst>(it) || isa<InvokeInst>(it)) {
-#if LLVM_VERSION_CODE >= LLVM_VERSION(8, 0)
-        const CallBase &cs = cast<CallBase>(*inst);
-        Value *val = cs.getCalledOperand();
-#else
-        const CallSite cs(inst);
-        Value *val = cs.getCalledValue();
-#endif
-        unsigned numArgs = cs.arg_size();
+        const CallBase &cb = cast<CallBase>(*inst);
+        Value *val = cb.getCalledOperand();
+        unsigned numArgs = cb.arg_size();
         ki->operands = new int[numArgs+1];
         ki->operands[0] = getOperandNum(val, registerMap, km, ki);
         for (unsigned j=0; j<numArgs; j++) {
-          Value *v = cs.getArgOperand(j);
+          Value *v = cb.getArgOperand(j);
           ki->operands[j+1] = getOperandNum(v, registerMap, km, ki);
         }
       } else {

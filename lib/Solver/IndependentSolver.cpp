@@ -21,7 +21,9 @@
 
 #include <list>
 #include <map>
+#include <memory>
 #include <ostream>
+#include <utility>
 #include <vector>
 
 using namespace klee;
@@ -388,23 +390,22 @@ void calculateArrayReferences(const IndependentElementSet & ie,
 
 class IndependentSolver : public SolverImpl {
 private:
-  Solver *solver;
+  std::unique_ptr<Solver> solver;
 
 public:
-  IndependentSolver(Solver *_solver) 
-    : solver(_solver) {}
-  ~IndependentSolver() { delete solver; }
+  IndependentSolver(std::unique_ptr<Solver> solver)
+      : solver(std::move(solver)) {}
 
-  bool computeTruth(const Query&, bool &isValid);
-  bool computeValidity(const Query&, Solver::Validity &result);
-  bool computeValue(const Query&, ref<Expr> &result);
-  bool computeInitialValues(const Query& query,
-                            const std::vector<const Array*> &objects,
-                            std::vector< std::vector<unsigned char> > &values,
-                            bool &hasSolution);
-  SolverRunStatus getOperationStatusCode();
-  char *getConstraintLog(const Query&);
-  void setCoreSolverTimeout(time::Span timeout);
+  bool computeTruth(const Query &, bool &isValid) override;
+  bool computeValidity(const Query &, Solver::Validity &result) override;
+  bool computeValue(const Query &, ref<Expr> &result) override;
+  bool computeInitialValues(const Query &query,
+                            const std::vector<const Array *> &objects,
+                            std::vector<std::vector<unsigned char>> &values,
+                            bool &hasSolution) override;
+  SolverRunStatus getOperationStatusCode() override;
+  std::string getConstraintLog(const Query &) override;
+  void setCoreSolverTimeout(time::Span timeout) override;
 };
   
 bool IndependentSolver::computeValidity(const Query& query,
@@ -442,7 +443,7 @@ bool assertCreatedPointEvaluatesToTrue(
     std::vector<std::vector<unsigned char>> &values,
     std::map<const Array *, std::vector<unsigned char>> &retMap) {
   // _allowFreeValues is set to true so that if there are missing bytes in the
-  // assigment we will end up with a non ConstantExpr after evaluating the
+  // assignment we will end up with a non ConstantExpr after evaluating the
   // assignment and fail
   Assignment assign = Assignment(objects, values, /*_allowFreeValues=*/true);
 
@@ -549,7 +550,7 @@ SolverImpl::SolverRunStatus IndependentSolver::getOperationStatusCode() {
   return solver->impl->getOperationStatusCode();      
 }
 
-char *IndependentSolver::getConstraintLog(const Query& query) {
+std::string IndependentSolver::getConstraintLog(const Query& query) {
   return solver->impl->getConstraintLog(query);
 }
 
@@ -557,6 +558,8 @@ void IndependentSolver::setCoreSolverTimeout(time::Span timeout) {
   solver->impl->setCoreSolverTimeout(timeout);
 }
 
-Solver *klee::createIndependentSolver(Solver *s) {
-  return new Solver(new IndependentSolver(s));
+std::unique_ptr<Solver>
+klee::createIndependentSolver(std::unique_ptr<Solver> s) {
+  return std::make_unique<Solver>(
+      std::make_unique<IndependentSolver>(std::move(s)));
 }

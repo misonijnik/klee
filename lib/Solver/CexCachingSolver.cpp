@@ -23,6 +23,9 @@
 
 #include "llvm/Support/CommandLine.h"
 
+#include <memory>
+#include <utility>
+
 using namespace klee;
 using namespace llvm;
 
@@ -45,11 +48,6 @@ cl::opt<bool>
                               "before asking the SMT solver (default=false)"),
                      cl::cat(SolvingCat));
 
-cl::opt<bool> CexCacheExperimental(
-    "cex-cache-exp", cl::init(false),
-    cl::desc("Optimization for validity queries (default=false)"),
-    cl::cat(SolvingCat));
-
 } // namespace
 
 ///
@@ -66,7 +64,7 @@ struct AssignmentLessThan {
 class CexCachingSolver : public SolverImpl {
   typedef std::set<Assignment*, AssignmentLessThan> assignmentsTable_ty;
 
-  Solver *solver;
+  std::unique_ptr<Solver> solver;
   
   MapOfSets<ref<Expr>, Assignment*> cache;
   // memo table
@@ -85,19 +83,20 @@ class CexCachingSolver : public SolverImpl {
   bool getAssignment(const Query& query, Assignment *&result);
   
 public:
-  CexCachingSolver(Solver *_solver) : solver(_solver) {}
+  CexCachingSolver(std::unique_ptr<Solver> solver)
+      : solver(std::move(solver)) {}
   ~CexCachingSolver();
-  
-  bool computeTruth(const Query&, bool &isValid);
-  bool computeValidity(const Query&, Solver::Validity &result);
-  bool computeValue(const Query&, ref<Expr> &result);
-  bool computeInitialValues(const Query&,
-                            const std::vector<const Array*> &objects,
-                            std::vector< std::vector<unsigned char> > &values,
-                            bool &hasSolution);
-  SolverRunStatus getOperationStatusCode();
-  char *getConstraintLog(const Query& query);
-  void setCoreSolverTimeout(time::Span timeout);
+
+  bool computeTruth(const Query &, bool &isValid) override;
+  bool computeValidity(const Query &, Solver::Validity &result) override;
+  bool computeValue(const Query &, ref<Expr> &result) override;
+  bool computeInitialValues(const Query &,
+                            const std::vector<const Array *> &objects,
+                            std::vector<std::vector<unsigned char>> &values,
+                            bool &hasSolution) override;
+  SolverRunStatus getOperationStatusCode() override;
+  std::string getConstraintLog(const Query &query) override;
+  void setCoreSolverTimeout(time::Span timeout) override;
 };
 
 ///
@@ -265,7 +264,6 @@ bool CexCachingSolver::getAssignment(const Query& query, Assignment *&result) {
 
 CexCachingSolver::~CexCachingSolver() {
   cache.clear();
-  delete solver;
   for (assignmentsTable_ty::iterator it = assignmentsTable.begin(), 
          ie = assignmentsTable.end(); it != ie; ++it)
     delete *it;
@@ -298,20 +296,6 @@ bool CexCachingSolver::computeValidity(const Query& query,
 bool CexCachingSolver::computeTruth(const Query& query,
                                     bool &isValid) {
   TimerStatIncrementer t(stats::cexCacheTime);
-
-  // There is a small amount of redundancy here. We only need to know
-  // truth and do not really need to compute an assignment. This means
-  // that we could check the cache to see if we already know that
-  // state ^ query has no assignment. In that case, by the validity of
-  // state, we know that state ^ !query must have an assignment, and
-  // so query cannot be true (valid). This does get hits, but doesn't
-  // really seem to be worth the overhead.
-
-  if (CexCacheExperimental) {
-    Assignment *a;
-    if (lookupAssignment(query.negateExpr(), a) && !a)
-      return false;
-  }
 
   Assignment *a;
   if (!getAssignment(query, a))
@@ -373,7 +357,7 @@ SolverImpl::SolverRunStatus CexCachingSolver::getOperationStatusCode() {
   return solver->impl->getOperationStatusCode();
 }
 
-char *CexCachingSolver::getConstraintLog(const Query& query) {
+std::string CexCachingSolver::getConstraintLog(const Query& query) {
   return solver->impl->getConstraintLog(query);
 }
 
@@ -383,6 +367,8 @@ void CexCachingSolver::setCoreSolverTimeout(time::Span timeout) {
 
 ///
 
-Solver *klee::createCexCachingSolver(Solver *_solver) {
-  return new Solver(new CexCachingSolver(_solver));
+std::unique_ptr<Solver>
+klee::createCexCachingSolver(std::unique_ptr<Solver> solver) {
+  return std::make_unique<Solver>(
+      std::make_unique<CexCachingSolver>(std::move(solver)));
 }

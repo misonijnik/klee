@@ -38,6 +38,10 @@ cl::opt<bool> DebugLogStateMerge(
     "debug-log-state-merge", cl::init(false),
     cl::desc("Debug information for underlying state merging (default=false)"),
     cl::cat(MergeCat));
+  
+}
+namespace klee {
+  extern cl::opt<bool> SingleObjectResolution; 
 }
 
 /***/
@@ -70,10 +74,14 @@ StackFrame::~StackFrame() {
 
 /***/
 
-ExecutionState::ExecutionState(KFunction *kf)
+ExecutionState::ExecutionState(KFunction *kf, MemoryManager *mm)
     : pc(kf->instructions), prevPC(pc) {
   pushFrame(nullptr, kf);
   setID();
+  if (mm->stackFactory && mm->heapFactory) {
+    stackAllocator = mm->stackFactory.makeAllocator();
+    heapAllocator = mm->heapFactory.makeAllocator();
+  }
 }
 
 ExecutionState::~ExecutionState() {
@@ -91,6 +99,8 @@ ExecutionState::ExecutionState(const ExecutionState& state):
     incomingBBIndex(state.incomingBBIndex),
     depth(state.depth),
     addressSpace(state.addressSpace),
+    stackAllocator(state.stackAllocator),
+    heapAllocator(state.heapAllocator),
     constraints(state.constraints),
     pathOS(state.pathOS),
     symPathOS(state.symPathOS),
@@ -105,7 +115,9 @@ ExecutionState::ExecutionState(const ExecutionState& state):
                              ? state.unwindingInformation->clone()
                              : nullptr),
     coveredNew(state.coveredNew),
-    forkDisabled(state.forkDisabled) {
+    forkDisabled(state.forkDisabled),
+    base_addrs(state.base_addrs),
+    base_mos(state.base_mos) {
   for (const auto &cur_mergehandler: openMergeStack)
     cur_mergehandler->addOpenState(this);
 }
@@ -127,9 +139,33 @@ void ExecutionState::pushFrame(KInstIterator caller, KFunction *kf) {
 
 void ExecutionState::popFrame() {
   const StackFrame &sf = stack.back();
-  for (const auto * memoryObject : sf.allocas)
+  for (const auto *memoryObject : sf.allocas) {
+    deallocate(memoryObject);
     addressSpace.unbindObject(memoryObject);
+  }
   stack.pop_back();
+}
+
+void ExecutionState::deallocate(const MemoryObject *mo) {
+  if (SingleObjectResolution) {
+    auto mos_it = base_mos.find(mo->address);
+    if (mos_it != base_mos.end()) {
+      for (auto it = mos_it->second.begin(); it != mos_it->second.end(); ++it) {
+        base_addrs.erase(*it);
+      }
+      base_mos.erase(mos_it->first);
+    }
+  }
+
+  if (!stackAllocator || !heapAllocator)
+    return;
+
+  auto address = reinterpret_cast<void *>(mo->address);
+  if (mo->isLocal) {
+    stackAllocator.free(address, std::max(mo->size, mo->alignment));
+  } else {
+    heapAllocator.free(address, std::max(mo->size, mo->alignment));
+  }
 }
 
 void ExecutionState::addSymbolic(const MemoryObject *mo, const Array *array) {
@@ -327,18 +363,22 @@ void ExecutionState::dumpStack(llvm::raw_ostream &out) const {
     std::stringstream AssStream;
     AssStream << std::setw(8) << std::setfill('0') << ii.assemblyLine;
     out << AssStream.str();
-    out << " in " << f->getName().str() << " (";
+    out << " in " << f->getName().str() << "(";
     // Yawn, we could go up and print varargs if we wanted to.
     unsigned index = 0;
     for (Function::arg_iterator ai = f->arg_begin(), ae = f->arg_end();
          ai != ae; ++ai) {
       if (ai!=f->arg_begin()) out << ", ";
 
-      out << ai->getName().str();
-      // XXX should go through function
+      if (ai->hasName())
+        out << ai->getName().str() << "=";
+
       ref<Expr> value = sf.locals[sf.kf->getArgRegister(index++)].value;
-      if (isa_and_nonnull<ConstantExpr>(value))
-        out << "=" << value;
+      if (isa_and_nonnull<ConstantExpr>(value)) {
+        out << value;
+      } else {
+        out << "symbolic";
+      }
     }
     out << ")";
     if (ii.file != "")

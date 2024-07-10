@@ -297,29 +297,35 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
 // transparently avoid screwing up symbolics (if the byte is symbolic
 // then its concrete cache byte isn't being used) but is just a hack.
 
-void AddressSpace::copyOutConcretes() {
-  for (MemoryMap::iterator it = objects.begin(), ie = objects.end(); 
-       it != ie; ++it) {
-    const MemoryObject *mo = it->first;
-
-    if (!mo->isUserSpecified) {
-      const auto &os = it->second;
-      auto address = reinterpret_cast<std::uint8_t*>(mo->address);
-
-      if (!os->readOnly)
-        memcpy(address, os->concreteStore, mo->size);
+std::size_t AddressSpace::copyOutConcretes() {
+  std::size_t numPages{};
+  for (const auto &object : objects) {
+    auto &mo = object.first;
+    auto &os = object.second;
+    if (!mo->isUserSpecified && !os->readOnly && os->size != 0) {
+      auto size = std::max(os->size, mo->alignment);
+      numPages +=
+          (size + MemoryManager::pageSize - 1) / MemoryManager::pageSize;
+      copyOutConcrete(mo, os.get());
     }
   }
+  return numPages;
 }
 
-bool AddressSpace::copyInConcretes() {
+void AddressSpace::copyOutConcrete(const MemoryObject *mo,
+                                   const ObjectState *os) const {
+  auto address = reinterpret_cast<std::uint8_t *>(mo->address);
+  std::memcpy(address, os->concreteStore, mo->size);
+}
+
+bool AddressSpace::copyInConcretes(bool concretize) {
   for (auto &obj : objects) {
     const MemoryObject *mo = obj.first;
 
     if (!mo->isUserSpecified) {
       const auto &os = obj.second;
 
-      if (!copyInConcrete(mo, os.get(), mo->address))
+      if (!copyInConcrete(mo, os.get(), mo->address, concretize))
         return false;
     }
   }
@@ -328,14 +334,40 @@ bool AddressSpace::copyInConcretes() {
 }
 
 bool AddressSpace::copyInConcrete(const MemoryObject *mo, const ObjectState *os,
-                                  uint64_t src_address) {
+                                  uint64_t src_address, bool concretize) {
   auto address = reinterpret_cast<std::uint8_t*>(src_address);
-  if (memcmp(address, os->concreteStore, mo->size) != 0) {
-    if (os->readOnly) {
-      return false;
-    } else {
-      ObjectState *wos = getWriteable(mo, os);
-      memcpy(wos->concreteStore, address, mo->size);
+
+  // Don't do anything if the underlying representation has not been changed
+  // externally.
+  if (std::memcmp(address, os->concreteStore, mo->size) == 0)
+    return true;
+
+  // External object representation has been changed
+
+  // Return `false` if the object is marked as read-only
+  if (os->readOnly)
+    return false;
+
+  ObjectState *wos = getWriteable(mo, os);
+  // Check if the object is fully concrete object. If so, use the fast
+  // path and `memcpy` the new values from the external object to the internal
+  // representation
+  if (!wos->unflushedMask) {
+    std::memcpy(wos->concreteStore, address, mo->size);
+    return true;
+  }
+
+  // Check if object should be concretized
+  if (concretize) {
+    wos->makeConcrete();
+    std::memcpy(wos->concreteStore, address, mo->size);
+  } else {
+    // The object is partially symbolic, it needs to be updated byte-by-byte
+    // via object state's `write` function
+    for (size_t i = 0, ie = mo->size; i < ie; ++i) {
+      u_int8_t external_byte_value = *(address + i);
+      if (external_byte_value != wos->concreteStore[i])
+        wos->write8(i, external_byte_value);
     }
   }
   return true;

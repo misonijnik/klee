@@ -134,12 +134,16 @@ bool FunctionAliasPass::runOnModule(Module &M) {
 }
 
 const FunctionType *FunctionAliasPass::getFunctionType(const GlobalValue *gv) {
+#if LLVM_VERSION_CODE >= LLVM_VERSION(15, 0)
+  if (auto *ft = dyn_cast<FunctionType>(gv->getType()))
+    return ft;
+  return dyn_cast<FunctionType>(gv->getValueType());
+#else
   const Type *type = gv->getType();
-  while (type->isPointerTy()) {
-    const PointerType *ptr = cast<PointerType>(type);
-    type = ptr->getElementType();
-  }
-  return cast<FunctionType>(type);
+  while (type->isPointerTy())
+    type = type->getPointerElementType();
+  return dyn_cast<FunctionType>(type);
+#endif
 }
 
 bool FunctionAliasPass::checkType(const GlobalValue *match,

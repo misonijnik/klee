@@ -13,6 +13,9 @@
 #include "klee/Support/Debug.h"
 #include "klee/Support/ErrorHandling.h"
 
+#include "klee/Support/CompilerWarning.h"
+DISABLE_WARNING_PUSH
+DISABLE_WARNING_DEPRECATED_DECLARATIONS
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/BinaryFormat/Magic.h"
 #include "llvm/Bitcode/BitcodeReader.h"
@@ -35,7 +38,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/SourceMgr.h"
-
+DISABLE_WARNING_POP
 
 #include <algorithm>
 #include <fstream>
@@ -270,17 +273,9 @@ klee::linkModules(std::vector<std::unique_ptr<llvm::Module>> &modules,
 }
 
 Function *klee::getDirectCallTarget(
-#if LLVM_VERSION_CODE >= LLVM_VERSION(8, 0)
-    const CallBase &cs,
-#else
-    const CallSite &cs,
-#endif
+    const CallBase &cb,
     bool moduleIsFullyLinked) {
-#if LLVM_VERSION_CODE >= LLVM_VERSION(8, 0)
-  Value *v = cs.getCalledOperand();
-#else
-  Value *v = cs.getCalledValue();
-#endif
+  Value *v = cb.getCalledOperand();
   bool viaConstantExpr = false;
   // Walk through aliases and bitcasts to try to find
   // the function being called.
@@ -318,19 +313,13 @@ Function *klee::getDirectCallTarget(
 
 static bool valueIsOnlyCalled(const Value *v) {
   for (auto user : v->users()) {
-#if LLVM_VERSION_CODE >= LLVM_VERSION(8, 0)
     // Make sure the instruction is a call or invoke.
-    if (const auto *cs_ptr = dyn_cast<CallBase>(user)) {
-      const CallBase &cs = *cs_ptr;
-#else
-    if (const auto *instr = dyn_cast<Instruction>(user)) {
-      // Make sure the instruction is a call or invoke.
-      const CallSite cs(const_cast<Instruction *>(instr));
-      if (!cs) return false;
-#endif
+    if (const auto *cb_ptr = dyn_cast<CallBase>(user)) {
+      const CallBase &cb = *cb_ptr;
+
       // Make sure that the value is only the target of this call and
       // not an argument.
-      if (cs.hasArgument(v))
+      if (cb.hasArgument(v))
         return false;
     } else if (const auto *ce = dyn_cast<ConstantExpr>(user)) {
       if (ce->getOpcode() == Instruction::BitCast)

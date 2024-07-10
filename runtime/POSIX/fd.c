@@ -106,32 +106,18 @@ mode_t umask(mode_t mask) {
 
 
 /* Returns 1 if the process has the access rights specified by 'flags'
-   to the file with stat 's'.  Returns 0 otherwise*/
+   to the file with stat 's', and returns 0 otherwise. 
+   We allow access if any user has access to the file, so we ignore 
+   s->st_uid / geteuid() and s->st_gid / getegid(). */
 static int has_permission(int flags, struct stat64 *s) {
-  int write_access, read_access;
   mode_t mode = s->st_mode;
-  
-  if (flags & O_RDONLY || flags & O_RDWR)
-    read_access = 1;
-  else read_access = 0;
+  int read_request = ((flags & O_RDONLY) | (flags & O_RDWR)) ? 1 : 0;
+  int write_request = ((flags & O_WRONLY) | (flags & O_RDWR)) ? 1 : 0;
 
-  if (flags & O_WRONLY || flags & O_RDWR)
-    write_access = 1;
-  else write_access = 0;
-
-  /* XXX: We don't worry about process uid and gid for now. 
-     We allow access if any user has access to the file. */
-#if 0
-  uid_t uid = s->st_uid;
-  uid_t euid = geteuid();
-  gid_t gid = s->st_gid;
-  gid_t egid = getegid();
-#endif  
-
-  if (read_access && ((mode & S_IRUSR) | (mode & S_IRGRP) | (mode & S_IROTH)))
-    return 0;
-
-  if (write_access && !((mode & S_IWUSR) | (mode & S_IWGRP) | (mode & S_IWOTH)))
+  /* It is important to do this check using only bitwise operators so that we 
+     return 0 a single time in symbolic execution mode. */
+  if ((read_request  & !((mode & S_IRUSR) | (mode & S_IRGRP) | (mode & S_IROTH))) |
+      (write_request & !((mode & S_IWUSR) | (mode & S_IWGRP) | (mode & S_IWOTH))))
     return 0;
 
   return 1;
@@ -568,15 +554,20 @@ int fstatat(int fd, const char *path, struct stat *buf, int flags) {
     return 0;
   } 
 
-#if (defined __NR_newfstatat) && (__NR_newfstatat != 0)
-  return syscall(__NR_newfstatat, (long)fd,
-                 (path ? __concretize_string(path) : NULL), buf, (long)flags);
+#ifdef FSTATAT_PATH_ACCEPTS_NULL
+  #define PATHPARAM (path ? __concretize_string(path) : NULL)
 #else
-  return syscall(__NR_fstatat64, (long)fd,
-                 (path ? __concretize_string(path) : NULL), buf, (long)flags);
+  assert(path);
+  #define PATHPARAM (__concretize_string(path))
 #endif
-}
 
+#if (defined __NR_newfstatat) && (__NR_newfstatat != 0)
+  return syscall(__NR_newfstatat, (long)fd, PATHPARAM, buf, (long)flags);
+#else
+  return syscall(__NR_fstatat64, (long)fd, PATHPARAM, buf, (long)flags);
+#endif
+#undef PATHPARAM
+}
 
 int __fd_lstat(const char *path, struct stat64 *buf) {
   exe_disk_file_t *dfile = __get_sym_file(path);
@@ -825,8 +816,6 @@ int __fd_getdents(unsigned int fd, struct dirent64 *dirp, unsigned int count) {
       return bytes;
     } else {
       off64_t os_pos = f->off - 4096;
-      int res;
-      off64_t s = 0;
 
       /* For reasons which I really don't understand, if I don't
          memset this then sometimes the kernel returns d_ino==0 for
@@ -836,9 +825,10 @@ int __fd_getdents(unsigned int fd, struct dirent64 *dirp, unsigned int count) {
          Even more bizarre, interchanging the memset and the seek also
          case strange behavior. Really should be debugged properly. */
       memset(dirp, 0, count);
-      s = syscall(__NR_lseek, f->fd, os_pos, SEEK_SET);
+      off64_t s = syscall(__NR_lseek, f->fd, os_pos, SEEK_SET);
+      (void)s;
       assert(s != (off64_t) -1);
-      res = syscall(__NR_getdents64, f->fd, dirp, count);
+      int res = syscall(__NR_getdents64, f->fd, dirp, count);
       if (res > -1) {
         int pos = 0;
         f->off = syscall(__NR_lseek, f->fd, 0, SEEK_CUR);

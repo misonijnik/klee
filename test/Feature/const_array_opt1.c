@@ -1,12 +1,15 @@
+// REQUIRES: not-msan
+// REQUIRES: not-ubsan
+// Disabling msan and ubsan because it times out on CI
 // RUN: %clang %s -emit-llvm %O0opt -c -o %t.bc
 // RUN: rm -rf %t.klee-out
-// RUN: %klee --output-dir=%t.klee-out --const-array-opt --max-time=10 --only-output-states-covering-new %t.bc >%t.log
-// grep -q "Finished successfully!\n"
+// RUN: %klee --output-dir=%t.klee-out --const-array-opt --max-time=10 --only-output-states-covering-new %t.bc | FileCheck %s
 
 /* This is testing the const array optimization.  On my 2.3GHz machine
    this takes under 2 seconds w/ the optimization and almost 6 minutes
    w/o.  So we kill it in 10 sec and check if it has finished
    successfully. */
+#include "klee/klee.h"
 
 #include <unistd.h>
 #include <assert.h>
@@ -32,6 +35,7 @@ int main() {
     else klee_silent_exit(0);
   }
 
+  // CHECK: Finished successfully!
   printf("Finished successfully!\n");
 
   return 0;

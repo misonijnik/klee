@@ -16,7 +16,12 @@ set(LLVMCC "${LLVMCC} -I${CMAKE_SOURCE_DIR}/include")
 set(LLVMCXX "${LLVMCXX} -I${CMAKE_SOURCE_DIR}/include")
 set(NATIVE_CC "${CMAKE_C_COMPILER} ${CMAKE_C_FLAGS} -I ${CMAKE_SOURCE_DIR}/include")
 set(NATIVE_CXX "${CMAKE_CXX_COMPILER} ${CMAKE_CXX_FLAGS} -I ${CMAKE_SOURCE_DIR}/include")
-set(TARGET_TRIPLE "${TARGET_TRIPLE}")
+
+if (${LLVM_VERSION_MAJOR} GREATER_EQUAL 15)
+   set(TARGET_TRIPLE "${LLVM_TARGET_TRIPLE}")
+else()
+   set(TARGET_TRIPLE "${TARGET_TRIPLE}")
+endif()
 
 # Extend native compiler invocation on macOS to point to the currently selected systems directory
 if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
@@ -28,10 +33,16 @@ if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
   set(NATIVE_CXX "${NATIVE_CXX} -isysroot ${MAC_OS_SDK_PATH}")
 endif()
 
+if (NOT KLEE_UCLIBC_PATH STREQUAL "")
+  set(SUPPORT_KLEE_UCLIBC 1)
+else()
+  set(SUPPORT_KLEE_UCLIBC 0)
+endif()
+
 # FIXME: Do this to avoid changing the template file that
 # is shared by both build systems.
 if (ENABLE_POSIX_RUNTIME)
-  if (ENABLE_KLEE_UCLIBC)
+  if (NOT KLEE_UCLIBC_PATH STREQUAL "")
     set(ENABLE_POSIX_RUNTIME 1)
   else()
     message(AUTHOR_WARNING
@@ -90,10 +101,8 @@ if (DOWNLOAD_FILECHECK_SOURCE)
   add_executable(FileCheck
     ${FILECHECK_SRC_FILE}
   )
-  klee_get_llvm_libs(FILECHECK_NEEDED_LIBS Support)
-  target_include_directories(FileCheck PRIVATE ${KLEE_COMPONENT_EXTRA_INCLUDE_DIRS})
-  target_compile_options(FileCheck PRIVATE ${KLEE_COMPONENT_CXX_FLAGS})
-  target_compile_definitions(FileCheck PRIVATE ${KLEE_COMPONENT_CXX_DEFINES})
+  llvm_config(FileCheck "${USE_LLVM_SHARED}" support)
+  target_include_directories(FileCheck PRIVATE ${LLVM_INCLUDE_DIRS})
   target_link_libraries(FileCheck PRIVATE ${FILECHECK_NEEDED_LIBS})
 endif()
 
@@ -113,10 +122,8 @@ if (DOWNLOAD_NOT_SOURCE)
   add_executable("not"
     ${NOT_SRC_FILE}
   )
-  klee_get_llvm_libs(NOT_NEEDED_LIBS Support)
-  target_include_directories("not" PRIVATE ${KLEE_COMPONENT_EXTRA_INCLUDE_DIRS})
-  target_compile_options("not" PRIVATE ${KLEE_COMPONENT_CXX_FLAGS})
-  target_compile_definitions("not" PRIVATE ${KLEE_COMPONENT_CXX_DEFINES})
+  llvm_config("not" "${USE_LLVM_SHARED}" support)
+  target_include_directories("not" PRIVATE ${LLVM_INCLUDE_DIRS})
   target_link_libraries("not" PRIVATE ${NOT_NEEDED_LIBS})
 endif()
 
@@ -145,7 +152,7 @@ file(GENERATE
 
 add_custom_target(systemtests
   COMMAND "${LIT_TOOL}" ${LIT_ARGS} "${CMAKE_CURRENT_BINARY_DIR}"
-  DEPENDS klee kleaver klee-replay kleeRuntest gen-bout gen-random-bout
+  DEPENDS klee kleaver klee-exec-tree klee-replay kleeRuntest ktest-gen ktest-randgen
   COMMENT "Running system tests"
   USES_TERMINAL
 )

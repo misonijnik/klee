@@ -11,12 +11,14 @@
 #define KLEE_EXECUTIONSTATE_H
 
 #include "AddressSpace.h"
+#include "MemoryManager.h"
 #include "MergeHandler.h"
 
 #include "klee/ADT/ImmutableSet.h"
 #include "klee/ADT/TreeStream.h"
 #include "klee/Expr/Constraints.h"
 #include "klee/Expr/Expr.h"
+#include "klee/KDAlloc/kdalloc.h"
 #include "klee/Module/KInstIterator.h"
 #include "klee/Solver/Solver.h"
 #include "klee/System/Time.h"
@@ -30,10 +32,10 @@ namespace klee {
 class Array;
 class CallPathNode;
 struct Cell;
+class ExecutionTreeNode;
 struct KFunction;
 struct KInstruction;
 class MemoryObject;
-class PTreeNode;
 struct InstructionInfo;
 
 llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const MemoryMap &mm);
@@ -180,6 +182,12 @@ public:
   /// @brief Address space used by this state (e.g. Global and Heap)
   AddressSpace addressSpace;
 
+  /// @brief Stack allocator (used with deterministic allocation)
+  kdalloc::StackAllocator stackAllocator;
+
+  /// @brief Heap allocator (used with deterministic allocation)
+  kdalloc::Allocator heapAllocator;
+
   /// @brief Constraints collected so far
   ConstraintSet constraints;
 
@@ -199,9 +207,9 @@ public:
   /// @brief Set containing which lines in which files are covered by this state
   std::map<const std::string *, std::set<std::uint32_t>> coveredLines;
 
-  /// @brief Pointer to the process tree of the current state
-  /// Copies of ExecutionState should not copy ptreeNode
-  PTreeNode *ptreeNode = nullptr;
+  /// @brief Pointer to the execution tree of the current state
+  /// Copies of ExecutionState should not copy executionTreeNode
+  ExecutionTreeNode *executionTreeNode = nullptr;
 
   /// @brief Ordered list of symbolics: used to generate test cases.
   //
@@ -240,13 +248,20 @@ public:
   /// @brief Disables forking for this state. Set by user code
   bool forkDisabled = false;
 
+  /// @brief Mapping symbolic address expressions to concrete base addresses
+  using base_addrs_t = std::map<ref<Expr>, ref<ConstantExpr>>;
+  base_addrs_t base_addrs;
+  /// @brief Mapping MemoryObject addresses to refs used in the base_addrs map
+  using base_mo_t = std::map<uint64_t, std::set<ref<Expr>>>;
+  base_mo_t base_mos;
+
 public:
 #ifdef KLEE_UNITTEST
   // provide this function only in the context of unittests
   ExecutionState() = default;
 #endif
   // only to create the initial state
-  explicit ExecutionState(KFunction *kf);
+  explicit ExecutionState(KFunction *kf, MemoryManager *mm);
   // no copy assignment, use copy constructor
   ExecutionState &operator=(const ExecutionState &) = delete;
   // no move ctor
@@ -261,6 +276,8 @@ public:
   void pushFrame(KInstIterator caller, KFunction *kf);
   void popFrame();
 
+  void deallocate(const MemoryObject *mo);
+
   void addSymbolic(const MemoryObject *mo, const Array *array);
 
   void addConstraint(ref<Expr> e);
@@ -271,6 +288,7 @@ public:
 
   std::uint32_t getID() const { return id; };
   void setID() { id = nextID++; };
+  static std::uint32_t getLastID() { return nextID - 1; };
 };
 
 struct ExecutionStateIDCompare {

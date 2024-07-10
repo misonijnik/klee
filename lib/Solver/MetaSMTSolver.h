@@ -13,6 +13,8 @@
 
 #include "klee/Solver/Solver.h"
 
+#include <memory>
+
 namespace klee {
 
 template <typename SolverContext> class MetaSMTSolver : public Solver {
@@ -20,13 +22,13 @@ public:
   MetaSMTSolver(bool useForked, bool optimizeDivides);
   virtual ~MetaSMTSolver();
 
-  virtual char *getConstraintLog(const Query &);
+  std::string getConstraintLog(const Query &) override;
   virtual void setCoreSolverTimeout(time::Span timeout);
 };
 
 /// createMetaSMTSolver - Create a solver using the metaSMT backend set by
 /// the option MetaSMTBackend.
-Solver *createMetaSMTSolver();
+std::unique_ptr<Solver> createMetaSMTSolver();
 }
 
 #endif /* KLEE_METASMTSOLVER_H */

@@ -29,6 +29,7 @@ namespace klee {
 class ArrayCache;
 class BitArray;
 class ExecutionState;
+class Executor;
 class MemoryManager;
 class Solver;
 
@@ -50,6 +51,7 @@ public:
 
   /// size in bytes
   unsigned size;
+  unsigned alignment;
   mutable std::string name;
 
   bool isLocal;
@@ -76,18 +78,20 @@ public:
     : id(counter++),
       address(_address),
       size(0),
+      alignment(0),
       isFixed(true),
       parent(NULL),
       allocSite(0) {
   }
 
-  MemoryObject(uint64_t _address, unsigned _size, 
+  MemoryObject(uint64_t _address, unsigned _size, unsigned _alignment,
                bool _isLocal, bool _isGlobal, bool _isFixed,
                const llvm::Value *_allocSite,
                MemoryManager *_parent)
     : id(counter++),
       address(_address),
       size(_size),
+      alignment(_alignment),
       name("unnamed"),
       isLocal(_isLocal),
       isGlobal(_isGlobal),
@@ -230,12 +234,15 @@ public:
   void write64(unsigned offset, uint64_t value);
   void print() const;
 
-  /*
-    Looks at all the symbolic bytes of this object, gets a value for them
-    from the solver and puts them in the concreteStore.
-  */
-  void flushToConcreteStore(TimingSolver *solver,
-                            const ExecutionState &state) const;
+  /// Generate concrete values for each symbolic byte of the object and put them
+  /// in the concrete store.
+  ///
+  /// \param executor
+  /// \param state
+  /// \param concretize if true, constraints for concretised bytes are added if
+  /// necessary
+  void flushToConcreteStore(Executor &executor, ExecutionState &state,
+                            bool concretize);
 
 private:
   const UpdateList &getUpdates() const;

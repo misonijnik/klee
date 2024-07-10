@@ -20,7 +20,7 @@
 using namespace llvm;
 using namespace klee;
 
-namespace {
+namespace klee {
 llvm::cl::OptionCategory
     SearchCat("Search options", "These options control the search heuristic.");
 
@@ -79,12 +79,10 @@ cl::opt<std::string> BatchTime(
     cl::init("5s"),
     cl::cat(SearchCat));
 
-} // namespace
-
-void klee::initializeSearchOptions() {
+void initializeSearchOptions() {
   // default values
   if (CoreSearch.empty()) {
-    if (UseMerge){
+    if (UseMerge) {
       CoreSearch.push_back(Searcher::NURS_CovNew);
       klee_warning("--use-merge enabled. Using NURS_CovNew as default searcher.");
     } else {
@@ -94,7 +92,7 @@ void klee::initializeSearchOptions() {
   }
 }
 
-bool klee::userSearcherRequiresMD2U() {
+bool userSearcherRequiresMD2U() {
   return (std::find(CoreSearch.begin(), CoreSearch.end(), Searcher::NURS_MD2U) != CoreSearch.end() ||
           std::find(CoreSearch.begin(), CoreSearch.end(), Searcher::NURS_CovNew) != CoreSearch.end() ||
           std::find(CoreSearch.begin(), CoreSearch.end(), Searcher::NURS_ICnt) != CoreSearch.end() ||
@@ -102,14 +100,20 @@ bool klee::userSearcherRequiresMD2U() {
           std::find(CoreSearch.begin(), CoreSearch.end(), Searcher::NURS_QC) != CoreSearch.end());
 }
 
+bool userSearcherRequiresInMemoryExecutionTree() {
+  return std::find(CoreSearch.begin(), CoreSearch.end(), Searcher::RandomPath) != CoreSearch.end();
+}
 
-Searcher *getNewSearcher(Searcher::CoreSearchType type, RNG &rng, PTree &processTree) {
+} // namespace klee
+
+Searcher *getNewSearcher(Searcher::CoreSearchType type, RNG &rng,
+                         InMemoryExecutionTree *executionTree) {
   Searcher *searcher = nullptr;
   switch (type) {
     case Searcher::DFS: searcher = new DFSSearcher(); break;
     case Searcher::BFS: searcher = new BFSSearcher(); break;
     case Searcher::RandomState: searcher = new RandomSearcher(rng); break;
-    case Searcher::RandomPath: searcher = new RandomPathSearcher(processTree, rng); break;
+    case Searcher::RandomPath: searcher = new RandomPathSearcher(executionTree, rng); break;
     case Searcher::NURS_CovNew: searcher = new WeightedRandomSearcher(WeightedRandomSearcher::CoveringNew, rng); break;
     case Searcher::NURS_MD2U: searcher = new WeightedRandomSearcher(WeightedRandomSearcher::MinDistToUncovered, rng); break;
     case Searcher::NURS_Depth: searcher = new WeightedRandomSearcher(WeightedRandomSearcher::Depth, rng); break;
@@ -123,15 +127,16 @@ Searcher *getNewSearcher(Searcher::CoreSearchType type, RNG &rng, PTree &process
 }
 
 Searcher *klee::constructUserSearcher(Executor &executor) {
-
-  Searcher *searcher = getNewSearcher(CoreSearch[0], executor.theRNG, *executor.processTree);
+  auto *etree =
+      llvm::dyn_cast<InMemoryExecutionTree>(executor.executionTree.get());
+  Searcher *searcher = getNewSearcher(CoreSearch[0], executor.theRNG, etree);
 
   if (CoreSearch.size() > 1) {
     std::vector<Searcher *> s;
     s.push_back(searcher);
 
     for (unsigned i = 1; i < CoreSearch.size(); i++)
-      s.push_back(getNewSearcher(CoreSearch[i], executor.theRNG, *executor.processTree));
+      s.push_back(getNewSearcher(CoreSearch[i], executor.theRNG, etree));
 
     searcher = new InterleavedSearcher(s);
   }

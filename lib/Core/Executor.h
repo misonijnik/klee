@@ -57,37 +57,36 @@ namespace llvm {
   class Value;
 }
 
-namespace klee {  
-  class Array;
-  struct Cell;
-  class ExecutionState;
-  class ExternalDispatcher;
-  class Expr;
-  class InstructionInfoTable;
-  struct KFunction;
-  struct KInstruction;
-  class KInstIterator;
-  class KModule;
-  class MemoryManager;
-  class MemoryObject;
-  class ObjectState;
-  class PTree;
-  class Searcher;
-  class SeedInfo;
-  class SpecialFunctionHandler;
-  struct StackFrame;
-  class StatsTracker;
-  class TimingSolver;
-  class TreeStreamWriter;
-  class MergeHandler;
-  class MergingSearcher;
-  template<class T> class ref;
+namespace klee {
+class Array;
+struct Cell;
+class ExecutionState;
+class ExternalDispatcher;
+class Expr;
+class InstructionInfoTable;
+class KCallable;
+struct KFunction;
+struct KInstruction;
+class KInstIterator;
+class KModule;
+class MemoryManager;
+class MemoryObject;
+class ObjectState;
+class ExecutionTree;
+class Searcher;
+class SeedInfo;
+class SpecialFunctionHandler;
+struct StackFrame;
+class StatsTracker;
+class TimingSolver;
+class TreeStreamWriter;
+class MergeHandler;
+class MergingSearcher;
+template <class T> class ref;
 
-
-
-  /// \todo Add a context object to keep track of data only live
-  /// during an instruction step. Should contain addedStates,
-  /// removedStates, and haltExecution, among others.
+/// \todo Add a context object to keep track of data only live
+/// during an instruction step. Should contain addedStates,
+/// removedStates, and haltExecution, among others.
 
 class Executor : public Interpreter {
   friend class OwningSearcher;
@@ -95,6 +94,7 @@ class Executor : public Interpreter {
   friend class SpecialFunctionHandler;
   friend class StatsTracker;
   friend class MergeHandler;
+  friend class ObjectState;
   friend klee::Searcher *klee::constructUserSearcher(Executor &executor);
 
 public:
@@ -109,14 +109,14 @@ private:
   Searcher *searcher;
 
   ExternalDispatcher *externalDispatcher;
-  TimingSolver *solver;
-  MemoryManager *memory;
+  std::unique_ptr<TimingSolver> solver;
+  std::unique_ptr<MemoryManager> memory;
   std::set<ExecutionState*, ExecutionStateIDCompare> states;
   StatsTracker *statsTracker;
   TreeStreamWriter *pathWriter, *symPathWriter;
   SpecialFunctionHandler *specialFunctionHandler;
   TimerGroup timers;
-  std::unique_ptr<PTree> processTree;
+  std::unique_ptr<ExecutionTree> executionTree;
 
   /// Used to track states that have been added during the current
   /// instructions step. 
@@ -137,13 +137,13 @@ private:
   /// happens with other states (that don't satisfy the seeds) depends
   /// on as-yet-to-be-determined flags.
   std::map<ExecutionState*, std::vector<SeedInfo> > seedMap;
-  
+
   /// Map of globals to their representative memory object.
   std::map<const llvm::GlobalValue*, MemoryObject*> globalObjects;
 
   /// Map of globals to their bound address. This also includes
-  /// globals that have no representative object (i.e. functions).
-  std::map<const llvm::GlobalValue*, ref<ConstantExpr> > globalAddresses;
+  /// globals that have no representative object (e.g. aliases).
+  std::map<const llvm::GlobalValue*, ref<ConstantExpr>> globalAddresses;
 
   /// Map of legal function addresses to the corresponding Function.
   /// Used to validate and dereference function pointers.
@@ -211,8 +211,7 @@ private:
   /// Return the typeid corresponding to a certain `type_info`
   ref<ConstantExpr> getEhTypeidFor(ref<Expr> type_info);
 
-  llvm::Function* getTargetFunction(llvm::Value *calledVal,
-                                    ExecutionState &state);
+  llvm::Function* getTargetFunction(llvm::Value *calledVal);
   
   void executeInstruction(ExecutionState &state, KInstruction *ki);
 
@@ -240,7 +239,7 @@ private:
 
   void callExternalFunction(ExecutionState &state,
                             KInstruction *target,
-                            llvm::Function *function,
+                            KCallable *callable,
                             std::vector< ref<Expr> > &arguments);
 
   ObjectState *bindObjectInState(ExecutionState &state, const MemoryObject *mo,
@@ -389,14 +388,21 @@ private:
   /// value). Otherwise return the original expression.
   ref<Expr> toUnique(const ExecutionState &state, ref<Expr> &e);
 
-  /// Return a constant value for the given expression, forcing it to
-  /// be constant in the given state by adding a constraint if
+  /// Return a constant value for the given expression.  If \param concretize is
+  /// true, the expression is forced to be a constant by adding a constraint if
   /// necessary. Note that this function breaks completeness and
   /// should generally be avoided.
   ///
-  /// \param purpose An identify string to printed in case of concretization.
-  ref<klee::ConstantExpr> toConstant(ExecutionState &state, ref<Expr> e, 
-                                     const char *purpose);
+  /// \param reason A documentation string stating the reason for concretization
+  ref<klee::ConstantExpr> toConstant(ExecutionState &state, ref<Expr> e,
+                                     const std::string &reason,
+                                     bool concretize = true);
+
+  /// Evaluate the given expression under each seed, and return the
+  /// first one that results in a constant, if such a seed exist.  Otherwise,
+  /// return the non-constant evaluation of the expression under one of the
+  /// seeds.
+  ref<klee::ConstantExpr> getValueFromSeeds(ExecutionState &state, ref<Expr> e);
 
   /// Bind a constant value for e to the given target. NOTE: This
   /// function may fork state if the state has multiple seeds.
@@ -410,8 +416,9 @@ private:
   const InstructionInfo & getLastNonKleeInternalInstruction(const ExecutionState &state,
       llvm::Instruction** lastInstruction);
 
-  /// Remove state from queue and delete state
-  void terminateState(ExecutionState &state);
+  /// Remove state from queue and delete state. This function should only be
+  /// used in the termination functions below.
+  void terminateState(ExecutionState &state, StateTerminationType reason);
 
   /// Call exit handler and terminate state normally
   /// (end of execution path)
@@ -420,21 +427,43 @@ private:
   /// Call exit handler and terminate state early
   /// (e.g. due to state merging or memory pressure)
   void terminateStateEarly(ExecutionState &state, const llvm::Twine &message,
-                           StateTerminationType terminationType);
+                           StateTerminationType reason);
+
+  /// Call exit handler and terminate state early
+  /// (e.g. caused by the applied algorithm as in state merging or replaying)
+  void terminateStateEarlyAlgorithm(ExecutionState &state,
+                                    const llvm::Twine &message,
+                                    StateTerminationType reason);
+
+  /// Call exit handler and terminate state early
+  /// (e.g. due to klee_silent_exit issued by user)
+  void terminateStateEarlyUser(ExecutionState &state,
+                               const llvm::Twine &message);
+
+  /// Call error handler and terminate state in case of errors.
+  /// The underlying function of all error-handling termination functions
+  /// below. This function should only be used in the termination functions
+  /// below.
+  void terminateStateOnError(ExecutionState &state,
+                                    const llvm::Twine &message,
+                                    StateTerminationType reason,
+                                    const llvm::Twine &longMessage = "",
+                                    const char *suffix = nullptr);
 
   /// Call error handler and terminate state in case of program errors
   /// (e.g. free()ing globals, out-of-bound accesses)
-  void terminateStateOnError(ExecutionState &state, const llvm::Twine &message,
-                             StateTerminationType terminationType,
-                             const llvm::Twine &longMessage = "",
-                             const char *suffix = nullptr);
+  void terminateStateOnProgramError(ExecutionState &state,
+                                    const llvm::Twine &message,
+                                    StateTerminationType reason,
+                                    const llvm::Twine &longMessage = "",
+                                    const char *suffix = nullptr);
 
   /// Call error handler and terminate state in case of execution errors
   /// (things that should not be possible, like illegal instruction or
   /// unlowered intrinsic, or unsupported intrinsics, like inline assembly)
-  void terminateStateOnExecError(ExecutionState &state,
-                                 const llvm::Twine &message,
-                                 const llvm::Twine &info = "");
+  void terminateStateOnExecError(
+      ExecutionState &state, const llvm::Twine &message,
+      StateTerminationType = StateTerminationType::Execution);
 
   /// Call error handler and terminate state in case of solver errors
   /// (solver error or timeout)
@@ -444,12 +473,13 @@ private:
   /// Call error handler and terminate state for user errors
   /// (e.g. wrong usage of klee.h API)
   void terminateStateOnUserError(ExecutionState &state,
-                                 const llvm::Twine &message);
+                                 const llvm::Twine &message,
+                                 bool writeErr = true);
 
   /// bindModuleConstants - Initialize the module constant table.
   void bindModuleConstants();
 
-  template <typename SqType, typename TypeIt>
+  template <typename TypeIt>
   void computeOffsetsSeqTy(KGEPInstruction *kgepi,
                            ref<ConstantExpr> &constantOffset, uint64_t index,
                            const TypeIt it);
@@ -477,7 +507,7 @@ private:
 
   /// Only for debug purposes; enable via debugger or klee-control
   void dumpStates();
-  void dumpPTree();
+  void dumpExecutionTree();
 
 public:
   Executor(llvm::LLVMContext &ctx, const InterpreterOptions &opts,
@@ -552,7 +582,7 @@ public:
   MergingSearcher *getMergingSearcher() const { return mergingSearcher; };
   void setMergingSearcher(MergingSearcher *ms) { mergingSearcher = ms; };
 };
-  
-} // End klee namespace
+
+} // namespace klee
 
 #endif /* KLEE_EXECUTOR_H */

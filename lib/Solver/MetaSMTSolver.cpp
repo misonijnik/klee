@@ -51,6 +51,8 @@
 #undef type_t
 #endif
 
+#include <memory>
+
 #include <errno.h>
 #include <signal.h>
 #include <sys/ipc.h>
@@ -85,9 +87,8 @@ private:
 public:
   MetaSMTSolverImpl(MetaSMTSolver<SolverContext> *solver, bool useForked,
                     bool optimizeDivides);
-  virtual ~MetaSMTSolverImpl();
 
-  char *getConstraintLog(const Query &);
+  std::string getConstraintLog(const Query &) override;
   void setCoreSolverTimeout(time::Span timeout) { _timeout = timeout; }
 
   bool computeTruth(const Query &, bool &isValid);
@@ -134,14 +135,8 @@ MetaSMTSolverImpl<SolverContext>::MetaSMTSolverImpl(
 }
 
 template <typename SolverContext>
-MetaSMTSolverImpl<SolverContext>::~MetaSMTSolverImpl() {}
-
-template <typename SolverContext>
-char *MetaSMTSolverImpl<SolverContext>::getConstraintLog(const Query &) {
-  const char *msg = "Not supported";
-  char *buf = new char[strlen(msg) + 1];
-  strcpy(buf, msg);
-  return buf;
+std::string MetaSMTSolverImpl<SolverContext>::getConstraintLog(const Query &) {
+  return {"Not supported"};
 }
 
 template <typename SolverContext>
@@ -194,7 +189,7 @@ bool MetaSMTSolverImpl<SolverContext>::computeInitialValues(
   TimerStatIncrementer t(stats::queryTime);
   assert(_builder);
 
-  ++stats::queries;
+  ++stats::solverQueries;
   ++stats::queryCounterexamples;
 
   bool success = true;
@@ -404,14 +399,14 @@ MetaSMTSolverImpl<SolverContext>::getOperationStatusCode() {
 template <typename SolverContext>
 MetaSMTSolver<SolverContext>::MetaSMTSolver(bool useForked,
                                             bool optimizeDivides)
-    : Solver(new MetaSMTSolverImpl<SolverContext>(this, useForked,
-                                                  optimizeDivides)) {}
+    : Solver(std::make_unique<MetaSMTSolverImpl<SolverContext>>(
+          this, useForked, optimizeDivides)) {}
 
 template <typename SolverContext>
 MetaSMTSolver<SolverContext>::~MetaSMTSolver() {}
 
 template <typename SolverContext>
-char *MetaSMTSolver<SolverContext>::getConstraintLog(const Query &query) {
+std::string MetaSMTSolver<SolverContext>::getConstraintLog(const Query &query) {
   return impl->getConstraintLog(query);
 }
 
@@ -420,45 +415,50 @@ void MetaSMTSolver<SolverContext>::setCoreSolverTimeout(time::Span timeout) {
   impl->setCoreSolverTimeout(timeout);
 }
 
-Solver *createMetaSMTSolver() {
+std::unique_ptr<Solver> createMetaSMTSolver() {
   using namespace metaSMT;
 
-  Solver *coreSolver = NULL;
+  std::unique_ptr<Solver> coreSolver;
   std::string backend;
   switch (MetaSMTBackend) {
 #ifdef METASMT_HAVE_STP
   case METASMT_BACKEND_STP:
     backend = "STP";
-    coreSolver = new MetaSMTSolver<DirectSolver_Context<solver::STP_Backend> >(
+    coreSolver = std::make_unique<
+        MetaSMTSolver<DirectSolver_Context<solver::STP_Backend>>>(
         UseForkedCoreSolver, CoreSolverOptimizeDivides);
     break;
 #endif
 #ifdef METASMT_HAVE_Z3
   case METASMT_BACKEND_Z3:
     backend = "Z3";
-    coreSolver = new MetaSMTSolver<DirectSolver_Context<solver::Z3_Backend> >(
+    coreSolver = std::make_unique<
+        MetaSMTSolver<DirectSolver_Context<solver::Z3_Backend>>>(
         UseForkedCoreSolver, CoreSolverOptimizeDivides);
     break;
 #endif
 #ifdef METASMT_HAVE_BTOR
   case METASMT_BACKEND_BOOLECTOR:
     backend = "Boolector";
-    coreSolver = new MetaSMTSolver<DirectSolver_Context<solver::Boolector> >(
+    coreSolver = std::make_unique<
+        MetaSMTSolver<DirectSolver_Context<solver::Boolector>>>(
         UseForkedCoreSolver, CoreSolverOptimizeDivides);
     break;
 #endif
 #ifdef METASMT_HAVE_CVC4
   case METASMT_BACKEND_CVC4:
     backend = "CVC4";
-    coreSolver = new MetaSMTSolver<DirectSolver_Context<solver::CVC4> >(
-        UseForkedCoreSolver, CoreSolverOptimizeDivides);
+    coreSolver =
+        std::make_unique<MetaSMTSolver<DirectSolver_Context<solver::CVC4>>>(
+            UseForkedCoreSolver, CoreSolverOptimizeDivides);
     break;
 #endif
 #ifdef METASMT_HAVE_YICES2
   case METASMT_BACKEND_YICES2:
     backend = "Yices2";
-    coreSolver = new MetaSMTSolver<DirectSolver_Context<solver::Yices2> >(
-        UseForkedCoreSolver, CoreSolverOptimizeDivides);
+    coreSolver =
+        std::make_unique<MetaSMTSolver<DirectSolver_Context<solver::Yices2>>>(
+            UseForkedCoreSolver, CoreSolverOptimizeDivides);
     break;
 #endif
   default:
@@ -468,6 +468,5 @@ Solver *createMetaSMTSolver() {
   klee_message("Starting MetaSMTSolver(%s)", backend.c_str());
   return coreSolver;
 }
-
 }
 #endif // ENABLE_METASMT

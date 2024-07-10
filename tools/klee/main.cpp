@@ -9,21 +9,24 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "klee/ADT/KTest.h"
 #include "klee/ADT/TreeStream.h"
 #include "klee/Config/Version.h"
 #include "klee/Core/Interpreter.h"
 #include "klee/Expr/Expr.h"
-#include "klee/ADT/KTest.h"
-#include "klee/Support/OptionCategories.h"
-#include "klee/Statistics/Statistics.h"
 #include "klee/Solver/SolverCmdLine.h"
+#include "klee/Statistics/Statistics.h"
 #include "klee/Support/Debug.h"
 #include "klee/Support/ErrorHandling.h"
 #include "klee/Support/FileHandling.h"
 #include "klee/Support/ModuleUtil.h"
+#include "klee/Support/OptionCategories.h"
 #include "klee/Support/PrintVersion.h"
 #include "klee/System/Time.h"
 
+#include "klee/Support/CompilerWarning.h"
+DISABLE_WARNING_PUSH
+DISABLE_WARNING_DEPRECATED_DECLARATIONS
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
@@ -41,15 +44,15 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/Signals.h"
-
+#include "llvm/Support/TargetSelect.h"
+DISABLE_WARNING_POP
 
 #include <dirent.h>
 #include <signal.h>
-#include <unistd.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 #include <cerrno>
 #include <ctime>
@@ -57,7 +60,6 @@
 #include <iomanip>
 #include <iterator>
 #include <sstream>
-
 
 using namespace llvm;
 using namespace klee;
@@ -81,6 +83,11 @@ namespace {
             cl::init(false),
             cl::desc("Do not generate any test files (default=false)"),
             cl::cat(TestCaseCat));
+
+  cl::opt<bool> WriteKTests(
+      "write-ktests", cl::init(true),
+      cl::desc("Write .ktest files for each test case (default=true)"),
+      cl::cat(TestCaseCat));
 
   cl::opt<bool>
   WriteCVCs("write-cvcs",
@@ -187,6 +194,10 @@ namespace {
                    cl::init(false),
                    cl::cat(LinkCat));
 
+  cl::opt<bool> WithUBSanRuntime("ubsan-runtime",
+                                 cl::desc("Link with UBSan runtime."),
+                                 cl::init(false), cl::cat(LinkCat));
+
   cl::opt<std::string> RuntimeBuild(
       "runtime-build",
       cl::desc("Link with versions of the runtime library that were built with "
@@ -225,21 +236,15 @@ namespace {
   cl::OptionCategory ReplayCat("Replaying options",
                                "These options impact replaying of test cases.");
   
-  cl::opt<bool>
-  ReplayKeepSymbolic("replay-keep-symbolic",
-                     cl::desc("Replay the test cases only by asserting "
-                              "the bytes, not necessarily making them concrete."),
-                     cl::cat(ReplayCat));
-
   cl::list<std::string>
   ReplayKTestFile("replay-ktest-file",
-                  cl::desc("Specify a ktest file to use for replay"),
-                  cl::value_desc("ktest file"),
+                  cl::desc("Specify a .ktest file to use for replay"),
+                  cl::value_desc(".ktest file"),
                   cl::cat(ReplayCat));
 
   cl::list<std::string>
   ReplayKTestDir("replay-ktest-dir",
-                 cl::desc("Specify a directory to replay ktest files from"),
+                 cl::desc("Specify a directory to replay .ktest files from"),
                  cl::value_desc("output directory"),
                  cl::cat(ReplayCat));
 
@@ -277,8 +282,8 @@ namespace {
 
   cl::opt<bool>
   Watchdog("watchdog",
-           cl::desc("Use a watchdog process to enforce --max-time."),
-           cl::init(0),
+           cl::desc("Use a watchdog process to enforce --max-time (default=false)"),
+           cl::init(false),
            cl::cat(TerminationCat));
 
   cl::opt<bool>
@@ -286,6 +291,26 @@ namespace {
            cl::desc("Link the llvm libc++ library into the bitcode (default=false)"),
            cl::init(false),
            cl::cat(LinkCat));
+
+  /*** Test-Comp specific options ***/
+
+  cl::OptionCategory
+      TestCompCat("Options specific to Test-Comp",
+                  "These are options specific to the Test-Comp competition.");
+
+  cl::opt<bool> WriteXMLTests("write-xml-tests",
+                              cl::desc("Write XML-formated tests"),
+                              cl::init(false), cl::cat(TestCompCat));
+
+  cl::opt<std::string>
+      XMLMetadataProgramFile("xml-metadata-programfile",
+                             cl::desc("Original file name for xml metadata"),
+                             cl::cat(TestCompCat));
+
+  cl::opt<std::string> XMLMetadataProgramHash(
+      "xml-metadata-programhash",
+      llvm::cl::desc("Test-Comp hash sum of original file for xml metadata"),
+      llvm::cl::cat(TestCompCat));
 }
 
 namespace klee {
@@ -330,6 +355,15 @@ public:
   void processTestCase(const ExecutionState  &state,
                        const char *errorMessage,
                        const char *errorSuffix);
+  bool writeTestCaseKTest(
+      const std::vector<std::pair<std::string, std::vector<unsigned char>>>
+          &out,
+      unsigned id);
+  void writeTestCaseXML(
+      bool isError,
+      const std::vector<std::pair<std::string, std::vector<unsigned char>>>
+          &assignments,
+      unsigned id);
 
   std::string getOutputFilename(const std::string &filename);
   std::unique_ptr<llvm::raw_fd_ostream> openOutputFile(const std::string &filename);
@@ -369,7 +403,7 @@ KleeHandler::KleeHandler(int argc, char **argv)
   } else {
     // "klee-out-<i>"
     int i = 0;
-    for (; i <= INT_MAX; ++i) {
+    for (; i < INT_MAX; ++i) {
       SmallString<128> d(directory);
       llvm::sys::path::append(d, "klee-out-");
       raw_svector_ostream ds(d);
@@ -383,9 +417,15 @@ KleeHandler::KleeHandler(int argc, char **argv)
         SmallString<128> klee_last(directory);
         llvm::sys::path::append(klee_last, "klee-last");
 
-        if (((unlink(klee_last.c_str()) < 0) && (errno != ENOENT)) ||
-            symlink(m_outputDirectory.c_str(), klee_last.c_str()) < 0) {
+        if ((unlink(klee_last.c_str()) < 0) && (errno != ENOENT)) {
+          klee_warning("cannot remove existing klee-last symlink: %s",
+                       strerror(errno));
+        }
 
+        size_t offset = m_outputDirectory.size() -
+                        llvm::sys::path::filename(m_outputDirectory).size();
+        if (symlink(m_outputDirectory.c_str() + offset, klee_last.c_str()) <
+            0) {
           klee_warning("cannot create klee-last symlink: %s", strerror(errno));
         }
 
@@ -471,53 +511,127 @@ KleeHandler::openTestFile(const std::string &suffix, unsigned id) {
   return openOutputFile(getTestFilename(suffix, id));
 }
 
+bool KleeHandler::writeTestCaseKTest(
+    const std::vector<std::pair<std::string, std::vector<unsigned char>>> &out,
+    unsigned id) {
+  KTest b;
+  b.numArgs = m_argc;
+  b.args = m_argv;
+  b.symArgvs = 0;
+  b.symArgvLen = 0;
+  b.numObjects = out.size();
+  b.objects = new KTestObject[b.numObjects];
+  assert(b.objects);
+  for (unsigned i = 0; i < b.numObjects; i++) {
+    KTestObject *o = &b.objects[i];
+    o->name = const_cast<char *>(out[i].first.c_str());
+    o->numBytes = out[i].second.size();
+    o->bytes = new unsigned char[o->numBytes];
+    assert(o->bytes);
+    std::copy(out[i].second.begin(), out[i].second.end(), o->bytes);
+  }
+  bool status = true;
+  if (!kTest_toFile(&b,
+                    getOutputFilename(getTestFilename("ktest", id)).c_str())) {
+    status = false;
+    klee_warning("unable to write output test case, losing it");
+  }
+  for (unsigned i = 0; i < b.numObjects; i++)
+    delete[] b.objects[i].bytes;
+  delete[] b.objects;
+  return status;
+}
+
+void KleeHandler::writeTestCaseXML(
+    bool isError,
+    const std::vector<std::pair<std::string, std::vector<unsigned char>>>
+        &assignments,
+    unsigned id) {
+
+  // TODO: This is super specific to test-comp and assumes that the name is the
+  // type information
+  auto file = openTestFile("xml", id);
+  if (!file)
+    return;
+
+  *file << "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n";
+  *file << "<!DOCTYPE testcase PUBLIC \"+//IDN sosy-lab.org//DTD test-format "
+           "testcase 1.0//EN\" "
+           "\"https://sosy-lab.org/test-format/testcase-1.0.dtd\">\n";
+  *file << "<testcase";
+  if (isError)
+    *file << " coversError=\"true\"";
+  *file << ">\n";
+  for (auto &item : assignments) {
+    *file << "\t<input variable=\"" << item.first << "\" ";
+    *file << "type =\"";
+    // print type of the input
+    *file << item.first;
+    *file << "\">";
+    // Ignore the type
+    auto type_size_bytes = item.second.size() * 8;
+    llvm::APInt v(type_size_bytes, 0, false);
+    for (auto i = item.second.rbegin(), e = item.second.rend(); i != e; ++i) {
+      v <<= 8;
+      v |= *i;
+    }
+    // print value
+
+    // Check if this is an unsigned type
+    if (item.first.find("u") == 0) {
+      v.print(*file, false);
+    } else if (item.first.rfind("*") != std::string::npos) {
+      // Pointer types
+      v.print(*file, false);
+    } else if (item.first.find("float") == 0) {
+      llvm::APFloat(APFloatBase::IEEEhalf(), v).print(*file);
+    } else if (item.first.find("double") == 0) {
+      llvm::APFloat(APFloatBase::IEEEdouble(), v).print(*file);
+    } else if (item.first.rfind("_t") != std::string::npos) {
+      // arbitrary type, e.g. sector_t
+      v.print(*file, false);
+    } else if (item.first.find("_") == 0) {
+      // _Bool
+      v.print(*file, false);
+    } else {
+      // the rest must be signed
+      v.print(*file, true);
+    }
+    *file << "</input>\n";
+  }
+  *file << "</testcase>\n";
+}
 
 /* Outputs all files (.ktest, .kquery, .cov etc.) describing a test case */
 void KleeHandler::processTestCase(const ExecutionState &state,
                                   const char *errorMessage,
                                   const char *errorSuffix) {
+  unsigned test_id = ++m_numTotalTests;
   if (!WriteNone) {
-    std::vector< std::pair<std::string, std::vector<unsigned char> > > out;
-    bool success = m_interpreter->getSymbolicSolution(state, out);
+    std::vector<std::pair<std::string, std::vector<unsigned char>>> assignments;
+    bool success = m_interpreter->getSymbolicSolution(state, assignments);
 
     if (!success)
       klee_warning("unable to get symbolic solution, losing test case");
 
     const auto start_time = time::getWallTime();
-
-    unsigned id = ++m_numTotalTests;
+    bool atLeastOneGenerated = false;
 
     if (success) {
-      KTest b;
-      b.numArgs = m_argc;
-      b.args = m_argv;
-      b.symArgvs = 0;
-      b.symArgvLen = 0;
-      b.numObjects = out.size();
-      b.objects = new KTestObject[b.numObjects];
-      assert(b.objects);
-      for (unsigned i=0; i<b.numObjects; i++) {
-        KTestObject *o = &b.objects[i];
-        o->name = const_cast<char*>(out[i].first.c_str());
-        o->numBytes = out[i].second.size();
-        o->bytes = new unsigned char[o->numBytes];
-        assert(o->bytes);
-        std::copy(out[i].second.begin(), out[i].second.end(), o->bytes);
+      if (WriteKTests) {
+        if (writeTestCaseKTest(assignments, test_id)) {
+          atLeastOneGenerated = true;
+        }
       }
 
-      if (!kTest_toFile(&b, getOutputFilename(getTestFilename("ktest", id)).c_str())) {
-        klee_warning("unable to write output test case, losing it");
-      } else {
-        ++m_numGeneratedTests;
+      if (WriteXMLTests) {
+        writeTestCaseXML(errorMessage != nullptr, assignments, test_id);
+        atLeastOneGenerated = true;
       }
-
-      for (unsigned i=0; i<b.numObjects; i++)
-        delete[] b.objects[i].bytes;
-      delete[] b.objects;
     }
 
     if (errorMessage) {
-      auto f = openTestFile(errorSuffix, id);
+      auto f = openTestFile(errorSuffix, test_id);
       if (f)
         *f << errorMessage;
     }
@@ -526,7 +640,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
       std::vector<unsigned char> concreteBranches;
       m_pathWriter->readStream(m_interpreter->getPathStreamID(state),
                                concreteBranches);
-      auto f = openTestFile("path", id);
+      auto f = openTestFile("path", test_id);
       if (f) {
         for (const auto &branch : concreteBranches) {
           *f << branch << '\n';
@@ -534,10 +648,14 @@ void KleeHandler::processTestCase(const ExecutionState &state,
       }
     }
 
+    if (atLeastOneGenerated) {
+      ++m_numGeneratedTests;
+    }
+
     if (errorMessage || WriteKQueries) {
       std::string constraints;
       m_interpreter->getConstraintLog(state, constraints,Interpreter::KQUERY);
-      auto f = openTestFile("kquery", id);
+      auto f = openTestFile("kquery", test_id);
       if (f)
         *f << constraints;
     }
@@ -547,7 +665,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
       // SMT-LIBv2 not CVC which is a bit confusing
       std::string constraints;
       m_interpreter->getConstraintLog(state, constraints, Interpreter::STP);
-      auto f = openTestFile("cvc", id);
+      auto f = openTestFile("cvc", test_id);
       if (f)
         *f << constraints;
     }
@@ -555,7 +673,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
     if (WriteSMT2s) {
       std::string constraints;
         m_interpreter->getConstraintLog(state, constraints, Interpreter::SMTLIB2);
-        auto f = openTestFile("smt2", id);
+        auto f = openTestFile("smt2", test_id);
         if (f)
           *f << constraints;
     }
@@ -564,7 +682,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
       std::vector<unsigned char> symbolicBranches;
       m_symPathWriter->readStream(m_interpreter->getSymbolicPathStreamID(state),
                                   symbolicBranches);
-      auto f = openTestFile("sym.path", id);
+      auto f = openTestFile("sym.path", test_id);
       if (f) {
         for (const auto &branch : symbolicBranches) {
           *f << branch << '\n';
@@ -575,7 +693,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
     if (WriteCov) {
       std::map<const std::string*, std::set<unsigned> > cov;
       m_interpreter->getCoveredLines(state, cov);
-      auto f = openTestFile("cov", id);
+      auto f = openTestFile("cov", test_id);
       if (f) {
         for (const auto &entry : cov) {
           for (const auto &line : entry.second) {
@@ -590,7 +708,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
 
     if (WriteTestInfo) {
       time::Span elapsed_time(time::getWallTime() - start_time);
-      auto f = openTestFile("info", id);
+      auto f = openTestFile("info", test_id);
       if (f)
         *f << "Time to generate test case: " << elapsed_time << '\n';
     }
@@ -613,7 +731,8 @@ void KleeHandler::loadPathFile(std::string name,
   while (f.good()) {
     unsigned value;
     f >> value;
-    buffer.push_back(!!value);
+    if (f.good())
+      buffer.push_back(!!value);
     f.get();
   }
 }
@@ -680,6 +799,10 @@ std::string KleeHandler::getRunTimeLibraryPath(const char *argv0) {
 //===----------------------------------------------------------------------===//
 // main Driver function
 //
+
+static Function *mainFn = nullptr;
+static Function *entryFn = nullptr;
+
 static std::string strip(std::string &in) {
   unsigned len = in.size();
   unsigned lead = 0, trail = len;
@@ -699,26 +822,15 @@ static void parseArguments(int argc, char **argv) {
 static void
 preparePOSIX(std::vector<std::unique_ptr<llvm::Module>> &loadedModules,
              llvm::StringRef libCPrefix) {
-  // Get the main function from the main module and rename it such that it can
-  // be called after the POSIX setup
-  Function *mainFn = nullptr;
-  for (auto &module : loadedModules) {
-    mainFn = module->getFunction(EntryPoint);
-    if (mainFn)
-      break;
-  }
-
-  if (!mainFn)
-    klee_error("Entry function '%s' not found in module.", EntryPoint.c_str());
   mainFn->setName("__klee_posix_wrapped_main");
 
-  // Add a definition of the entry function if needed. This is the case if we
+  // Add a definition of the main function if needed. This is the case if we
   // link against a libc implementation. Preparing for libc linking (i.e.
   // linking with uClibc will expect a main function and rename it to
   // _user_main. We just provide the definition here.
-  if (!libCPrefix.empty() && !mainFn->getParent()->getFunction(EntryPoint))
+  if (!libCPrefix.empty() && !mainFn->getParent()->getFunction("main"))
     llvm::Function::Create(mainFn->getFunctionType(),
-                           llvm::Function::ExternalLinkage, EntryPoint,
+                           llvm::Function::ExternalLinkage, "main",
                            mainFn->getParent());
 
   llvm::Function *wrapper = nullptr;
@@ -731,7 +843,7 @@ preparePOSIX(std::vector<std::unique_ptr<llvm::Module>> &loadedModules,
 
   // Rename the POSIX wrapper to prefixed entrypoint, e.g. _user_main as uClibc
   // would expect it or main otherwise
-  wrapper->setName(libCPrefix + EntryPoint);
+  wrapper->setName(libCPrefix + "main");
 }
 
 
@@ -753,6 +865,7 @@ static const char *modelledExternals[] = {
   "__error",
   "calloc",
   "_exit",
+  "_Exit",
   "exit",
   "free",
   "abort",
@@ -800,10 +913,6 @@ static const char *modelledExternals[] = {
   "_Znwj",
   "_Znam",
   "_Znwm",
-  "__ubsan_handle_add_overflow",
-  "__ubsan_handle_sub_overflow",
-  "__ubsan_handle_mul_overflow",
-  "__ubsan_handle_divrem_overflow",
 };
 
 // Symbols we aren't going to warn about
@@ -915,23 +1024,6 @@ void externalsAndGlobalsCheck(const llvm::Module *m) {
        fnIt != fn_ie; ++fnIt) {
     if (fnIt->isDeclaration() && !fnIt->use_empty())
       externals.insert(std::make_pair(fnIt->getName(), false));
-    for (Function::const_iterator bbIt = fnIt->begin(), bb_ie = fnIt->end();
-         bbIt != bb_ie; ++bbIt) {
-      for (BasicBlock::const_iterator it = bbIt->begin(), ie = bbIt->end();
-           it != ie; ++it) {
-        if (const CallInst *ci = dyn_cast<CallInst>(it)) {
-#if LLVM_VERSION_CODE >= LLVM_VERSION(8, 0)
-          if (isa<InlineAsm>(ci->getCalledOperand())) {
-#else
-          if (isa<InlineAsm>(ci->getCalledValue())) {
-#endif
-            klee_warning_once(&*fnIt,
-                              "function \"%s\" has inline asm",
-                              fnIt->getName().data());
-          }
-        }
-      }
-    }
   }
 
   for (Module::const_global_iterator
@@ -1026,13 +1118,6 @@ static void halt_via_gdb(int pid) {
     perror("system");
 }
 
-#ifndef SUPPORT_KLEE_UCLIBC
-static void
-linkWithUclibc(StringRef libDir, std::string opt_suffix,
-               std::vector<std::unique_ptr<llvm::Module>> &modules) {
-  klee_error("invalid libc, no uclibc support!\n");
-}
-#else
 static void replaceOrRenameFunction(llvm::Module *module,
 		const char *old_name, const char *new_name)
 {
@@ -1054,9 +1139,6 @@ static void
 createLibCWrapper(std::vector<std::unique_ptr<llvm::Module>> &modules,
                   llvm::StringRef intendedFunction,
                   llvm::StringRef libcMainFunction) {
-  // XXX we need to rearchitect so this can also be used with
-  // programs externally linked with libc implementation.
-
   // We now need to swap things so that libcMainFunction is the entry
   // point, in such a way that the arguments are passed to
   // libcMainFunction correctly. We do this by renaming the user main
@@ -1099,17 +1181,13 @@ createLibCWrapper(std::vector<std::unique_ptr<llvm::Module>> &modules,
   BasicBlock *bb = BasicBlock::Create(ctx, "entry", stub);
   llvm::IRBuilder<> Builder(bb);
 
-  std::vector<llvm::Value*> args;
+  std::vector<llvm::Value *> args;
   args.push_back(llvm::ConstantExpr::getBitCast(
-#if LLVM_VERSION_CODE >= LLVM_VERSION(9, 0)
       cast<llvm::Constant>(inModuleReference.getCallee()),
-#else
-      inModuleReference,
-#endif
       ft->getParamType(0)));
   args.push_back(&*(stub->arg_begin())); // argc
   auto arg_it = stub->arg_begin();
-  args.push_back(&*(++arg_it)); // argv
+  args.push_back(&*(++arg_it));                                // argv
   args.push_back(Constant::getNullValue(ft->getParamType(3))); // app_init
   args.push_back(Constant::getNullValue(ft->getParamType(4))); // app_fini
   args.push_back(Constant::getNullValue(ft->getParamType(5))); // rtld_fini
@@ -1138,7 +1216,8 @@ linkWithUclibc(StringRef libDir, std::string opt_suffix,
     replaceOrRenameFunction(modules[i].get(), "__libc_fcntl", "fcntl");
   }
 
-  createLibCWrapper(modules, EntryPoint, "__uClibc_main");
+  if (mainFn)
+    createLibCWrapper(modules, "main", "__uClibc_main");
   klee_message("NOTE: Using klee-uclibc : %s", uclibcBCA.c_str());
 
   // Link the fortified library
@@ -1149,17 +1228,15 @@ linkWithUclibc(StringRef libDir, std::string opt_suffix,
     klee_error("error loading the fortify library '%s': %s",
                FortifyPath.c_str(), errorMsg.c_str());
 }
-#endif
 
 int main(int argc, char **argv, char **envp) {
-  atexit(llvm_shutdown);  // Call llvm_shutdown() on exit.
+  atexit(llvm_shutdown); // Call llvm_shutdown() on exit
 
-#if LLVM_VERSION_CODE >= LLVM_VERSION(13, 0)
-  KCommandLine::HideOptions(llvm::cl::getGeneralCategory());
-#else
-  KCommandLine::HideOptions(llvm::cl::GeneralCategory);
-#endif
-
+  KCommandLine::KeepOnlyCategories(
+     {&ChecksCat,      &DebugCat,    &ExtCallsCat, &ExprCat,     &LinkCat,
+      &MemoryCat,      &MergeCat,    &MiscCat,     &ModuleCat,   &ReplayCat,
+      &SearchCat,      &SeedingCat,  &SolvingCat,  &StartCat,    &StatsCat,
+      &TerminationCat, &TestCaseCat, &TestGenCat,  &ExecTreeCat, &ExecTreeCat});
   llvm::InitializeNativeTarget();
 
   parseArguments(argc, argv);
@@ -1182,23 +1259,22 @@ int main(int argc, char **argv, char **envp) {
       auto nextStep = time::getWallTime() + maxTime + (maxTime / 10);
       int level = 0;
 
-      // Simple stupid code...
       while (1) {
         sleep(1);
 
         int status, res = waitpid(pid, &status, WNOHANG);
 
         if (res < 0) {
-          if (errno==ECHILD) { // No child, no need to watch but
-                               // return error since we didn't catch
-                               // the exit.
+          if (errno == ECHILD) {
+            // No child, no need to watch but return error since
+            // we didn't catch the exit.
             klee_warning("KLEE: watchdog exiting (no child)\n");
             return 1;
-          } else if (errno!=EINTR) {
+          } else if (errno != EINTR) {
             perror("watchdog waitpid");
             exit(1);
           }
-        } else if (res==pid && WIFEXITED(status)) {
+        } else if (res == pid && WIFEXITED(status)) {
           return WEXITSTATUS(status);
         } else {
           auto time = time::getWallTime();
@@ -1218,7 +1294,7 @@ int main(int argc, char **argv, char **envp) {
               klee_warning(
                   "KLEE: WATCHDOG: kill(9)ing child (I tried to be nice)\n");
               kill(pid, SIGKILL);
-              return 1; // what more can we do
+              return 1; // what more can we do?
             }
 
             // Ideally this triggers a dump, which may take a while,
@@ -1238,6 +1314,10 @@ int main(int argc, char **argv, char **envp) {
   // Load the bytecode...
   std::string errorMsg;
   LLVMContext ctx;
+#if LLVM_VERSION_CODE == LLVM_VERSION(15, 0)
+  // We have to force the upgrade to opaque pointer explicitly for LLVM 15.
+  ctx.setOpaquePointers(true);
+#endif
   std::vector<std::unique_ptr<llvm::Module>> loadedModules;
   if (!klee::loadFile(InputFile, ctx, loadedModules, errorMsg)) {
     klee_error("error loading program '%s': %s", InputFile.c_str(),
@@ -1283,6 +1363,27 @@ int main(int argc, char **argv, char **envp) {
                                   /*CheckDivZero=*/CheckDivZero,
                                   /*CheckOvershift=*/CheckOvershift);
 
+  // Get the main function
+  for (auto &module : loadedModules) {
+    mainFn = module->getFunction("main");
+    if (mainFn)
+      break;
+  }
+
+  // Get the entry point function
+  if (EntryPoint.empty())
+    klee_error("entry-point cannot be empty");
+
+  for (auto &module : loadedModules) {
+    entryFn = module->getFunction(EntryPoint);
+    if (entryFn)
+      break;
+  }
+
+  if (!entryFn)
+    klee_error("Entry function '%s' not found in module.", EntryPoint.c_str());
+
+
   if (WithPOSIXRuntime) {
     SmallString<128> Path(Opts.LibraryDir);
     llvm::sys::path::append(Path, "libkleeRuntimePOSIX" + opt_suffix + ".bca");
@@ -1293,7 +1394,17 @@ int main(int argc, char **argv, char **envp) {
                  errorMsg.c_str());
 
     std::string libcPrefix = (Libc == LibcType::UcLibc ? "__user_" : "");
-    preparePOSIX(loadedModules, libcPrefix);
+    if (mainFn)
+      preparePOSIX(loadedModules, libcPrefix);
+  }
+
+  if (WithUBSanRuntime) {
+    SmallString<128> Path(Opts.LibraryDir);
+    llvm::sys::path::append(Path, "libkleeUBSan" + opt_suffix + ".bca");
+    if (!klee::loadFile(Path.c_str(), mainModule->getContext(), loadedModules,
+                        errorMsg))
+      klee_error("error loading UBSan support '%s': %s", Path.c_str(),
+                 errorMsg.c_str());
   }
 
   if (Libcxx) {
@@ -1394,12 +1505,6 @@ int main(int argc, char **argv, char **envp) {
     pArgv[i] = pArg;
   }
 
-  std::vector<bool> replayPath;
-
-  if (ReplayPathFile != "") {
-    KleeHandler::loadPathFile(ReplayPathFile, replayPath);
-  }
-
   Interpreter::InterpreterOptions IOpts;
   IOpts.MakeConcreteSymbolic = MakeConcreteSymbolic;
   KleeHandler *handler = new KleeHandler(pArgc, pArgv);
@@ -1408,28 +1513,69 @@ int main(int argc, char **argv, char **envp) {
   assert(interpreter);
   handler->setInterpreter(interpreter);
 
-  for (int i=0; i<argc; i++) {
-    handler->getInfoStream() << argv[i] << (i+1<argc ? " ":"\n");
-  }
+  for (int i = 0; i < argc; i++)
+    handler->getInfoStream() << argv[i] << (i + 1 < argc ? " " : "\n");
   handler->getInfoStream() << "PID: " << getpid() << "\n";
 
   // Get the desired main function.  klee_main initializes uClibc
   // locale and other data and then calls main.
 
   auto finalModule = interpreter->setModule(loadedModules, Opts);
-  Function *mainFn = finalModule->getFunction(EntryPoint);
-  if (!mainFn) {
+  entryFn = finalModule->getFunction(EntryPoint);
+  if (!entryFn)
     klee_error("Entry function '%s' not found in module.", EntryPoint.c_str());
-  }
 
   externalsAndGlobalsCheck(finalModule);
 
-  if (ReplayPathFile != "") {
+  std::vector<bool> replayPath;
+  if (!ReplayPathFile.empty()) {
+    KleeHandler::loadPathFile(ReplayPathFile, replayPath);
     interpreter->setReplayPath(&replayPath);
   }
 
-
   auto startTime = std::time(nullptr);
+
+  if (WriteXMLTests) {
+    // Write metadata.xml
+    auto meta_file = handler->openOutputFile("metadata.xml");
+    if (!meta_file)
+      klee_error("Could not write metadata.xml");
+
+    *meta_file
+        << "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n";
+    *meta_file
+        << "<!DOCTYPE test-metadata PUBLIC \"+//IDN sosy-lab.org//DTD "
+           "test-format test-metadata 1.0//EN\" "
+           "\"https://sosy-lab.org/test-format/test-metadata-1.0.dtd\">\n";
+    *meta_file << "<test-metadata>\n";
+    *meta_file << "\t<sourcecodelang>C</sourcecodelang>\n";
+    *meta_file << "\t<producer>" << PACKAGE_STRING << "</producer>\n";
+
+    // Assume with early exit a bug finding mode and otherwise coverage
+    if (OptExitOnError)
+      *meta_file << "\t<specification>COVER( init(main()), FQL(COVER "
+                    "EDGES(@CALL(__VERIFIER_error))) )</specification>\n";
+    else
+      *meta_file << "\t<specification>COVER( init(main()), FQL(COVER "
+                    "EDGES(@DECISIONEDGE)) )</specification>\n";
+
+    // Assume the input file resembles the original source file; just exchange
+    // extension
+    *meta_file << "\t<programfile>" << XMLMetadataProgramFile
+               << ".c</programfile>\n";
+    *meta_file << "\t<programhash>" << XMLMetadataProgramHash
+               << "</programhash>\n";
+    *meta_file << "\t<entryfunction>" << mainFn->getName().str()
+               << "</entryfunction>\n";
+    *meta_file << "\t<architecture>"
+               << finalModule->getDataLayout().getPointerSizeInBits()
+               << "bit</architecture>\n";
+    std::stringstream t;
+    t << std::put_time(std::localtime(&startTime), "%Y-%m-%dT%H:%M:%SZ");
+    *meta_file << "\t<creationtime>" << t.str() << "</creationtime>\n";
+    *meta_file << "</test-metadata>\n";
+  }
+
   { // output clock info and start time
     std::stringstream startInfo;
     startInfo << time::getClockInfo()
@@ -1478,7 +1624,7 @@ int main(int argc, char **argv, char **envp) {
                    << " bytes)"
                    << " (" << ++i << "/" << kTestFiles.size() << ")\n";
       // XXX should put envp in .ktest ?
-      interpreter->runFunctionAsMain(mainFn, out->numArgs, out->args, pEnvp);
+      interpreter->runFunctionAsMain(entryFn, out->numArgs, out->args, pEnvp);
       if (interrupted) break;
     }
     interpreter->setReplayKTest(0);
@@ -1527,7 +1673,8 @@ int main(int argc, char **argv, char **envp) {
                    sys::StrError(errno).c_str());
       }
     }
-    interpreter->runFunctionAsMain(mainFn, pArgc, pArgv, pEnvp);
+
+    interpreter->runFunctionAsMain(entryFn, pArgc, pArgv, pEnvp);
 
     while (!seeds.empty()) {
       kTest_free(seeds.back());
@@ -1562,7 +1709,7 @@ int main(int argc, char **argv, char **envp) {
   delete interpreter;
 
   uint64_t queries =
-    *theStatisticManager->getStatisticByName("Queries");
+    *theStatisticManager->getStatisticByName("SolverQueries");
   uint64_t queriesValid =
     *theStatisticManager->getStatisticByName("QueriesValid");
   uint64_t queriesInvalid =

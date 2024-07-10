@@ -11,9 +11,9 @@
 
 #include "CoreStats.h"
 #include "ExecutionState.h"
+#include "ExecutionTree.h"
 #include "Executor.h"
 #include "MergeHandler.h"
-#include "PTree.h"
 #include "StatsTracker.h"
 
 #include "klee/ADT/DiscretePDF.h"
@@ -25,10 +25,14 @@
 #include "klee/Support/ErrorHandling.h"
 #include "klee/System/Time.h"
 
+#include "klee/Support/CompilerWarning.h"
+DISABLE_WARNING_PUSH
+DISABLE_WARNING_DEPRECATED_DECLARATIONS
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
+DISABLE_WARNING_POP
 
 #include <cassert>
 #include <cmath>
@@ -257,15 +261,17 @@ void WeightedRandomSearcher::printName(llvm::raw_ostream &os) {
 #define IS_OUR_NODE_VALID(n)                                                   \
   (((n).getPointer() != nullptr) && (((n).getInt() & idBitMask) != 0))
 
-RandomPathSearcher::RandomPathSearcher(PTree &processTree, RNG &rng)
-  : processTree{processTree},
-    theRNG{rng},
-    idBitMask{processTree.getNextId()} {};
+RandomPathSearcher::RandomPathSearcher(InMemoryExecutionTree *executionTree, RNG &rng)
+    : executionTree{executionTree}, theRNG{rng},
+      idBitMask{static_cast<uint8_t>(executionTree ? executionTree->getNextId() : 0)} {
+  assert(executionTree);
+};
 
 ExecutionState &RandomPathSearcher::selectState() {
   unsigned flips=0, bits=0;
-  assert(processTree.root.getInt() & idBitMask && "Root should belong to the searcher");
-  PTreeNode *n = processTree.root.getPointer();
+  assert(executionTree->root.getInt() & idBitMask &&
+         "Root should belong to the searcher");
+  ExecutionTreeNode *n = executionTree->root.getPointer();
   while (!n->state) {
     if (!IS_OUR_NODE_VALID(n->left)) {
       assert(IS_OUR_NODE_VALID(n->right) && "Both left and right nodes invalid");
@@ -293,46 +299,47 @@ void RandomPathSearcher::update(ExecutionState *current,
                                 const std::vector<ExecutionState *> &removedStates) {
   // insert states
   for (auto es : addedStates) {
-    PTreeNode *pnode = es->ptreeNode, *parent = pnode->parent;
-    PTreeNodePtr *childPtr;
+    ExecutionTreeNode *etnode = es->executionTreeNode, *parent = etnode->parent;
+    ExecutionTreeNodePtr *childPtr;
 
-    childPtr = parent ? ((parent->left.getPointer() == pnode) ? &parent->left
-                                                              : &parent->right)
-                      : &processTree.root;
-    while (pnode && !IS_OUR_NODE_VALID(*childPtr)) {
+    childPtr = parent ? ((parent->left.getPointer() == etnode) ? &parent->left
+                                                               : &parent->right)
+                      : &executionTree->root;
+    while (etnode && !IS_OUR_NODE_VALID(*childPtr)) {
       childPtr->setInt(childPtr->getInt() | idBitMask);
-      pnode = parent;
-      if (pnode)
-        parent = pnode->parent;
+      etnode = parent;
+      if (etnode)
+        parent = etnode->parent;
 
       childPtr = parent
-                     ? ((parent->left.getPointer() == pnode) ? &parent->left
-                                                             : &parent->right)
-                     : &processTree.root;
+                     ? ((parent->left.getPointer() == etnode) ? &parent->left
+                                                              : &parent->right)
+                     : &executionTree->root;
     }
   }
 
   // remove states
   for (auto es : removedStates) {
-    PTreeNode *pnode = es->ptreeNode, *parent = pnode->parent;
+    ExecutionTreeNode *etnode = es->executionTreeNode, *parent = etnode->parent;
 
-    while (pnode && !IS_OUR_NODE_VALID(pnode->left) &&
-           !IS_OUR_NODE_VALID(pnode->right)) {
+    while (etnode && !IS_OUR_NODE_VALID(etnode->left) &&
+           !IS_OUR_NODE_VALID(etnode->right)) {
       auto childPtr =
-          parent ? ((parent->left.getPointer() == pnode) ? &parent->left
-                                                         : &parent->right)
-                 : &processTree.root;
-      assert(IS_OUR_NODE_VALID(*childPtr) && "Removing pTree child not ours");
+          parent ? ((parent->left.getPointer() == etnode) ? &parent->left
+                                                          : &parent->right)
+                 : &executionTree->root;
+      assert(IS_OUR_NODE_VALID(*childPtr) &&
+             "Removing executionTree child not ours");
       childPtr->setInt(childPtr->getInt() & ~idBitMask);
-      pnode = parent;
-      if (pnode)
-        parent = pnode->parent;
+      etnode = parent;
+      if (etnode)
+        parent = etnode->parent;
     }
   }
 }
 
 bool RandomPathSearcher::empty() {
-  return !IS_OUR_NODE_VALID(processTree.root);
+  return !IS_OUR_NODE_VALID(executionTree->root);
 }
 
 void RandomPathSearcher::printName(llvm::raw_ostream &os) {
@@ -408,33 +415,50 @@ void MergingSearcher::printName(llvm::raw_ostream &os) {
 
 ///
 
-BatchingSearcher::BatchingSearcher(Searcher *baseSearcher, time::Span timeBudget, unsigned instructionBudget)
-  : baseSearcher{baseSearcher},
-    timeBudget{timeBudget},
-    instructionBudget{instructionBudget} {};
+BatchingSearcher::BatchingSearcher(Searcher *baseSearcher,
+                                   time::Span timeBudget,
+                                   unsigned instructionBudget)
+    : baseSearcher{baseSearcher}, timeBudgetEnabled{timeBudget},
+      timeBudget{timeBudget}, instructionBudgetEnabled{instructionBudget > 0},
+      instructionBudget{instructionBudget} {};
+
+bool BatchingSearcher::withinTimeBudget() const {
+  return !timeBudgetEnabled ||
+         (time::getWallTime() - lastStartTime) <= timeBudget;
+}
+
+bool BatchingSearcher::withinInstructionBudget() const {
+  return !instructionBudgetEnabled ||
+         (stats::instructions - lastStartInstructions) <= instructionBudget;
+}
 
 ExecutionState &BatchingSearcher::selectState() {
-  if (!lastState ||
-      (((timeBudget.toSeconds() > 0) &&
-        (time::getWallTime() - lastStartTime) > timeBudget)) ||
-      ((instructionBudget > 0) &&
-       (stats::instructions - lastStartInstructions) > instructionBudget)) {
-    if (lastState) {
-      time::Span delta = time::getWallTime() - lastStartTime;
-      auto t = timeBudget;
-      t *= 1.1;
-      if (delta > t) {
-        klee_message("increased time budget from %f to %f\n", timeBudget.toSeconds(), delta.toSeconds());
-        timeBudget = delta;
-      }
-    }
-    lastState = &baseSearcher->selectState();
-    lastStartTime = time::getWallTime();
-    lastStartInstructions = stats::instructions;
-    return *lastState;
-  } else {
+  if (lastState && withinTimeBudget() && withinInstructionBudget()) {
+    // return same state for as long as possible
     return *lastState;
   }
+
+  // ensure time budget is larger than time between two calls (for same state)
+  if (lastState && timeBudgetEnabled) {
+    time::Span delta = time::getWallTime() - lastStartTime;
+    auto t = timeBudget;
+    t *= 1.1;
+    if (delta > t) {
+      klee_message("increased time budget from %f to %f\n",
+                   timeBudget.toSeconds(), delta.toSeconds());
+      timeBudget = delta;
+    }
+  }
+
+  // pick a new state
+  lastState = &baseSearcher->selectState();
+  if (timeBudgetEnabled) {
+    lastStartTime = time::getWallTime();
+  }
+  if (instructionBudgetEnabled) {
+    lastStartInstructions = stats::instructions;
+  }
+  return *lastState;
 }
 
 void BatchingSearcher::update(ExecutionState *current,

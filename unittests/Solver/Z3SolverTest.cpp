@@ -19,6 +19,8 @@
 #include "klee/Expr/Expr.h"
 #include "klee/Solver/Solver.h"
 
+#include <memory>
+
 using namespace klee;
 
 namespace {
@@ -26,13 +28,11 @@ ArrayCache AC;
 }
 class Z3SolverTest : public ::testing::Test {
 protected:
+  std::unique_ptr<Solver> Z3Solver_;
+
   Z3SolverTest() : Z3Solver_(createCoreSolver(CoreSolverType::Z3_SOLVER)) {
     Z3Solver_->setCoreSolverTimeout(time::Span("10s"));
   }
-
-  virtual ~Z3SolverTest() { delete Z3Solver_; }
-
-  Solver *Z3Solver_;
 };
 
 TEST_F(Z3SolverTest, GetConstraintLog) {
@@ -63,9 +63,9 @@ TEST_F(Z3SolverTest, GetConstraintLog) {
 
   // Ensure this is not buggy as fixed in https://github.com/klee/klee/pull/1235
   // If the bug is still present this fail due to an internal assertion
-  char *ConstraintsString = Z3Solver_->getConstraintLog(TheQuery);
-  const char *ExpectedArraySelection = "(= (select const_array0";
-  const char *Occurence = std::strstr(ConstraintsString, ExpectedArraySelection);
+  std::string ConstraintsString = Z3Solver_->getConstraintLog(TheQuery);
+  const char *ExpectedArraySelection = "(= (select const_array_0";
+  const char *Occurence =
+      std::strstr(ConstraintsString.c_str(), ExpectedArraySelection);
   ASSERT_STRNE(Occurence, nullptr);
-  free(ConstraintsString);
 }
