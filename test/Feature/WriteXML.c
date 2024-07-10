@@ -3,8 +3,7 @@
 // RUN: %klee --output-dir=%t.klee-out --exit-on-error --write-xml-tests --xml-metadata-programfile=WriteXML.c --xml-metadata-programhash=0 %t2.bc
 // RUN: test -f %t.klee-out/test000001.xml
 // RUN: test -f %t.klee-out/test000002.xml
-
-#include <assert.h>
+#include "klee/klee.h"
 #include <stdio.h>
 
 int main() {
