@@ -17,7 +17,7 @@ project(KLEE CXX C)
 # Project version
 ###############################################################################
 set(KLEE_VERSION_MAJOR 3)
-set(KLEE_VERSION_MINOR 0)
+set(KLEE_VERSION_MINOR 1)
 set(KLEE_VERSION "${KLEE_VERSION_MAJOR}.${KLEE_VERSION_MINOR}")
 
 # If a patch is needed, we can add KLEE_VERSION_PATCH
@@ -315,6 +315,16 @@ endif()
 find_package(SQLite3)
 if (NOT SQLite3_FOUND)
   message( FATAL_ERROR "SQLite3 not found, please install" )
+endif()
+
+find_program(
+  SQLITE_CLI
+  NAMES "sqlite3"
+  DOC "Path to sqlite3 tool"
+)
+
+if (NOT SQLITE_CLI)
+  set(SQLITE_CLI "")
 endif()
 
 ################################################################################

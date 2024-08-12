@@ -19,7 +19,7 @@
 using namespace llvm;
 using namespace klee;
 
-namespace {
+namespace klee {
 llvm::cl::OptionCategory
     SearchCat("Search options", "These options control the search heuristic.");
 
@@ -87,7 +87,7 @@ cl::opt<bool> UseFairSearch(
         "(default=false)"),
     cl::init(false), cl::cat(SearchCat));
 
-} // namespace
+} // namespace klee
 
 void klee::initializeSearchOptions() {
   // default values
