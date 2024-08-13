@@ -3,8 +3,8 @@
 // RUN: %klee --output-dir=%t.klee-out --optimize %t1.bc 2>&1 | FileCheck %s
 // RUN: test -f %t.klee-out/test000001.ptr.err
 
-#include <assert.h>
-#include <stdio.h>
+#include "klee/klee.h"
+
 #include <stdlib.h>
 
 int main(int argc, char **argv) {
@@ -15,7 +15,7 @@ int main(int argc, char **argv) {
   unsigned char x = buf[1];
   free(buf);
   if (x) {
-    // CHECK: 2007-10-11-illegal-access-after-free-and-branch.c:19: memory error: out of bound pointer
+    // CHECK: 2007-10-11-illegal-access-after-free-and-branch.c:[[@LINE+1]]: memory error: use after free
     return buf[2];
   }
   klee_silent_exit(0);
