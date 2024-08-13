@@ -36,9 +36,9 @@ int main() {
   free(buf[s]);
 
   for (i = 0; i < 3; i++) {
-    // CHECK: MultipleFreeResolution.c:[[@LINE+3]]: memory error: use after free
-    // CHECK: MultipleFreeResolution.c:[[@LINE+2]]: memory error: use after free
-    // CHECK: MultipleFreeResolution.c:[[@LINE+1]]: memory error: use after free
+    // CHECK: MultipleFreeResolution.c:[[@LINE+3]]: memory error: out of bound pointer
+    // CHECK: MultipleFreeResolution.c:[[@LINE+2]]: memory error: out of bound pointer
+    // CHECK: MultipleFreeResolution.c:[[@LINE+1]]: memory error: out of bound pointer
     printf("*buf[%d] = %d\n", i, *buf[i]);
   }
 

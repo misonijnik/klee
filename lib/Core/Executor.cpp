@@ -5330,8 +5330,8 @@ void Executor::callExternalFunction(ExecutionState &state, KInstruction *target,
     for (std::vector<ref<Expr>>::iterator ai = arguments.begin(),
                                           ae = arguments.end();
          ai != ae; ++ai) {
-      if (ExternalCalls ==
-          ExternalCallPolicy::All) { // don't bother checking uniqueness
+      if (ExternalCalls == ExternalCallPolicy::All ||
+          ExternalCalls == ExternalCallPolicy::OverApprox) { // don't bother checking uniqueness
         ref<Expr> arg = *ai;
         if (auto pointer = dyn_cast<PointerExpr>(arg)) {
           arg = pointer->getValue();
@@ -5339,7 +5339,9 @@ void Executor::callExternalFunction(ExecutionState &state, KInstruction *target,
         arg = optimizer.optimizeExpr(arg, true);
         ref<ConstantExpr> ce = evaluator.visit(arg);
         ce->toMemory(&args[wordIndex]);
-        addConstraint(state, EqExpr::create(ce, arg));
+        if (ExternalCalls == ExternalCallPolicy::All) {
+          addConstraint(state, EqExpr::create(ce, arg));
+        }
         wordIndex += (ce->getWidth() + 63) / 64;
       } else {
         ref<Expr> arg = toUnique(state, *ai);

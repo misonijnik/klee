@@ -8,7 +8,7 @@
 int main() {
   int *x = malloc(sizeof(*x));
   free(x);
-  // CHECK: memory error: double free
+  // CHECK: memory error: invalid pointer: free
   free(x);
   return 0;
 }

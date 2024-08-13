@@ -15,7 +15,7 @@ int main(int argc, char **argv) {
   unsigned char x = buf[1];
   free(buf);
   if (x) {
-    // CHECK: 2007-10-11-illegal-access-after-free-and-branch.c:[[@LINE+1]]: memory error: use after free
+    // CHECK: 2007-10-11-illegal-access-after-free-and-branch.c:[[@LINE+1]]: memory error: out of bound pointer
     return buf[2];
   }
   klee_silent_exit(0);

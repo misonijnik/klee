@@ -17,7 +17,7 @@ int main() {
 
   int y = abs(x);
   printf("y = %d\n", y);
-  // CHECK: calling external: abs((ReadLSB w32 0 x))
+  // CHECK: calling external: abs((ReadLSB w32 0 (array (w64 4) (makeSymbolic x 0))))
 
   assert(x == y);
 }

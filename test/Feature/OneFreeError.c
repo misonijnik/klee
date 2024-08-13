@@ -8,7 +8,7 @@
 int main() {
   int *x = malloc(sizeof(*x));
   free(x);
-  // CHECK: OneFreeError.c:[[@LINE+1]]: memory error: use after free
+  // CHECK: OneFreeError.c:[[@LINE+1]]: memory error: out of bound pointer
   x[0] = 1;
   return 0;
 }
