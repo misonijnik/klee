@@ -5,7 +5,7 @@ on:
   pull_request:
     branches: [main, utbot-main]
   push:
-    branches: [main, utbot-main]
+    branches: [main, utbot-main, misonijnik/rebase-3.1-inner]
 
 # Defaults for building KLEE
 env:
