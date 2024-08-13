@@ -5331,7 +5331,9 @@ void Executor::callExternalFunction(ExecutionState &state, KInstruction *target,
                                           ae = arguments.end();
          ai != ae; ++ai) {
       if (ExternalCalls == ExternalCallPolicy::All ||
-          ExternalCalls == ExternalCallPolicy::OverApprox) { // don't bother checking uniqueness
+          ExternalCalls ==
+              ExternalCallPolicy::OverApprox) { // don't bother checking
+                                                // uniqueness
         ref<Expr> arg = *ai;
         if (auto pointer = dyn_cast<PointerExpr>(arg)) {
           arg = pointer->getValue();

@@ -20,8 +20,7 @@ enum class SwitchImplType {
   eSwitchTypeInternal
 };
 
-void optimiseAndPrepare(bool OptimiseKLEECall, bool Optimize,
-                        bool Simplify,
+void optimiseAndPrepare(bool OptimiseKLEECall, bool Optimize, bool Simplify,
                         bool WithFPRuntime, SwitchImplType SwitchType,
                         std::string EntryPoint,
                         llvm::ArrayRef<const char *> preservedFunctions,

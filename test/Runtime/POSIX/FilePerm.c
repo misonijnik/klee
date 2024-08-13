@@ -14,13 +14,13 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
   int fd = open("A", O_RDWR);
   if (fd != -1)
     printf("File 'A' opened successfully\n");
   // CHECK-DAG: File 'A' opened successfully
-  else printf("Cannot open file 'A'\n");
+  else
+    printf("Cannot open file 'A'\n");
   // CHECK-DAG: Cannot open file 'A'
   if (fd != -1)
     close(fd);

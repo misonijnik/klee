@@ -228,9 +228,9 @@ void KModule::optimiseAndPrepare(
   if (opts.CheckOvershift)
     addInternalFunction("klee_overshift_check");
 
-  klee::optimiseAndPrepare(OptimiseKLEECall, opts.Optimize, opts.Simplify, opts.WithFPRuntime,
-                           SwitchType, opts.EntryPoint, preservedFunctions,
-                           module.get());
+  klee::optimiseAndPrepare(OptimiseKLEECall, opts.Optimize, opts.Simplify,
+                           opts.WithFPRuntime, SwitchType, opts.EntryPoint,
+                           preservedFunctions, module.get());
 }
 
 class InstructionToLineAnnotator : public llvm::AssemblyAnnotationWriter {

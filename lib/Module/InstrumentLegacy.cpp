@@ -90,9 +90,8 @@ void klee::checkModule(bool DontVerify, llvm::Module *module) {
 }
 
 void klee::optimiseAndPrepare(bool OptimiseKLEECall, bool Optimize,
-                              bool Simplify,
-                              bool WithFPRuntime, SwitchImplType SwitchType,
-                              std::string EntryPoint,
+                              bool Simplify, bool WithFPRuntime,
+                              SwitchImplType SwitchType, std::string EntryPoint,
                               llvm::ArrayRef<const char *> preservedFunctions,
                               llvm::Module *module) {
   // Preserve all functions containing klee-related function calls from being
@@ -107,8 +106,7 @@ void klee::optimiseAndPrepare(bool OptimiseKLEECall, bool Optimize,
   if (WithFPRuntime) {
     if (UseKleeFloatInternals) {
       for (const auto &p : klee::floatReplacements) {
-        replaceOrRenameFunction(module, p.first.c_str(),
-                                p.second.c_str());
+        replaceOrRenameFunction(module, p.first.c_str(), p.second.c_str());
       }
     }
   }

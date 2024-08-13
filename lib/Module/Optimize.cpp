@@ -31,13 +31,11 @@
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/GVN.h"
 #include "llvm/Transforms/Utils.h"
-#include "llvm/IR/Module.h"
 
 using namespace klee;
 void klee::optimiseAndPrepare(bool OptimiseKLEECall, bool Optimize,
-                              bool Simplify,
-                              bool WithFPRuntime, SwitchImplType SwitchType,
-                              std::string EntryPoint,
+                              bool Simplify, bool WithFPRuntime,
+                              SwitchImplType SwitchType, std::string EntryPoint,
                               llvm::ArrayRef<const char *> preservedFunctions,
                               llvm::Module *module) {
   assert(0);
