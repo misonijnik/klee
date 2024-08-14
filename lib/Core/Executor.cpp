@@ -1968,10 +1968,14 @@ MemoryObject *Executor::serializeLandingpad(ExecutionState &state,
 
       std::uint64_t ti_addr = 0;
 
-      llvm::BitCastOperator *clause_bitcast =
-          dyn_cast<llvm::BitCastOperator>(current_clause);
-      if (clause_bitcast) {
-        llvm::GlobalValue *clause_type =
+      llvm::Constant *catchClause = lpi.getClause(current_clause_id);
+      llvm::Constant *typeInfo = catchClause->stripPointerCasts();
+      if (auto *gv = dyn_cast<llvm::GlobalVariable>(typeInfo)) {
+        ti_addr =
+            cast<ConstantExpr>(globalAddresses[gv]->getValue())->getZExtValue();
+      } else if (auto *clause_bitcast =
+                     dyn_cast<llvm::BitCastOperator>(catchClause)) {
+        auto *clause_type =
             dyn_cast<GlobalValue>(clause_bitcast->getOperand(0));
 
         // Since global variable may have symbolic address,
@@ -1995,7 +1999,9 @@ MemoryObject *Executor::serializeLandingpad(ExecutionState &state,
         pointerMask[old_size + i] = ti_addr;
       }
     } else if (lpi.isFilter(current_clause_id)) {
-      if (current_clause->isNullValue()) {
+      llvm::Constant *filter_clause = lpi.getClause(current_clause_id);
+
+      if (filter_clause->isNullValue()) {
         // special handling for a catch-all filter clause, i.e., "[0 x i8*]"
         // for this case we serialize 1 element..
         serialized.push_back(1);
@@ -2004,8 +2010,7 @@ MemoryObject *Executor::serializeLandingpad(ExecutionState &state,
         serialized.resize(serialized.size() + 8, 0);
         pointerMask.resize(pointerMask.size() + 8, 0);
       } else {
-        llvm::ConstantArray const *ca =
-            cast<llvm::ConstantArray>(current_clause);
+        const auto *ca = cast<llvm::ConstantArray>(filter_clause);
 
         // serialize `num_elements+1` as unsigned char
         unsigned const num_elements = ca->getNumOperands();
@@ -2025,18 +2030,16 @@ MemoryObject *Executor::serializeLandingpad(ExecutionState &state,
 
         // serialize the exception-types occurring in this filter-clause
         for (llvm::Value const *v : ca->operands()) {
-          llvm::BitCastOperator const *bitcast =
-              dyn_cast<llvm::BitCastOperator>(v);
-          if (!bitcast) {
-            terminateStateOnExecError(state,
-                                      "Internal: expected value inside a "
-                                      "filter-clause to be a bitcast");
-            stateTerminated = true;
-            return nullptr;
+          llvm::GlobalValue const *clause_value = nullptr;
+
+          if (auto const *bitcast = dyn_cast<llvm::BitCastOperator>(v)) {
+            clause_value = dyn_cast<GlobalValue>(bitcast->getOperand(0));
           }
 
-          llvm::GlobalValue const *clause_value =
-              dyn_cast<GlobalValue>(bitcast->getOperand(0));
+          if (auto const *gv = dyn_cast<llvm::GlobalVariable>(v)) {
+            clause_value = gv;
+          }
+
           if (!clause_value) {
             terminateStateOnExecError(
                 state, "Internal: expected value inside a "
