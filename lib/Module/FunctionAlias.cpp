@@ -14,6 +14,7 @@
 #include "klee/Support/ErrorHandling.h"
 #include "klee/Support/OptionCategories.h"
 
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/GlobalAlias.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Regex.h"

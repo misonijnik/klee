@@ -30,6 +30,7 @@
 
 #include <cassert>
 #include <cfenv>
+#include <cmath>
 #include <vector>
 
 using namespace klee;

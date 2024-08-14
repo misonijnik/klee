@@ -65,7 +65,7 @@ if [ "$1" = "--debug" ] || [ "$1" = "-g" ]; then
     ENABLE_OPTIMIZED=0
     ENABLE_DEBUG=1
     KLEE_RUNTIME_BUILD="Debug+Asserts"
-    ENABLE_WARNINGS_AS_ERRORS=0
+    ENABLE_WARNINGS_AS_ERRORS=1
     shift 1
 else
     KEEP_PARSE="false"

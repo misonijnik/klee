@@ -13,8 +13,11 @@
 #include "klee/Support/ErrorHandling.h"
 #include "klee/Support/ModuleUtil.h"
 
+#include "llvm/IR/GlobalValue.h"
+#include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Value.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <memory>
@@ -69,12 +72,13 @@ MockBuilder::getExternalFunctions() {
   return externals;
 }
 
-std::map<std::string, llvm::Type *> MockBuilder::getExternalGlobals() {
-  std::map<std::string, llvm::Type *> externals;
+std::map<std::string, const llvm::GlobalVariable *>
+MockBuilder::getExternalGlobals() {
+  std::map<std::string, const llvm::GlobalVariable *> externals;
   for (const auto &global : userModule->globals()) {
     if (global.isDeclaration() &&
         !ignoredExternals.count(global.getName().str())) {
-      externals.insert(std::make_pair(global.getName(), global.getType()));
+      externals.insert(std::make_pair(global.getName(), &global));
     }
   }
   removeAliases(userModule, externals);
@@ -202,7 +206,7 @@ void MockBuilder::buildMockMain() {
 void MockBuilder::buildExternalGlobalsDefinitions() {
   auto externalGlobals = getExternalGlobals();
   for (const auto &[extName, type] : externalGlobals) {
-    auto elementType = type->getPointerElementType();
+    auto elementType = type->getValueType();
     klee_message("Mocking external variable %s", extName.c_str());
     llvm::GlobalVariable *global = dyn_cast_or_null<llvm::GlobalVariable>(
         mockModule->getOrInsertGlobal(extName, elementType));
@@ -304,8 +308,12 @@ MockBuilder::goByOffset(llvm::Value *value,
         klee_error("Incorrect annotation offset.");
       }
       prev = current;
+#if LLVM_VERSION_CODE >= LLVM_VERSION(15, 0)
+      current = builder->CreateLoad(current->getType(), current);
+#else
       current = builder->CreateLoad(current->getType()->getPointerElementType(),
                                     current);
+#endif
     } else if (inst == "&") {
       auto addr = builder->CreateAlloca(current->getType());
       prev = current;
@@ -329,10 +337,17 @@ inline llvm::Type *getTypeByOffset(llvm::Type *value,
   llvm::Type *current = value;
   for (const auto &inst : offset) {
     if (inst == "*") {
+#if LLVM_VERSION_CODE >= LLVM_VERSION(15, 0)
+      if (!current->isPointerTy() || current->isOpaquePointerTy()) {
+        return nullptr;
+      }
+      current = current->getNonOpaquePointerElementType();
+#else
       if (!current->isPointerTy()) {
         return nullptr;
       }
       current = current->getPointerElementType();
+#endif
     } else if (inst == "&") {
       // Not change
     } else {
@@ -460,10 +475,18 @@ void MockBuilder::buildAnnotationForExternalFunctionArgs(
           builder->CreateCondBr(brValue, derefBB, contBB);
 
           builder->SetInsertPoint(derefBB);
+#if LLVM_VERSION_CODE >= LLVM_VERSION(15, 0)
+          builder->CreateLoad(elem->getType(), elem);
+#else
           builder->CreateLoad(elem->getType()->getPointerElementType(), elem);
+#endif
           builder->CreateBr(contBB);
 
+#if LLVM_VERSION_CODE >= LLVM_VERSION(16, 0)
+          curFunc->insert(curFunc->end(), contBB);
+#else
           curFunc->getBasicBlockList().push_back(contBB);
+#endif
           builder->SetInsertPoint(contBB);
           break;
         }
@@ -504,12 +527,12 @@ void MockBuilder::buildAnnotationForExternalFunctionArgs(
       if (freePtr) {
         buildFree(elem, freePtr);
       }
-      processingValue(prev, elem->getType(), allocSourcePtr, initNullPtr);
+      processingValue(prev, elem, allocSourcePtr, initNullPtr);
     }
   }
 }
 
-void MockBuilder::processingValue(llvm::Value *prev, llvm::Type *elemType,
+void MockBuilder::processingValue(llvm::Value *prev, llvm::Value *elem,
                                   const Statement::Alloc *allocSourcePtr,
                                   bool initNullPtr) {
   if (initNullPtr) {
@@ -529,32 +552,49 @@ void MockBuilder::processingValue(llvm::Value *prev, llvm::Type *elemType,
           llvm::BasicBlock::Create(ctx, "allocArg", curFunc);
       builder->CreateCondBr(brValue, allocBB, initNullBB);
       builder->SetInsertPoint(allocBB);
-      buildAllocSource(prev, elemType, allocSourcePtr);
+      buildAllocSource(prev, elem, allocSourcePtr);
       builder->CreateBr(contBB);
     } else {
       builder->CreateCondBr(brValue, initNullBB, contBB);
     }
+#if LLVM_VERSION_CODE >= LLVM_VERSION(16, 0)
+    curFunc->insert(curFunc->end(), initNullBB);
+#else
     curFunc->getBasicBlockList().push_back(initNullBB);
+#endif
     builder->SetInsertPoint(initNullBB);
-    builder->CreateStore(
-        llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(elemType)),
-        prev);
+    builder->CreateStore(llvm::ConstantPointerNull::get(
+                             llvm::cast<llvm::PointerType>(elem->getType())),
+                         prev);
     builder->CreateBr(contBB);
 
+#if LLVM_VERSION_CODE >= LLVM_VERSION(16, 0)
+    curFunc->insert(curFunc->end(), contBB);
+#else
     curFunc->getBasicBlockList().push_back(contBB);
+#endif
     builder->SetInsertPoint(contBB);
   } else if (allocSourcePtr) {
-    buildAllocSource(prev, elemType, allocSourcePtr);
+    buildAllocSource(prev, elem, allocSourcePtr);
   }
 }
 
-void MockBuilder::buildAllocSource(llvm::Value *prev, llvm::Type *elemType,
+void MockBuilder::buildAllocSource(llvm::Value *prev, llvm::Value *elem,
                                    const Statement::Alloc *allocSourcePtr) {
   if (allocSourcePtr->value != Statement::Alloc::ALLOC) {
     klee_warning("Annotation: AllocSource \"%d\" not implemented use alloc",
                  allocSourcePtr->value);
   }
-  auto valueType = elemType->getPointerElementType();
+#if LLVM_VERSION_CODE >= LLVM_VERSION(15, 0)
+  auto valueType = elem->getType();
+  if (isa<llvm::LoadInst>(elem) || isa<llvm::StoreInst>(elem)) {
+    valueType = llvm::getLoadStoreType(elem);
+  } else if (auto func = dyn_cast<llvm::Function>(elem)) {
+    valueType = func->getFunctionType();
+  }
+#else
+  auto valueType = elem->getType()->getPointerElementType();
+#endif
   auto sizeValue = llvm::ConstantInt::get(
       ctx,
       llvm::APInt(64, mockModule->getDataLayout().getTypeStoreSize(valueType),
@@ -627,7 +667,7 @@ void MockBuilder::buildAnnotationForExternalFunctionReturn(
   llvm::Value *retValuePtr = builder->CreateAlloca(returnType, nullptr);
 
   if (returnType->isPointerTy() && (allocSourcePtr || mustInitNull)) {
-    processingValue(retValuePtr, returnType, allocSourcePtr,
+    processingValue(retValuePtr, func, allocSourcePtr,
                     mustInitNull || maybeInitNull);
   } else {
     buildCallKleeMakeSymbolic("klee_make_mock", retValuePtr, returnType,

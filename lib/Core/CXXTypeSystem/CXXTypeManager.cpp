@@ -9,6 +9,7 @@
 #include "klee/Module/KModule.h"
 #include "klee/Module/KType.h"
 
+#include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Metadata.h"
@@ -231,9 +232,15 @@ ref<Expr> cxxtypes::KCXXType::getContentRestrictions(ref<Expr> object) const {
   if (type == nullptr) {
     return nullptr;
   }
+#if LLVM_VERSION_CODE >= LLVM_VERSION(15, 0)
+  llvm::Type *elementType = type->getNonOpaquePointerElementType();
+  return llvm::cast<cxxtypes::KCXXType>(parent->getWrappedType(elementType))
+      ->getPointersRestrictions(object);
+#else
   llvm::Type *elementType = type->getPointerElementType();
   return llvm::cast<cxxtypes::KCXXType>(parent->getWrappedType(elementType))
       ->getPointersRestrictions(object);
+#endif
 }
 
 ref<Expr> cxxtypes::KCXXType::getPointersRestrictions(ref<Expr>) const {
@@ -641,9 +648,13 @@ cxxtypes::KCXXPointerType::KCXXPointerType(llvm::Type *type,
                                            TypeManager *parent)
     : KCXXType(type, parent) {
   typeKind = CXXTypeKind::POINTER;
-
+#if LLVM_VERSION_CODE >= LLVM_VERSION(15, 0)
+  elementType = cast<KCXXType>(
+      parent->getWrappedType(type->getNonOpaquePointerElementType()));
+#else
   elementType =
       cast<KCXXType>(parent->getWrappedType(type->getPointerElementType()));
+#endif
 }
 
 bool cxxtypes::KCXXPointerType::isAccessableFrom(

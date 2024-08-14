@@ -15,7 +15,9 @@
 #include "DistanceCalculator.h"
 #include "ExecutionState.h"
 #include "ExternalDispatcher.h"
+#if LLVM_VERSION_CODE <= LLVM_VERSION(14, 0)
 #include "GetElementPtrTypeIterator.h"
+#endif
 #include "ImpliedValue.h"
 #include "Memory.h"
 #include "MemoryManager.h"
@@ -3608,16 +3610,6 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     if (X86FPAsX87FP80 && castToType->isFloatingPointTy() &&
         Context::get().getPointerWidth() == 32) {
       result = FPToX87FP80Ext(result);
-    }
-
-    if (castToType->isPointerTy()) {
-      castToType = castToType->getPointerElementType();
-      if (ref<PointerExpr> pointer = cast<PointerExpr>(makePointer(result))) {
-        ref<Expr> base = pointer->getBase();
-        if (state.isGEPExpr(base)) {
-          state.gepExprBases[base] = castToType;
-        }
-      }
     }
 
     bindLocal(ki, state, result);

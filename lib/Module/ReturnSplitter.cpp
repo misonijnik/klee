@@ -10,6 +10,8 @@
 
 #include "Passes.h"
 
+#include "klee/Config/Version.h"
+
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
@@ -21,7 +23,11 @@ namespace klee {
 char ReturnSplitter::ID = 0;
 
 bool ReturnSplitter::runOnFunction(Function &F) {
+#if LLVM_VERSION_CODE >= LLVM_VERSION(16, 0)
+  unsigned n = F.size();
+#else
   unsigned n = F.getBasicBlockList().size();
+#endif
   BasicBlock **blocks = new BasicBlock *[n];
   unsigned i = 0;
   for (llvm::Function::iterator bbit = F.begin(), bbie = F.end(); bbit != bbie;

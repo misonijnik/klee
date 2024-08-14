@@ -32,9 +32,15 @@ KType *TypeManager::getWrappedType(llvm::Type *type) {
   if (typesMap.count(type) == 0) {
     types.emplace_back(new KType(type, this));
     typesMap.emplace(type, types.back().get());
+#if LLVM_VERSION_CODE >= LLVM_VERSION(15, 0)
+    if (type && type->isPointerTy() && !type->isOpaquePointerTy()) {
+      getWrappedType(type->getNonOpaquePointerElementType());
+    }
+#else
     if (type && type->isPointerTy()) {
       getWrappedType(type->getPointerElementType());
     }
+#endif
     if (type && type->isArrayTy()) {
       getWrappedType(type->getArrayElementType());
     }
@@ -167,7 +173,11 @@ void TypeManager::initTypeInfo() {
   for (auto &type : types) {
     llvm::Type *rawType = type->getRawType();
     if (rawType && rawType->isSized()) {
+#if LLVM_VERSION_CODE >= LLVM_VERSION(15, 0)
+      type->alignment = parent->targetData->getABITypeAlign(rawType).value();
+#else
       type->alignment = parent->targetData->getABITypeAlignment(rawType);
+#endif
       type->typeStoreSize = parent->targetData->getTypeStoreSize(rawType);
     }
   }
