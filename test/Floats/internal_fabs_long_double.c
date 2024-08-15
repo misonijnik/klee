@@ -6,10 +6,8 @@
 // REQUIRES: fp-runtime
 #include "klee/klee.h"
 #include <assert.h>
-#include <float.h>
 #include <math.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <string.h>
 
 long double make_long_double(uint16_t highBits, uint64_t lowBits) {
