@@ -85,7 +85,7 @@ public:
                        const Statement::Alloc *allocSourcePtr,
                        bool initNullPtr);
 #else
-  void buildAllocSource(llvm::Value *prev, llvm::Value *elemType,
+  void buildAllocSource(llvm::Value *prev, llvm::Type *elemType,
                         const Statement::Alloc *allocSourcePtr);
   void processingValue(llvm::Value *prev, llvm::Type *elemType,
                        const Statement::Alloc *allocSourcePtr,
