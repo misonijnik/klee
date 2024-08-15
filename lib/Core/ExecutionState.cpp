@@ -247,9 +247,8 @@ void ExecutionState::popFrame() {
   stack.popFrame();
 }
 
-void ExecutionState::addSymbolic(const MemoryObject *mo, const Array *array,
-                                 KType *type) {
-  symbolics.push_back({mo, array, type});
+void ExecutionState::addSymbolic(const MemoryObject *mo, const Array *array) {
+  symbolics.push_back({mo, array});
 }
 
 ref<const MemoryObject>

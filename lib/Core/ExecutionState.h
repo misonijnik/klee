@@ -248,15 +248,13 @@ struct CleanupPhaseUnwindingInformation : public UnwindingInformation {
 struct Symbolic {
   ref<const MemoryObject> memoryObject;
   const Array *array;
-  KType *type;
-  Symbolic(ref<const MemoryObject> mo, const Array *a, KType *t)
-      : memoryObject(std::move(mo)), array(a), type(t) {}
+  Symbolic(ref<const MemoryObject> mo, const Array *a)
+      : memoryObject(std::move(mo)), array(a) {}
   Symbolic(const Symbolic &other) = default;
   Symbolic &operator=(const Symbolic &other) = default;
 
   friend bool operator==(const Symbolic &lhs, const Symbolic &rhs) {
-    return lhs.memoryObject == rhs.memoryObject && lhs.array == rhs.array &&
-           lhs.type == rhs.type;
+    return lhs.memoryObject == rhs.memoryObject && lhs.array == rhs.array;
   }
 };
 
@@ -456,8 +454,7 @@ public:
   void pushFrame(KInstIterator caller, KFunction *kf);
   void popFrame();
 
-  void addSymbolic(const MemoryObject *mo, const Array *array,
-                   KType *type = nullptr);
+  void addSymbolic(const MemoryObject *mo, const Array *array);
 
   ref<const MemoryObject> findMemoryObject(const Array *array) const;
 

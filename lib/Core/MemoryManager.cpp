@@ -126,8 +126,7 @@ MemoryManager::~MemoryManager() {
 MemoryObject *MemoryManager::allocate(ref<Expr> size, bool isLocal,
                                       bool isGlobal, bool isLazyInitialized,
                                       ref<CodeLocation> allocSite,
-                                      size_t alignment, KType *type,
-                                      ref<Expr> conditionExpr,
+                                      size_t alignment, ref<Expr> conditionExpr,
                                       ref<Expr> addressExpr, unsigned timestamp,
                                       const Array *content) {
   if (ref<ConstantExpr> sizeExpr = dyn_cast<ConstantExpr>(size)) {
@@ -193,16 +192,15 @@ MemoryObject *MemoryManager::allocate(ref<Expr> size, bool isLocal,
 
   ++stats::allocations;
   res = new MemoryObject(addressExpr, size, alignment, isLocal, isGlobal, false,
-                         isLazyInitialized, allocSite, this, type,
-                         conditionExpr, timestamp, content);
+                         isLazyInitialized, allocSite, this, conditionExpr,
+                         timestamp, content);
 
   objects.insert(res);
   return res;
 }
 
 MemoryObject *MemoryManager::allocateFixed(uint64_t address, uint64_t size,
-                                           ref<CodeLocation> allocSite,
-                                           KType *type) {
+                                           ref<CodeLocation> allocSite) {
 #ifndef NDEBUG
   for (objects_ty::iterator it = objects.begin(), ie = objects.end(); it != ie;
        ++it) {
@@ -224,7 +222,7 @@ MemoryObject *MemoryManager::allocateFixed(uint64_t address, uint64_t size,
   ref<Expr> addressExpr = Expr::createPointer(address);
   MemoryObject *res =
       new MemoryObject(addressExpr, Expr::createPointer(size), 8, false, true,
-                       true, false, allocSite, this, type);
+                       true, false, allocSite, this);
   objects.insert(res);
   return res;
 }

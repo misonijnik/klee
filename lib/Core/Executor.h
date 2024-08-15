@@ -102,7 +102,6 @@ class TargetManager;
 class StatsTracker;
 class TimingSolver;
 class TreeStreamWriter;
-class TypeManager;
 class MergeHandler;
 class MergingSearcher;
 template <class T> class ref;
@@ -152,7 +151,6 @@ private:
   ExternalDispatcher *externalDispatcher;
   std::unique_ptr<TimingSolver> solver;
   std::unique_ptr<MemoryManager> memory;
-  TypeManager *typeSystemManager;
 
   std::unique_ptr<ObjectManager> objectManager;
   StatsTracker *statsTracker;
@@ -268,23 +266,19 @@ private:
   void seed(ExecutionState &initialState);
   void run(ExecutionState *initialState);
 
-  void initializeTypeManager();
-
   // Given a concrete object in our [klee's] address space, add it to
   // objects checked code can reference.
-  ObjectPair addExternalObject(ExecutionState &state, const void *addr, KType *,
+  ObjectPair addExternalObject(ExecutionState &state, const void *addr,
                                unsigned size, bool isReadOnly);
-  ObjectPair addExternalObjectAsNonStatic(ExecutionState &state, KType *,
-                                          unsigned size, bool isReadOnly);
+  ObjectPair addExternalObjectAsNonStatic(ExecutionState &state, unsigned size,
+                                          bool isReadOnly);
 
 #ifdef HAVE_CTYPE_EXTERNALS
   template <typename F>
-  decltype(auto) addCTypeFixedObject(ExecutionState &state, int addressSpaceNum,
-                                     llvm::Module &m, F objectProvider);
+  decltype(auto) addCTypeFixedObject(ExecutionState &state, F objectProvider);
 
   template <typename F>
   decltype(auto) addCTypeModelledObject(ExecutionState &state,
-                                        int addressSpaceNum, llvm::Module &m,
                                         F objectProvider);
 #endif
 
@@ -307,8 +301,7 @@ private:
                             std::vector<ref<Expr>> &arguments);
 
   ObjectState *bindObjectInState(ExecutionState &state, const MemoryObject *mo,
-                                 KType *dynamicType, bool IsAlloca,
-                                 const Array *array = nullptr);
+                                 bool IsAlloca, const Array *array = nullptr);
   ObjectState *bindObjectInState(ExecutionState &state, const MemoryObject *mo,
                                  const ObjectState *object);
 
@@ -322,11 +315,11 @@ private:
   /// beginning of.
   typedef std::vector<std::pair<const MemoryObject *, ExecutionState *>>
       ExactResolutionList;
-  bool resolveExact(ExecutionState &state, ref<Expr> p, KType *type,
+  bool resolveExact(ExecutionState &state, ref<Expr> p,
                     ExactResolutionList &results, const std::string &name);
 
   void concretizeSize(ExecutionState &state, ref<Expr> size, bool isLocal,
-                      KInstruction *target, KType *type, bool zeroMemory,
+                      KInstruction *target, bool zeroMemory,
                       const ObjectState *reallocFrom,
                       size_t allocationAlignment, bool checkOutOfMemory);
 
@@ -338,7 +331,7 @@ private:
 
   MemoryObject *allocate(ExecutionState &state, ref<Expr> size, bool isLocal,
                          bool isGlobal, ref<CodeLocation> allocSite,
-                         size_t allocationAlignment, KType *type,
+                         size_t allocationAlignment,
                          ref<Expr> conditionExpr = Expr::createTrue(),
                          ref<Expr> lazyInitializationSource = ref<Expr>(),
                          unsigned timestamp = 0);
@@ -363,7 +356,7 @@ private:
   /// used. Otherwise, the alignment is deduced via
   /// Executor::getAllocationAlignment
   void executeAlloc(ExecutionState &state, ref<Expr> size, bool isLocal,
-                    KInstruction *target, KType *type, bool zeroMemory = false,
+                    KInstruction *target, bool zeroMemory = false,
                     const ObjectState *reallocFrom = 0,
                     size_t allocationAlignment = 0,
                     bool checkOutOfMemory = false);
@@ -392,8 +385,7 @@ private:
   typedef std::vector<ref<const MemoryObject>> ObjectResolutionList;
 
   bool resolveMemoryObjects(ExecutionState &state, ref<PointerExpr> address,
-                            KType *targetType, KInstruction *target,
-                            unsigned bytes,
+                            KInstruction *target, unsigned bytes,
                             ObjectResolutionList &mayBeResolvedMemoryObjects,
                             bool &mayBeOutOfBound, bool &mayLazyInitialize,
                             bool &incomplete, bool onlyLazyInitialize = false);
@@ -418,15 +410,15 @@ private:
   // do address resolution / object binding / out of bounds checking
   // and perform the operation
   void executeMemoryOperation(ExecutionState &state, bool isWrite,
-                              KType *targetType, ref<PointerExpr> address,
+                              ref<PointerExpr> address,
                               ref<Expr> value /* undef if read */,
                               KInstruction *target /* undef if write */);
 
   ref<const MemoryObject>
   lazyInitializeObject(ExecutionState &state, ref<PointerExpr> address,
-                       const KInstruction *target, KType *targetType,
-                       uint64_t concreteSize, ref<Expr> size, bool isLocal,
-                       ref<Expr> conditionExpr, bool isConstant = true);
+                       const KInstruction *target, uint64_t concreteSize,
+                       ref<Expr> size, bool isLocal, ref<Expr> conditionExpr,
+                       bool isConstant = true);
 
   void lazyInitializeLocalObject(ExecutionState &state, StackFrame &sf,
                                  ref<Expr> address, const KInstruction *target);
@@ -435,8 +427,7 @@ private:
                                  const KInstruction *target);
 
   void executeMakeSymbolic(ExecutionState &state, const MemoryObject *mo,
-                           KType *type, const ref<SymbolicSource> source,
-                           bool isLocal);
+                           const ref<SymbolicSource> source, bool isLocal);
 
   /// Assume that `current` state stepped to `block`.
   /// Can we reach at least one target of `current` from there?

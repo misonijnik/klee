@@ -33,14 +33,12 @@ namespace klee {
 
 class BitArray;
 class ExecutionState;
-class KType;
 class Executor;
 class MemoryManager;
 class Solver;
 
 typedef uint64_t IDType;
 
-extern llvm::cl::opt<bool> UseTypeBasedAliasAnalysis;
 extern llvm::cl::opt<unsigned long> MaxFixedSizeStructureSize;
 
 class MemoryObject {
@@ -83,7 +81,6 @@ public:
   bool isUserSpecified;
 
   MemoryManager *parent;
-  KType *type;
   const Array *content;
 
   /// "Location" for which this memory object was allocated. This
@@ -101,13 +98,13 @@ public:
       : id(0), timestamp(0), addressExpr(Expr::createPointer(_address)),
         address(_address), sizeExpr(Expr::createPointer(0)),
         conditionExpr(Expr::createTrue()), alignment(0), isFixed(true),
-        isLazyInitialized(false), parent(nullptr), type(nullptr),
-        content(nullptr), allocSite(nullptr) {}
+        isLazyInitialized(false), parent(nullptr), content(nullptr),
+        allocSite(nullptr) {}
 
   MemoryObject(
       ref<Expr> _address, ref<Expr> _size, uint64_t alignment, bool _isLocal,
       bool _isGlobal, bool _isFixed, bool _isLazyInitialized,
-      ref<CodeLocation> _allocSite, MemoryManager *_parent, KType *_type,
+      ref<CodeLocation> _allocSite, MemoryManager *_parent,
       ref<Expr> _condition = Expr::createTrue(),
       unsigned _timestamp = 0 /* unused if _isLazyInitialized is false*/,
       const Array *_content =
@@ -116,7 +113,7 @@ public:
         sizeExpr(_size), conditionExpr(_condition), alignment(alignment),
         name("unnamed"), isLocal(_isLocal), isGlobal(_isGlobal),
         isFixed(_isFixed), isLazyInitialized(_isLazyInitialized),
-        isUserSpecified(false), parent(_parent), type(_type), content(_content),
+        isUserSpecified(false), parent(_parent), content(_content),
         allocSite(_allocSite) {
     if (isLazyInitialized) {
       timestamp = _timestamp;
@@ -288,16 +285,14 @@ private:
 
   ref<Expr> size;
 
-  KType *dynamicType;
-
 public:
   bool readOnly;
   bool wasWritten = false;
 
   /// Create a new object state for the given memory
   // For objects in memory
-  ObjectState(const MemoryObject *mo, const Array *array, KType *dt);
-  ObjectState(const MemoryObject *mo, KType *dt);
+  ObjectState(const MemoryObject *mo, const Array *array);
+  ObjectState(const MemoryObject *mo);
 
   // For symbolic objects not in memory (hack)
 
@@ -334,10 +329,6 @@ public:
   void write32(unsigned offset, uint32_t value);
   void write64(unsigned offset, uint64_t value);
   void print() const;
-
-  bool isAccessableFrom(KType *) const;
-
-  KType *getDynamicType() const;
 
 private:
   ref<Expr> read8(ref<Expr> offset) const;

@@ -18,7 +18,6 @@ set(KLEE_MODULE_COMPONENT_SRCS
   IntrinsicCleaner.cpp
   KInstruction.cpp
   KModule.cpp
-  KType.cpp
   KValue.cpp
   LocalVarDeclarationFinderPass.cpp
   LowerSwitch.cpp
