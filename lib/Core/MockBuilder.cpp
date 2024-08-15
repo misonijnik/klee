@@ -206,7 +206,11 @@ void MockBuilder::buildMockMain() {
 void MockBuilder::buildExternalGlobalsDefinitions() {
   auto externalGlobals = getExternalGlobals();
   for (const auto &[extName, type] : externalGlobals) {
+#if LLVM_VERSION_CODE >= LLVM_VERSION(15, 0)
     auto elementType = type->getValueType();
+#else
+    auto elementType = type->getType()->getValueType();
+#endif
     klee_message("Mocking external variable %s", extName.c_str());
     llvm::GlobalVariable *global = dyn_cast_or_null<llvm::GlobalVariable>(
         mockModule->getOrInsertGlobal(extName, elementType));
