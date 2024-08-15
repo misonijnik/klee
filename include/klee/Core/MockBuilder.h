@@ -9,6 +9,7 @@
 #ifndef KLEE_MOCKBUILDER_H
 #define KLEE_MOCKBUILDER_H
 
+#include "klee/Config/Version.h"
 #include "klee/Core/Interpreter.h"
 #include "klee/Module/Annotation.h"
 
@@ -76,12 +77,20 @@ public:
               std::set<std::string> &mainModuleGlobals);
 
   std::unique_ptr<llvm::Module> build();
+  void buildFree(llvm::Value *elem, const Statement::Free *freePtr);
+#if LLVM_VERSION_CODE >= LLVM_VERSION(15, 0)
   void buildAllocSource(llvm::Value *prev, llvm::Value *elem,
                         const Statement::Alloc *allocSourcePtr);
-  void buildFree(llvm::Value *elem, const Statement::Free *freePtr);
   void processingValue(llvm::Value *prev, llvm::Value *elem,
                        const Statement::Alloc *allocSourcePtr,
                        bool initNullPtr);
+#else
+  void buildAllocSource(llvm::Value *prev, llvm::Value *elemType,
+                        const Statement::Alloc *allocSourcePtr);
+  void processingValue(llvm::Value *prev, llvm::Type *elemType,
+                       const Statement::Alloc *allocSourcePtr,
+                       bool initNullPtr);
+#endif
 };
 
 } // namespace klee
