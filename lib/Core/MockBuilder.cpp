@@ -23,9 +23,6 @@
 #include <memory>
 #include <utility>
 
-//TODO remove it
-// #define LLVM_VERSION_CODE   LLVM_VERSION(15, 0)
-
 namespace klee {
 
 template <typename T>
@@ -306,30 +303,22 @@ void MockBuilder::buildExternalFunctionsDefinitions() {
 
 std::pair<llvm::Value *, llvm::Value *>
 MockBuilder::goByOffset(llvm::Value *value,
-                        const std::vector<std::string> &offset,
-                        bool isPointer) {
+                        const std::vector<std::string> &offset) {
   llvm::Value *prev = nullptr;
   llvm::Value *current = value;
-  for (auto it = offset.begin(); it != offset.end(); ++it) {
-    if (*it == "*") {
+  for (const auto &inst : offset) {
+    if (inst == "*") {
       if (!current->getType()->isPointerTy()) {
         klee_error("Incorrect annotation offset.");
       }
       prev = current;
 #if LLVM_VERSION_CODE >= LLVM_VERSION(15, 0)
-      if((it + 1 != offset.end() && *(it + 1) == "*") || isPointer) {
-        current = builder->CreateLoad(llvm::PointerType::getUnqual(ctx), current);
-      } else {
-        current = builder->CreateLoad(llvm::IntegerType::get(ctx, 1), current);
-        if(it + 1 != offset.end()) {
-          klee_warning("smth about not full annotation");
-        }
-      }
+      current = builder->CreateLoad(llvm::PointerType::getUnqual(ctx), current);
 #else
       current = builder->CreateLoad(current->getType()->getPointerElementType(),
                                     current);
 #endif
-    } else if (*it == "&") {
+    } else if (inst == "&") {
       auto addr = builder->CreateAlloca(current->getType());
       prev = current;
       current = builder->CreateStore(current, addr);
@@ -463,22 +452,7 @@ void MockBuilder::buildAnnotationForExternalFunctionArgs(
 #endif
     auto statementsMap = unifyByOffset(statements[i]);
     for (const auto &[offset, statementsOffset] : statementsMap) {
-      bool isPointer = std::any_of(statementsOffset.begin(), statementsOffset.end(),
-      [](Statement::Ptr statment) {
-        switch (statment->getKind())
-        {
-        case Statement::Kind::Deref:
-        case Statement::Kind::InitNull:
-        case Statement::Kind::MaybeInitNull:
-        case Statement::Kind::Free:
-        case Statement::Kind::AllocSource:
-          return true;
-        case Statement::Kind::Unknown:
-        default:
-          return false;
-        }
-      });
-      auto [prev, elem] = goByOffset(arg, offset, isPointer);
+      auto [prev, elem] = goByOffset(arg, offset);
 
       Statement::Alloc *allocSourcePtr = nullptr;
       Statement::Free *freePtr = nullptr;
@@ -652,18 +626,6 @@ void MockBuilder::buildAllocSource(llvm::Value *prev, llvm::Type *elemType,
   }
 #if LLVM_VERSION_CODE >= LLVM_VERSION(15, 0)
   auto valueType = elem->getType();
-  llvm::errs() << "gbo3: ";
-  elem->getType()->print(llvm::errs(), true, true);
-  llvm::errs() << "\n";
-  llvm::errs() << "val: ";
-  elem->print(llvm::errs(), true);
-  llvm::errs() << "\n";
-  // if (isa<llvm::LoadInst>(elem) || isa<llvm::StoreInst>(elem)) {
-  //   valueType = llvm::getLoadStoreType(elem);
-  // } else if (auto func = dyn_cast<llvm::Function>(elem)) {
-  //   valueType = func->getFunctionType();
-  // }
-  // llvm::errs() << valueType->getTypeID();
 #else
   auto valueType = elemType->getPointerElementType();
 #endif

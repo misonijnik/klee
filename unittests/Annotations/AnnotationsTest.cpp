@@ -13,6 +13,8 @@
 
 #include "nlohmann/json.hpp"
 
+#include "klee/Config/Version.h"
+
 #include <vector>
 
 using json = nlohmann::json;
@@ -112,6 +114,24 @@ TEST(AnnotationsTest, KnownAnnotations) {
             Statement::Kind::InitNull);
 }
 
+TEST(AnnotationsTest, WithOffsetsSimple) {
+  const json j = json::parse(R"(
+{
+    "foo" : {
+        "annotation" : [["InitNull:**&"]],
+        "properties" : []
+    }
+}
+)");
+  const AnnotationsMap actual = parseAnnotationsJson(j);
+  ASSERT_EQ(actual.at("foo").returnStatements[0]->getKind(),
+            Statement::Kind::InitNull);
+  const std::vector<std::string> expectedOffset{"*", "*", "&"};
+  ASSERT_EQ(actual.at("foo").returnStatements[0]->offset, expectedOffset);
+}
+
+
+#if LLVM_VERSION_CODE < LLVM_VERSION(15, 0)
 TEST(AnnotationsTest, WithOffsets) {
   const json j = json::parse(R"(
 {
@@ -127,3 +147,4 @@ TEST(AnnotationsTest, WithOffsets) {
   const std::vector<std::string> expectedOffset{"*", "10", "*", "&"};
   ASSERT_EQ(actual.at("foo").returnStatements[0]->offset, expectedOffset);
 }
+#endif

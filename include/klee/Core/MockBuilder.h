@@ -64,7 +64,7 @@ private:
   std::map<std::string, const llvm::GlobalVariable *> getExternalGlobals();
 
   std::pair<llvm::Value *, llvm::Value *>
-  goByOffset(llvm::Value *value, const std::vector<std::string> &offset, bool isPointer);
+  goByOffset(llvm::Value *value, const std::vector<std::string> &offset);
 
 public:
   MockBuilder(const llvm::Module *initModule,
