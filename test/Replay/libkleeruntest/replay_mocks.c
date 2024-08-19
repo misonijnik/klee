@@ -15,6 +15,8 @@
 // RUN: test -f %t.klee-out/test000001.ktest
 // RUN: env KTEST_FILE=%t.klee-out/test000001.ktest %t_runner2
 
+#include <klee/klee.h>
+
 extern int variable;
 
 extern int foo(int);

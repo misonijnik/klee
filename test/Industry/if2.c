@@ -8,7 +8,7 @@ int main(int x) {
   return *p;
 }
 
-// RUN: %clang %s -emit-llvm -c -g -O0 -Xclang -disable-O0-optnone -o %t1.bc
+// RUN: %clang %s -emit-llvm -c -g -O0 -Xclang -disable-O0-optnone -Wno-implicit-function-declaration -o %t1.bc
 // RUN: rm -rf %t.klee-out
 // RUN: %klee --output-dir=%t.klee-out --use-guided-search=error --annotations=%annotations --mock-policy=all --skip-not-symbolic-objects --skip-not-lazy-initialized --check-out-of-memory --search=bfs --max-instructions=45 --max-cycles-before-stuck=0 --use-lazy-initialization=only --analysis-reproduce=%s.json %t1.bc
 // RUN: FileCheck -input-file=%t.klee-out/warnings.txt %s -check-prefix=CHECK-NONE

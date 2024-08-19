@@ -24,7 +24,7 @@ void ptrArg(struct ST, int **a);
 int *ptrRet();
 
 int main() {
-  int *a = 15;
+  int *a = (int*) 15;
 #ifdef PTRARG
   struct ST st;
   ptrArg(st, &a);

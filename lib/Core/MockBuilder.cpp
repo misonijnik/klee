@@ -23,6 +23,9 @@
 #include <memory>
 #include <utility>
 
+//TODO remove it
+// #define LLVM_VERSION_CODE   LLVM_VERSION(15, 0)
+
 namespace klee {
 
 template <typename T>
@@ -303,26 +306,37 @@ void MockBuilder::buildExternalFunctionsDefinitions() {
 
 std::pair<llvm::Value *, llvm::Value *>
 MockBuilder::goByOffset(llvm::Value *value,
-                        const std::vector<std::string> &offset) {
+                        const std::vector<std::string> &offset,
+                        bool isPointer) {
   llvm::Value *prev = nullptr;
   llvm::Value *current = value;
-  for (const auto &inst : offset) {
-    if (inst == "*") {
+  for (auto it = offset.begin(); it != offset.end(); ++it) {
+    if (*it == "*") {
       if (!current->getType()->isPointerTy()) {
         klee_error("Incorrect annotation offset.");
       }
       prev = current;
 #if LLVM_VERSION_CODE >= LLVM_VERSION(15, 0)
-      current = builder->CreateLoad(current->getType(), current);
+      if((it + 1 != offset.end() && *(it + 1) == "*") || isPointer) {
+        current = builder->CreateLoad(llvm::PointerType::getUnqual(ctx), current);
+      } else {
+        current = builder->CreateLoad(llvm::IntegerType::get(ctx, 1), current);
+        if(it + 1 != offset.end()) {
+          klee_warning("smth about not full annotation");
+        }
+      }
 #else
       current = builder->CreateLoad(current->getType()->getPointerElementType(),
                                     current);
 #endif
-    } else if (inst == "&") {
+    } else if (*it == "&") {
       auto addr = builder->CreateAlloca(current->getType());
       prev = current;
       current = builder->CreateStore(current, addr);
-    } else {
+    }
+
+#if LLVM_VERSION_CODE < LLVM_VERSION(15, 0)
+    else {
       const size_t index = std::stol(inst);
       if (!(current->getType()->isPointerTy() ||
             current->getType()->isArrayTy())) {
@@ -332,26 +346,21 @@ MockBuilder::goByOffset(llvm::Value *value,
       current = builder->CreateConstInBoundsGEP1_64(current->getType(), current,
                                                     index);
     }
+#endif
   }
   return {prev, current};
 }
 
+#if LLVM_VERSION_CODE < LLVM_VERSION(15, 0)
 inline llvm::Type *getTypeByOffset(llvm::Type *value,
                                    const std::vector<std::string> &offset) {
   llvm::Type *current = value;
   for (const auto &inst : offset) {
     if (inst == "*") {
-#if LLVM_VERSION_CODE >= LLVM_VERSION(15, 0)
-      if (!current->isPointerTy() || current->isOpaquePointerTy()) {
-        return nullptr;
-      }
-      current = current->getNonOpaquePointerElementType();
-#else
       if (!current->isPointerTy()) {
         return nullptr;
       }
       current = current->getPointerElementType();
-#endif
     } else if (inst == "&") {
       // Not change
     } else {
@@ -365,7 +374,9 @@ inline llvm::Type *getTypeByOffset(llvm::Type *value,
   }
   return current;
 }
+#endif
 
+#if LLVM_VERSION_CODE < LLVM_VERSION(15, 0)
 inline bool isCorrectStatements(const std::vector<Statement::Ptr> &statements,
                                 const llvm::Argument *arg) {
   return std::any_of(statements.begin(), statements.end(),
@@ -384,6 +395,7 @@ inline bool isCorrectStatements(const std::vector<Statement::Ptr> &statements,
                        }
                      });
 }
+#endif
 
 bool tryAlign(llvm::Function *func,
               const std::vector<std::vector<Statement::Ptr>> &statements,
@@ -395,6 +407,9 @@ bool tryAlign(llvm::Function *func,
 
   for (size_t i = 0, j = 0; j < func->arg_size() && i < statements.size();) {
     while (true) {
+
+#if LLVM_VERSION_CODE < LLVM_VERSION(15, 0)
+
 #if LLVM_VERSION_CODE >= LLVM_VERSION(10, 0)
       auto arg = func->getArg(j);
 #else
@@ -403,6 +418,8 @@ bool tryAlign(llvm::Function *func,
       if (isCorrectStatements(statements[i], arg)) {
         break;
       }
+#endif
+
       res.emplace_back();
       j++;
       if (j >= func->arg_size()) {
@@ -446,7 +463,22 @@ void MockBuilder::buildAnnotationForExternalFunctionArgs(
 #endif
     auto statementsMap = unifyByOffset(statements[i]);
     for (const auto &[offset, statementsOffset] : statementsMap) {
-      auto [prev, elem] = goByOffset(arg, offset);
+      bool isPointer = std::any_of(statementsOffset.begin(), statementsOffset.end(),
+      [](Statement::Ptr statment) {
+        switch (statment->getKind())
+        {
+        case Statement::Kind::Deref:
+        case Statement::Kind::InitNull:
+        case Statement::Kind::MaybeInitNull:
+        case Statement::Kind::Free:
+        case Statement::Kind::AllocSource:
+          return true;
+        case Statement::Kind::Unknown:
+        default:
+          return false;
+        }
+      });
+      auto [prev, elem] = goByOffset(arg, offset, isPointer);
 
       Statement::Alloc *allocSourcePtr = nullptr;
       Statement::Free *freePtr = nullptr;
@@ -480,7 +512,7 @@ void MockBuilder::buildAnnotationForExternalFunctionArgs(
 
           builder->SetInsertPoint(derefBB);
 #if LLVM_VERSION_CODE >= LLVM_VERSION(15, 0)
-          builder->CreateLoad(elem->getType(), elem);
+          builder->CreateLoad(llvm::IntegerType::get(ctx, 1), elem);
 #else
           builder->CreateLoad(elem->getType()->getPointerElementType(), elem);
 #endif
@@ -620,11 +652,18 @@ void MockBuilder::buildAllocSource(llvm::Value *prev, llvm::Type *elemType,
   }
 #if LLVM_VERSION_CODE >= LLVM_VERSION(15, 0)
   auto valueType = elem->getType();
-  if (isa<llvm::LoadInst>(elem) || isa<llvm::StoreInst>(elem)) {
-    valueType = llvm::getLoadStoreType(elem);
-  } else if (auto func = dyn_cast<llvm::Function>(elem)) {
-    valueType = func->getFunctionType();
-  }
+  llvm::errs() << "gbo3: ";
+  elem->getType()->print(llvm::errs(), true, true);
+  llvm::errs() << "\n";
+  llvm::errs() << "val: ";
+  elem->print(llvm::errs(), true);
+  llvm::errs() << "\n";
+  // if (isa<llvm::LoadInst>(elem) || isa<llvm::StoreInst>(elem)) {
+  //   valueType = llvm::getLoadStoreType(elem);
+  // } else if (auto func = dyn_cast<llvm::Function>(elem)) {
+  //   valueType = func->getFunctionType();
+  // }
+  // llvm::errs() << valueType->getTypeID();
 #else
   auto valueType = elemType->getPointerElementType();
 #endif

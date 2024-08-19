@@ -58,6 +58,7 @@ Unknown::Unknown(const std::string &str) {
       offset.emplace_back("&");
       break;
     }
+#if LLVM_VERSION_CODE < LLVM_VERSION(15, 0)
     case '[': {
       size_t posEndExpr = rawOffset.find(']', pos);
       if (posEndExpr == std::string::npos) {
@@ -67,6 +68,7 @@ Unknown::Unknown(const std::string &str) {
       pos = posEndExpr;
       break;
     }
+#endif
     default: {
       klee_warning("Annotation: Incorrect offset format \"%s\"", str.c_str());
       break;

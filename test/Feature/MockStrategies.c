@@ -22,6 +22,7 @@
 // CHECK-4: KLEE: done: completed paths = 2
 // CHECK-4: KLEE: done: generated tests = 2
 
+#include <klee/klee.h>
 #include <assert.h>
 
 extern int foo(int x, int y);
