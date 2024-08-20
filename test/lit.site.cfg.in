@@ -42,7 +42,7 @@ config.cxx = "@NATIVE_CXX@"
 
 # NOTE: any changes to compiler flags also have to be applied to
 #       test/Concrete/CMakeLists.txt
-config.O0opt = "-O0 -Xclang -disable-O0-optnone"
+config.O0opt = "-O0 -Xclang -disable-O0-optnone -Wno-implicit-function-declaration"
 
 config.sqlite3 = "@SQLITE_CLI@"
 
