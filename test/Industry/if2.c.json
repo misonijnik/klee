@@ -33,7 +33,7 @@
                                                         "uri": "if2.c"
                                                     },
                                                     "region": {
-                                                        "startLine": 8,
+                                                        "startLine": 10,
                                                         "startColumn": 10
                                                     }
                                                 }
@@ -52,7 +52,7 @@
                                     "uri": "if2.c"
                                 },
                                 "region": {
-                                    "startLine": 8,
+                                    "startLine": 10,
                                     "startColumn": 10
                                 }
                             }
