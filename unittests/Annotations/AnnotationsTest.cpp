@@ -130,7 +130,6 @@ TEST(AnnotationsTest, WithOffsetsSimple) {
   ASSERT_EQ(actual.at("foo").returnStatements[0]->offset, expectedOffset);
 }
 
-
 #if LLVM_VERSION_CODE < LLVM_VERSION(15, 0)
 TEST(AnnotationsTest, WithOffsets) {
   const json j = json::parse(R"(
