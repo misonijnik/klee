@@ -2,6 +2,8 @@
 // RUN: rm -rf %t.klee-out
 // RUN: %klee --output-dir=%t.klee-out --skip-not-symbolic-objects --use-timestamps=false --use-guided-search=none %t.bc > %t.log
 // RUN: FileCheck %s -input-file=%t.log
+#include "klee/klee.h"
+#include <stdio.h>
 
 struct Node {
   int x;

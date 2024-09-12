@@ -283,12 +283,12 @@ cl::OptionCategory ReplayCat("Replaying options",
 
 cl::list<std::string>
     ReplayKTestFile("replay-ktest-file",
-                    cl::desc("Specify a ktest file to use for replay"),
-                    cl::value_desc("ktest file"), cl::cat(ReplayCat));
+                    cl::desc("Specify a .ktest file to use for replay"),
+                    cl::value_desc(".ktest file"), cl::cat(ReplayCat));
 
 cl::list<std::string>
     ReplayKTestDir("replay-ktest-dir",
-                   cl::desc("Specify a directory to replay ktest files from"),
+                   cl::desc("Specify a directory to replay .ktest files from"),
                    cl::value_desc("output directory"), cl::cat(ReplayCat));
 
 cl::opt<std::string> ReplayPathFile("replay-path",
@@ -1902,23 +1902,12 @@ tryResolveEntryFunction(llvm::Module *mod,
 }
 
 int main(int argc, char **argv, char **envp) {
-  if (theInterpreter) {
-    theInterpreter = nullptr;
-  }
-  interrupted = false;
+  atexit(llvm_shutdown); // Call llvm_shutdown() on exit
 
-  klee::klee_warning_file = nullptr;
-  klee::klee_message_file = nullptr;
-  klee::ContextInitialized = false;
-
-  atexit(llvm_shutdown); // Call llvm_shutdown() on exit.
-
-#if LLVM_VERSION_CODE >= LLVM_VERSION(13, 0)
-  KCommandLine::HideOptions(llvm::cl::getGeneralCategory());
-#else
-  KCommandLine::HideOptions(llvm::cl::GeneralCategory);
-#endif
-
+  KCommandLine::KeepOnlyCategories(
+      {&ChecksCat, &DebugCat, &ExtCallsCat, &ExprCat, &LinkCat, &MemoryCat,
+       &MiscCat, &ModuleCat, &ReplayCat, &SearchCat, &SeedingCat, &SolvingCat,
+       &StartCat, &StatsCat, &TerminationCat, &TestCaseCat, &TestGenCat});
   llvm::InitializeNativeTarget();
 
   parseArguments(argc, argv);
@@ -1993,8 +1982,13 @@ int main(int argc, char **argv, char **envp) {
 
   sys::SetInterruptFunction(interrupt_handle);
 
+  // Load the bytecode...
   std::string errorMsg;
   LLVMContext ctx;
+#if LLVM_VERSION_CODE == LLVM_VERSION(15, 0)
+  // We have to force the upgrade to opaque pointer explicitly for LLVM 15.
+  ctx.setOpaquePointers(true);
+#endif
 
   // Load the bytecode...
   std::vector<std::unique_ptr<llvm::Module>> loadedUserModules;

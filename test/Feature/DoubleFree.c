@@ -3,8 +3,10 @@
 // RUN: %klee --output-dir=%t.klee-out %t1.bc 2>&1 | FileCheck %s
 // RUN: test -f %t.klee-out/test000001.ptr.err
 
+#include <stdlib.h>
+
 int main() {
-  int *x = malloc(4);
+  int *x = malloc(sizeof(*x));
   free(x);
   // CHECK: memory error: invalid pointer: free
   free(x);

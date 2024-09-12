@@ -18,12 +18,10 @@ set(KLEE_MODULE_COMPONENT_SRCS
   IntrinsicCleaner.cpp
   KInstruction.cpp
   KModule.cpp
-  KType.cpp
   KValue.cpp
   LocalVarDeclarationFinderPass.cpp
   LowerSwitch.cpp
   ModuleUtil.cpp
-  Optimize.cpp
   OptNone.cpp
   PhiCleaner.cpp
   RaiseAsm.cpp
@@ -34,6 +32,19 @@ set(KLEE_MODULE_COMPONENT_SRCS
   TargetHash.cpp
   TargetForest.cpp
 )
+
+if ("${LLVM_VERSION_MAJOR}" LESS 17)
+  LIST(APPEND KLEE_MODULE_COMPONENT_SRCS
+          InstrumentLegacy.cpp
+          OptimizeLegacy.cpp
+  )
+else ()
+  LIST(APPEND KLEE_MODULE_COMPONENT_SRCS
+          Instrument.cpp
+          Optimize.cpp
+  )
+endif ()
+
 
 add_library(kleeModule
   ${KLEE_MODULE_COMPONENT_SRCS}

@@ -11,6 +11,7 @@
 
 #include "ConstructStorage.h"
 #include "ExecutionState.h"
+#include "Executor.h"
 #include "MemoryManager.h"
 #include "klee/ADT/Bits.h"
 #include "klee/ADT/Ref.h"
@@ -20,7 +21,6 @@
 #include "CodeLocation.h"
 #include "klee/Expr/Assignment.h"
 #include "klee/Expr/Expr.h"
-#include "klee/Module/KType.h"
 #include "klee/Solver/Solver.h"
 #include "klee/Support/ErrorHandling.h"
 
@@ -98,29 +98,27 @@ std::string MemoryObject::getAllocInfo() const {
 
 /***/
 
-ObjectState::ObjectState(const MemoryObject *mo, const Array *array, KType *dt)
+ObjectState::ObjectState(const MemoryObject *mo, const Array *array)
     : copyOnWriteOwner(0), object(mo), valueOS(ObjectStage(array, nullptr)),
       baseOS(ObjectStage(array->size, Expr::createPointer(0), false,
                          Context::get().getPointerWidth())),
-      lastUpdate(nullptr), size(array->size), dynamicType(dt), readOnly(false) {
+      lastUpdate(nullptr), size(array->size), readOnly(false) {
   baseOS.initializeToZero();
 }
 
-ObjectState::ObjectState(const MemoryObject *mo, KType *dt)
+ObjectState::ObjectState(const MemoryObject *mo)
     : copyOnWriteOwner(0), object(mo),
       valueOS(ObjectStage(mo->getSizeExpr(), nullptr)),
       baseOS(ObjectStage(mo->getSizeExpr(), Expr::createPointer(0), false,
                          Context::get().getPointerWidth())),
-      lastUpdate(nullptr), size(mo->getSizeExpr()), dynamicType(dt),
-      readOnly(false) {
+      lastUpdate(nullptr), size(mo->getSizeExpr()), readOnly(false) {
   baseOS.initializeToZero();
 }
 
 ObjectState::ObjectState(const ObjectState &os)
     : copyOnWriteOwner(0), object(os.object), valueOS(os.valueOS),
       baseOS(os.baseOS), lastUpdate(os.lastUpdate), size(os.size),
-      dynamicType(os.dynamicType), readOnly(os.readOnly),
-      wasWritten(os.wasWritten) {}
+      readOnly(os.readOnly), wasWritten(os.wasWritten) {}
 
 /***/
 
@@ -508,13 +506,6 @@ void ObjectState::print() const {
   valueOS.print();
   llvm::errs() << "\tOffset ObjectStage:\n";
   baseOS.print();
-}
-
-KType *ObjectState::getDynamicType() const { return dynamicType; }
-
-bool ObjectState::isAccessableFrom(KType *accessingType) const {
-  return !UseTypeBasedAliasAnalysis ||
-         dynamicType->isAccessableFrom(accessingType);
 }
 
 /***/

@@ -1,0 +1,13 @@
+KLEE 3.1, 29 February 2024
+==========================
+
+- New execution tree implementation and klee-exec-tree tool (@251)
+- KDAlloc is now the default allocator in KLEE (KDAlloc was introduced in KLEE 3.0)
+- Resolve memory reads/writes to single objects in more cases (@tkuchta)
+- Concretize values based on seeds when available (@ccadar)
+
+
+KLEE 3.0, 7 June 2023
+=====================
+
+- Added support for the KDAlloc memory allocator, which enables KLEE to more robustly detect use-after-free errors, improves the detection of buffer overflows, and provides deterministic memory allocation (@danielschemmel, based on https://srg.doc.ic.ac.uk/publications/22-kdalloc-ecoop.html)

@@ -12,6 +12,7 @@
 // RUN: %klee --solver-backend=z3 --output-dir=%t3.klee-out-1 --annotations=%S/Free.json --mock-policy=all --mock-modeled-functions --emit-all-errors=true %t3.bc 2>&1 | FileCheck %s -check-prefix=CHECK-FREE3
 
 #include <assert.h>
+#include <stdlib.h>
 
 int *maybeAllocSource1();
 void maybeFree1(int *a);

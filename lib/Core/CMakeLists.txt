@@ -13,7 +13,6 @@ add_library(kleeCore
   CodeLocation.cpp
   Context.cpp
   CoreStats.cpp
-  CXXTypeSystem/CXXTypeManager.cpp
   DistanceCalculator.cpp
   EventRecorder.cpp
   ExecutionState.cpp
@@ -37,7 +36,6 @@ add_library(kleeCore
   TargetedExecutionManager.cpp
   TargetManager.cpp
   TimingSolver.cpp
-  TypeManager.cpp
   UserSearcher.cpp
 )
 

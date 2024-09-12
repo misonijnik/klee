@@ -263,7 +263,7 @@ protected:
                            ValidityCore &validityCore, bool &isValid);
 
 public:
-  char *getConstraintLog(const Query &) final;
+  std::string getConstraintLog(const Query &) final;
   SolverImpl::SolverRunStatus getOperationStatusCode() final;
   void setCoreSolverTimeout(time::Span _timeout) final { timeout = _timeout; }
   void enableUnsatCore() {
@@ -311,7 +311,7 @@ BitwuzlaSolverImpl::BitwuzlaSolverImpl()
   }
 }
 
-char *BitwuzlaSolverImpl::getConstraintLog(const Query &query) {
+std::string BitwuzlaSolverImpl::getConstraintLog(const Query &query) {
   std::stringstream outputLog;
 
   // We use a different builder here because we don't want to interfere
@@ -385,7 +385,7 @@ char *BitwuzlaSolverImpl::getConstraintLog(const Query &query) {
   outputLog << "(check-sat)\n";
 
   // Client is responsible for freeing the returned C-string
-  return strdup(outputLog.str().c_str());
+  return outputLog.str();
 }
 
 bool BitwuzlaSolverImpl::computeTruth(const ConstraintQuery &query,

@@ -18,7 +18,5 @@ target_include_directories(kleaver PRIVATE ${KLEE_INCLUDE_DIRS})
 target_compile_options(kleaver PRIVATE ${KLEE_COMPONENT_CXX_FLAGS})
 target_compile_definitions(kleaver PRIVATE ${KLEE_COMPONENT_CXX_DEFINES})
 
-target_compile_definitions(kleaver PRIVATE ${KLEE_COMPONENT_CXX_DEFINES})
-
 
 install(TARGETS kleaver RUNTIME DESTINATION bin)

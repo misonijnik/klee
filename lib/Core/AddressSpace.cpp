@@ -15,7 +15,6 @@
 
 #include "klee/Expr/ArrayExprVisitor.h"
 #include "klee/Expr/Expr.h"
-#include "klee/Module/KType.h"
 #include "klee/Statistics/TimerStatIncrementer.h"
 
 #include "CoreStats.h"
@@ -82,7 +81,7 @@ ObjectPair AddressSpace::findObject(const MemoryObject *mo) const {
 }
 
 RefObjectPair AddressSpace::lazyInitializeObject(const MemoryObject *mo) const {
-  return RefObjectPair(mo, new ObjectState(mo, mo->content, mo->type));
+  return RefObjectPair(mo, new ObjectState(mo, mo->content));
 }
 
 RefObjectPair
@@ -112,7 +111,7 @@ ObjectState *AddressSpace::getWriteable(const MemoryObject *mo,
 
 ///
 
-bool AddressSpace::resolveOne(ref<ConstantPointerExpr> address, KType *,
+bool AddressSpace::resolveOne(ref<ConstantPointerExpr> address,
                               ObjectPair &result) const {
   uint64_t baseConst = address->getConstantBase()->getZExtValue();
   uint64_t addressConst = address->getConstantValue()->getZExtValue();
@@ -143,7 +142,7 @@ bool AddressSpace::resolveOne(ref<ConstantPointerExpr> address, KType *,
 
 bool AddressSpace::resolveOneIfUnique(ExecutionState &state,
                                       TimingSolver *solver,
-                                      ref<PointerExpr> address, KType *,
+                                      ref<PointerExpr> address,
                                       ObjectPair &result, bool &success) const {
   ref<Expr> base = address->getBase();
   ref<Expr> uniqueAddress = base;
@@ -181,17 +180,16 @@ class ResolvePredicate {
   bool skipGlobal;
   unsigned timestamp;
   ExecutionState *state;
-  KType *objectType;
   bool complete;
 
 public:
   explicit ResolvePredicate(ExecutionState &state, ref<PointerExpr> address,
-                            KType *objectType, bool complete)
+                            bool complete)
       : useTimestamps(UseTimestamps),
         skipNotSymbolicObjects(SkipNotSymbolicObjects),
         skipNotLazyInitialized(SkipNotLazyInitialized), skipLocal(SkipLocal),
         skipGlobal(SkipGlobal), timestamp(UINT_MAX), state(&state),
-        objectType(objectType), complete(complete) {
+        complete(complete) {
     ref<Expr> base = address->getBase();
     if (!isa<ConstantExpr>(base)) {
       std::pair<ref<const MemoryObject>, ref<Expr>> moBasePair;
@@ -225,20 +223,19 @@ public:
     result = result && (!skipNotLazyInitialized || mo->isLazyInitialized);
     result = result && (!skipLocal || !mo->isLocal);
     result = result && (!skipGlobal || !mo->isGlobal);
-    result = result && os->isAccessableFrom(objectType);
     result = result && (!complete || os->wasWritten);
     return result;
   }
 };
 
 bool AddressSpace::resolveOne(ExecutionState &state, TimingSolver *solver,
-                              ref<PointerExpr> address, KType *objectType,
-                              ObjectPair &result, bool &success,
+                              ref<PointerExpr> address, ObjectPair &result,
+                              bool &success,
                               const std::atomic_bool &haltExecution) const {
-  ResolvePredicate predicate(state, address, objectType, complete);
+  ResolvePredicate predicate(state, address, complete);
   ref<Expr> addressExpr = address->getValue();
   if (ref<ConstantPointerExpr> CP = dyn_cast<ConstantPointerExpr>(address)) {
-    if (resolveOne(CP, objectType, result)) {
+    if (resolveOne(CP, result)) {
       success = true;
       return true;
     }
@@ -253,7 +250,7 @@ bool AddressSpace::resolveOne(ExecutionState &state, TimingSolver *solver,
                         state.queryMetaData))
     return false;
 
-  if (resolveOne(addressCex, objectType, result)) {
+  if (resolveOne(addressCex, result)) {
     success = true;
     return true;
   }
@@ -323,13 +320,12 @@ int AddressSpace::checkPointerInObject(ExecutionState &state,
 }
 
 bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
-                           ref<PointerExpr> p, KType *objectType,
-                           ResolutionList &rl, unsigned maxResolutions,
-                           time::Span timeout) const {
-  ResolvePredicate predicate(state, p, objectType, complete);
+                           ref<PointerExpr> p, ResolutionList &rl,
+                           unsigned maxResolutions, time::Span timeout) const {
+  ResolvePredicate predicate(state, p, complete);
   if (ref<ConstantPointerExpr> CP = dyn_cast<ConstantPointerExpr>(p)) {
     ObjectPair res;
-    if (resolveOne(CP, objectType, res)) {
+    if (resolveOne(CP, res)) {
       rl.push_back(res);
       return false;
     }
@@ -338,7 +334,7 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
 
   ObjectPair fastPathObjectID;
   bool fastPathSuccess;
-  if (!resolveOneIfUnique(state, solver, p, objectType, fastPathObjectID,
+  if (!resolveOneIfUnique(state, solver, p, fastPathObjectID,
                           fastPathSuccess)) {
     return true;
   }

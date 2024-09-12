@@ -23,6 +23,7 @@
 // CHECK-4: KLEE: done: generated tests = 2
 
 #include <assert.h>
+#include <klee/klee.h>
 
 extern int foo(int x, int y);
 

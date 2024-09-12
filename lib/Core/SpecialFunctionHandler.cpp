@@ -17,7 +17,6 @@
 #include "Searcher.h"
 #include "StatsTracker.h"
 #include "TimingSolver.h"
-#include "TypeManager.h"
 
 #include "klee/Config/config.h"
 #include "klee/Core/Context.h"
@@ -35,6 +34,8 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 
+#include <array>
+#include <cerrno>
 #include <sstream>
 
 using namespace llvm;
@@ -52,7 +53,7 @@ cl::opt<bool>
 cl::opt<bool>
     SilentKleeAssume("silent-klee-assume", cl::init(false),
                      cl::desc("Silently terminate paths with an infeasible "
-                              "condition given to klee_assume() rather than "
+                              "condition given to klee_assume rather than "
                               "emitting an error (default=false)"),
                      cl::cat(TerminationCat));
 
@@ -72,21 +73,27 @@ cl::opt<bool> CheckOutOfMemory("check-out-of-memory", cl::init(false),
 // especially things like realloc which have complicated semantics
 // w.r.t. forking. Among other things this makes delayed query
 // dispatch easier to implement.
-static SpecialFunctionHandler::HandlerInfo handlerInfo[] = {
+static constexpr std::array handlerInfo = {
 #define add(name, handler, ret)                                                \
-  { name, &SpecialFunctionHandler::handler, false, ret, false }
+  SpecialFunctionHandler::HandlerInfo {                                        \
+    name, &SpecialFunctionHandler::handler, false, ret, false                  \
+  }
 #define addDNR(name, handler)                                                  \
-  { name, &SpecialFunctionHandler::handler, true, false, false }
+  SpecialFunctionHandler::HandlerInfo {                                        \
+    name, &SpecialFunctionHandler::handler, true, false, false                 \
+  }
     addDNR("__assert_rtn", handleAssertFail),
     addDNR("__assert_fail", handleAssertFail),
     addDNR("__assert", handleAssertFail),
     addDNR("_assert", handleAssert),
     addDNR("abort", handleAbort),
     addDNR("_exit", handleExit),
-    {"exit", &SpecialFunctionHandler::handleExit, true, false, true},
+    SpecialFunctionHandler::HandlerInfo{
+        "exit", &SpecialFunctionHandler::handleExit, true, false, true},
     addDNR("klee_abort", handleAbort),
     addDNR("klee_silent_exit", handleSilentExit),
     addDNR("klee_report_error", handleReportError),
+    add("aligned_alloc", handleMemalign, true),
     add("calloc", handleCalloc, true),
     add("free", handleFree, false),
     add("klee_assume", handleAssume, false),
@@ -194,40 +201,12 @@ static SpecialFunctionHandler::HandlerInfo handlerInfo[] = {
 #undef add
 };
 
-SpecialFunctionHandler::const_iterator SpecialFunctionHandler::begin() {
-  return SpecialFunctionHandler::const_iterator(handlerInfo);
-}
-
-SpecialFunctionHandler::const_iterator SpecialFunctionHandler::end() {
-  // NULL pointer is sentinel
-  return SpecialFunctionHandler::const_iterator(0);
-}
-
-SpecialFunctionHandler::const_iterator &
-SpecialFunctionHandler::const_iterator::operator++() {
-  ++index;
-  if (index >= SpecialFunctionHandler::size()) {
-    // Out of range, return .end()
-    base = 0; // Sentinel
-    index = 0;
-  }
-
-  return *this;
-}
-
-int SpecialFunctionHandler::size() {
-  return sizeof(handlerInfo) / sizeof(handlerInfo[0]);
-}
-
 SpecialFunctionHandler::SpecialFunctionHandler(Executor &_executor)
     : executor(_executor) {}
 
 void SpecialFunctionHandler::prepare(
     std::vector<const char *> &preservedFunctions) {
-  unsigned N = size();
-
-  for (unsigned i = 0; i < N; ++i) {
-    HandlerInfo &hi = handlerInfo[i];
+  for (const auto &hi : handlerInfo) {
     Function *f = executor.kmodule->module->getFunction(hi.name);
 
     // No need to create if the function doesn't exist, since it cannot
@@ -248,10 +227,7 @@ void SpecialFunctionHandler::prepare(
 }
 
 void SpecialFunctionHandler::bind() {
-  unsigned N = size();
-
-  for (unsigned i = 0; i < N; ++i) {
-    HandlerInfo &hi = handlerInfo[i];
+  for (const auto &hi : handlerInfo) {
     Function *f = executor.kmodule->module->getFunction(hi.name);
 
     if (f && (!hi.doNotOverride || f->isDeclaration())) {
@@ -299,9 +275,7 @@ SpecialFunctionHandler::readStringAtAddress(ExecutionState &state,
   }
   ref<ConstantPointerExpr> pointerConst =
       cast<ConstantPointerExpr>(uniquePointer);
-  if (!state.addressSpace.resolveOne(
-          pointerConst, executor.typeSystemManager->getUnknownType(),
-          idStringAddress)) {
+  if (!state.addressSpace.resolveOne(pointerConst, idStringAddress)) {
     executor.terminateStateOnUserError(
         state, "Invalid string pointer passed to one of the klee_ functions");
     return "";
@@ -408,9 +382,8 @@ void SpecialFunctionHandler::handleNew(ExecutionState &state,
                                        std::vector<ref<Expr>> &arguments) {
   // XXX should type check args
   assert(arguments.size() == 1 && "invalid number of arguments to new");
-  executor.executeAlloc(state, arguments[0], false, target,
-                        executor.typeSystemManager->handleAlloc(arguments[0]),
-                        false, nullptr, 0, CheckOutOfMemory);
+  executor.executeAlloc(state, arguments[0], false, target, false, nullptr, 0,
+                        CheckOutOfMemory);
 }
 
 void SpecialFunctionHandler::handleDelete(ExecutionState &state, KInstruction *,
@@ -428,9 +401,8 @@ void SpecialFunctionHandler::handleNewArray(ExecutionState &state,
                                             std::vector<ref<Expr>> &arguments) {
   // XXX should type check args
   assert(arguments.size() == 1 && "invalid number of arguments to new[]");
-  executor.executeAlloc(state, arguments[0], false, target,
-                        executor.typeSystemManager->handleAlloc(arguments[0]),
-                        false, nullptr, 0, CheckOutOfMemory);
+  executor.executeAlloc(state, arguments[0], false, target, false, nullptr, 0,
+                        CheckOutOfMemory);
 }
 
 void SpecialFunctionHandler::handleNewNothrowArray(
@@ -440,9 +412,8 @@ void SpecialFunctionHandler::handleNewNothrowArray(
   assert(arguments.size() == 2 &&
          "invalid number of arguments to new[](unsigned long, std::nothrow_t "
          "const&)");
-  executor.executeAlloc(state, arguments[0], false, target,
-                        executor.typeSystemManager->handleAlloc(arguments[0]),
-                        false, nullptr, 0, CheckOutOfMemory);
+  executor.executeAlloc(state, arguments[0], false, target, false, nullptr, 0,
+                        CheckOutOfMemory);
 }
 
 void SpecialFunctionHandler::handleDeleteArray(
@@ -457,9 +428,8 @@ void SpecialFunctionHandler::handleMalloc(ExecutionState &state,
                                           std::vector<ref<Expr>> &arguments) {
   // XXX should type check args
   assert(arguments.size() == 1 && "invalid number of arguments to malloc");
-  executor.executeAlloc(state, arguments[0], false, target,
-                        executor.typeSystemManager->handleAlloc(arguments[0]),
-                        false, nullptr, 0, CheckOutOfMemory);
+  executor.executeAlloc(state, arguments[0], false, target, false, nullptr, 0,
+                        CheckOutOfMemory);
 }
 
 void SpecialFunctionHandler::handleMemalign(ExecutionState &state,
@@ -492,9 +462,8 @@ void SpecialFunctionHandler::handleMemalign(ExecutionState &state,
         0, "Symbolic alignment for memalign. Choosing smallest alignment");
   }
 
-  executor.executeAlloc(state, arguments[1], false, target,
-                        executor.typeSystemManager->handleAlloc(arguments[1]),
-                        false, 0, alignment);
+  executor.executeAlloc(state, arguments[1], false, target, false, 0,
+                        alignment);
 }
 
 #ifdef SUPPORT_KLEE_EH_CXX
@@ -555,12 +524,8 @@ void SpecialFunctionHandler::handleAssume(ExecutionState &state, KInstruction *,
       state.constraints.cs(), e, res, state.queryMetaData);
   assert(success && "FIXME: Unhandled solver failure");
   if (res) {
-    if (SilentKleeAssume) {
-      executor.terminateState(state, StateTerminationType::SilentExit);
-    } else {
-      executor.terminateStateOnUserError(
-          state, "invalid klee_assume call (provably false)");
-    }
+    executor.terminateStateOnUserError(
+        state, "invalid klee_assume call (provably false)", !SilentKleeAssume);
   } else {
     executor.addConstraint(state, e);
   }
@@ -699,9 +664,7 @@ void SpecialFunctionHandler::handleGetObjSize(
   assert(arguments.size() == 1 &&
          "invalid number of arguments to klee_get_obj_size");
   Executor::ExactResolutionList rl;
-  executor.resolveExact(state, arguments[0],
-                        executor.typeSystemManager->getUnknownType(), rl,
-                        "klee_get_obj_size");
+  executor.resolveExact(state, arguments[0], rl, "klee_get_obj_size");
   for (Executor::ExactResolutionList::iterator it = rl.begin(), ie = rl.end();
        it != ie; ++it) {
     const MemoryObject *mo = it->first;
@@ -723,15 +686,10 @@ void SpecialFunctionHandler::handleGetErrno(
 
   // Retrieve the memory object of the errno variable
   ObjectPair idErrnoObject;
-  llvm::Type *pointerErrnoAddr = llvm::PointerType::get(
-      llvm::IntegerType::get(executor.kmodule->module->getContext(),
-                             sizeof(*errno_addr) * CHAR_BIT),
-      executor.kmodule->targetData->getAllocaAddrSpace());
 
   bool resolved = state.addressSpace.resolveOne(
       ConstantPointerExpr::create(Expr::createPointer((uint64_t)errno_addr),
                                   Expr::createPointer((uint64_t)errno_addr)),
-      executor.typeSystemManager->getWrappedType(pointerErrnoAddr),
       idErrnoObject);
   if (!resolved)
     executor.terminateStateOnUserError(state,
@@ -767,9 +725,8 @@ void SpecialFunctionHandler::handleCalloc(ExecutionState &state,
   assert(arguments.size() == 2 && "invalid number of arguments to calloc");
 
   ref<Expr> size = MulExpr::create(arguments[0], arguments[1]);
-  executor.executeAlloc(state, size, false, target,
-                        executor.typeSystemManager->handleAlloc(size), true,
-                        nullptr, 0, CheckOutOfMemory);
+  executor.executeAlloc(state, size, false, target, true, nullptr, 0,
+                        CheckOutOfMemory);
 }
 
 void SpecialFunctionHandler::handleRealloc(ExecutionState &state,
@@ -796,15 +753,12 @@ void SpecialFunctionHandler::handleRealloc(ExecutionState &state,
         BranchType::Realloc);
 
     if (zeroPointer.first) { // address == 0
-      executor.executeAlloc(*zeroPointer.first, size, false, target,
-                            executor.typeSystemManager->handleAlloc(size),
-                            false, nullptr, 0, CheckOutOfMemory);
+      executor.executeAlloc(*zeroPointer.first, size, false, target, false,
+                            nullptr, 0, CheckOutOfMemory);
     }
     if (zeroPointer.second) { // address != 0
       Executor::ExactResolutionList rl;
-      executor.resolveExact(*zeroPointer.second, address,
-                            executor.typeSystemManager->getUnknownType(), rl,
-                            "realloc");
+      executor.resolveExact(*zeroPointer.second, address, rl, "realloc");
 
       for (Executor::ExactResolutionList::iterator it = rl.begin(),
                                                    ie = rl.end();
@@ -812,10 +766,8 @@ void SpecialFunctionHandler::handleRealloc(ExecutionState &state,
         ref<const ObjectState> os =
             it->second->addressSpace.findOrLazyInitializeObject(it->first)
                 .second;
-        executor.executeAlloc(*it->second, size, false, target,
-                              executor.typeSystemManager->handleRealloc(
-                                  os->getDynamicType(), size),
-                              false, os.get(), 0, CheckOutOfMemory);
+        executor.executeAlloc(*it->second, size, false, target, false, os.get(),
+                              0, CheckOutOfMemory);
       }
     }
   }
@@ -842,9 +794,8 @@ void SpecialFunctionHandler::handleCheckMemoryAccess(
   } else {
     ObjectPair idObject;
 
-    if (!state.addressSpace.resolveOne(
-            cast<ConstantPointerExpr>(uniquePointer),
-            executor.typeSystemManager->getUnknownType(), idObject)) {
+    if (!state.addressSpace.resolveOne(cast<ConstantPointerExpr>(uniquePointer),
+                                       idObject)) {
       executor.terminateStateOnProgramError(
           state,
           new ErrorEvent(executor.locationOf(state), StateTerminationType::Ptr,
@@ -892,11 +843,9 @@ void SpecialFunctionHandler::handleDefineFixedObject(
                                ->getConstantValue()
                                ->getZExtValue();
   uint64_t size = cast<ConstantExpr>(arguments[1])->getZExtValue();
-  MemoryObject *mo = executor.memory->allocateFixed(
-      address, size, executor.locationOf(state),
-      executor.typeSystemManager->getUnknownType());
-  executor.bindObjectInState(
-      state, mo, executor.typeSystemManager->getUnknownType(), false);
+  MemoryObject *mo =
+      executor.memory->allocateFixed(address, size, executor.locationOf(state));
+  executor.bindObjectInState(state, mo, false);
   mo->isUserSpecified = true; // XXX hack;
 
   executor.bindLocal(target, state,
@@ -925,9 +874,7 @@ void SpecialFunctionHandler::handleMakeSymbolic(
   }
 
   Executor::ExactResolutionList rl;
-  executor.resolveExact(state, arguments[0],
-                        executor.typeSystemManager->getUnknownType(), rl,
-                        "make_symbolic");
+  executor.resolveExact(state, arguments[0], rl, "make_symbolic");
 
   for (Executor::ExactResolutionList::iterator it = rl.begin(), ie = rl.end();
        it != ie; ++it) {
@@ -958,7 +905,7 @@ void SpecialFunctionHandler::handleMakeSymbolic(
 
     if (res) {
       executor.executeMakeSymbolic(
-          *s, mo, old->getDynamicType(),
+          *s, mo,
           SourceBuilder::makeSymbolic(name,
                                       executor.updateNameVersion(*s, name)),
           false);
@@ -994,9 +941,7 @@ void SpecialFunctionHandler::handleMakeMock(ExecutionState &state,
   KFunction *kf = target->parent->parent;
 
   Executor::ExactResolutionList rl;
-  executor.resolveExact(state, arguments[0],
-                        executor.typeSystemManager->getUnknownType(), rl,
-                        "make_symbolic");
+  executor.resolveExact(state, arguments[0], rl, "make_symbolic");
 
   for (auto &it : rl) {
     ObjectPair op = it.second->addressSpace.findObject(it.first);
@@ -1039,8 +984,7 @@ void SpecialFunctionHandler::handleMakeMock(ExecutionState &state,
                                                   *kf->function(), args);
         break;
       }
-      executor.executeMakeSymbolic(state, mo, old->getDynamicType(), source,
-                                   false);
+      executor.executeMakeSymbolic(state, mo, source, false);
     } else {
       executor.terminateStateOnUserError(*s,
                                          "Wrong size given to klee_make_mock");
@@ -1054,9 +998,7 @@ void SpecialFunctionHandler::handleMarkGlobal(
          "invalid number of arguments to klee_mark_global");
 
   Executor::ExactResolutionList rl;
-  executor.resolveExact(state, arguments[0],
-                        executor.typeSystemManager->getUnknownType(), rl,
-                        "mark_global");
+  executor.resolveExact(state, arguments[0], rl, "mark_global");
 
   for (Executor::ExactResolutionList::iterator it = rl.begin(), ie = rl.end();
        it != ie; ++it) {

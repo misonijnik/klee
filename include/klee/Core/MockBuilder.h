@@ -9,11 +9,14 @@
 #ifndef KLEE_MOCKBUILDER_H
 #define KLEE_MOCKBUILDER_H
 
+#include "klee/Config/Version.h"
 #include "klee/Core/Interpreter.h"
 #include "klee/Module/Annotation.h"
 
+#include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Value.h"
 
 #include <set>
 #include <string>
@@ -58,7 +61,7 @@ private:
       llvm::Function *func, const std::set<Statement::Property> &properties);
 
   std::map<std::string, llvm::FunctionType *> getExternalFunctions();
-  std::map<std::string, llvm::Type *> getExternalGlobals();
+  std::map<std::string, const llvm::GlobalVariable *> getExternalGlobals();
 
   std::pair<llvm::Value *, llvm::Value *>
   goByOffset(llvm::Value *value, const std::vector<std::string> &offset);
@@ -74,12 +77,20 @@ public:
               std::set<std::string> &mainModuleGlobals);
 
   std::unique_ptr<llvm::Module> build();
+  void buildFree(llvm::Value *elem, const Statement::Free *freePtr);
+#if LLVM_VERSION_CODE >= LLVM_VERSION(15, 0)
+  void buildAllocSource(llvm::Value *prev, llvm::Value *elem,
+                        const Statement::Alloc *allocSourcePtr);
+  void processingValue(llvm::Value *prev, llvm::Value *elem,
+                       const Statement::Alloc *allocSourcePtr,
+                       bool initNullPtr);
+#else
   void buildAllocSource(llvm::Value *prev, llvm::Type *elemType,
                         const Statement::Alloc *allocSourcePtr);
-  void buildFree(llvm::Value *elem, const Statement::Free *freePtr);
   void processingValue(llvm::Value *prev, llvm::Type *elemType,
                        const Statement::Alloc *allocSourcePtr,
                        bool initNullPtr);
+#endif
 };
 
 } // namespace klee

@@ -4,6 +4,7 @@
 // RUN: %klee-stats --print-columns 'ICov(%),BCov(%)' --table-format=csv %t.klee-out > %t.stats
 // RUN: FileCheck -check-prefix=CHECK-STATS -input-file=%t.stats %s
 #include "klee/klee.h"
+#include <stdio.h>
 
 #define a (2)
 int main() {

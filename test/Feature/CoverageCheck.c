@@ -2,6 +2,7 @@
 // RUN: rm -rf %t.klee-out
 // RUN: %klee --use-guided-search=none --use-cov-check=instruction-based --output-dir=%t.klee-out %t.bc > %t.log
 #include "klee/klee.h"
+#include <assert.h>
 
 #define a (2)
 int main() {

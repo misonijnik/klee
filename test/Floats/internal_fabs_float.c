@@ -5,10 +5,9 @@
 // REQUIRES: fp-runtime
 #include "klee/klee.h"
 #include <assert.h>
-#include <float.h>
 #include <math.h>
 #include <stdint.h>
-#include <stdio.h>
+#include <string.h>
 
 int main() {
   // -ve

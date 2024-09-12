@@ -9,10 +9,12 @@
 
 #include "Passes.h"
 
+#include "klee/Config/Version.h"
 #include "klee/Support/Casting.h"
 #include "klee/Support/ErrorHandling.h"
 #include "klee/Support/OptionCategories.h"
 
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/GlobalAlias.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Regex.h"
@@ -134,10 +136,16 @@ bool FunctionAliasPass::runOnModule(Module &M) {
 }
 
 const FunctionType *FunctionAliasPass::getFunctionType(const GlobalValue *gv) {
+#if LLVM_VERSION_CODE >= LLVM_VERSION(15, 0)
+  if (auto *ft = dyn_cast<FunctionType>(gv->getType()))
+    return ft;
+  return dyn_cast<FunctionType>(gv->getValueType());
+#else
   const Type *type = gv->getType();
   while (type->isPointerTy())
     type = type->getPointerElementType();
-  return cast<FunctionType>(type);
+  return dyn_cast<FunctionType>(type);
+#endif
 }
 
 bool FunctionAliasPass::checkType(const GlobalValue *match,

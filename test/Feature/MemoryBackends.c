@@ -14,6 +14,7 @@
    correctness check (aside from testing that the various combinations
    don't crash) */
 
+#include "klee/klee.h"
 #include <stdlib.h>
 
 int validate(char *buf, int N) {
@@ -34,7 +35,7 @@ int validate(char *buf, int N) {
 #endif
 int main(int argc, char **argv) {
   int N = SYMBOLIC_SIZE;
-  unsigned char *buf = malloc(N);
+  char *buf = malloc(N);
   int i;
 
   klee_make_symbolic(buf, N, "buf");
@@ -45,7 +46,7 @@ int main(int argc, char **argv) {
 
 int other_main(int argc, char **argv) {
   int N = SYMBOLIC_SIZE;
-  unsigned char *buf = malloc(N);
+  char *buf = malloc(N);
   int i;
 
   klee_make_symbolic(buf, N, "buf");

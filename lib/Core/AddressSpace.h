@@ -21,7 +21,6 @@ namespace klee {
 class ExecutionState;
 class MemoryObject;
 class ObjectState;
-class KType;
 class TimingSolver;
 
 template <class T> class ref;
@@ -84,8 +83,7 @@ public:
 
   /// Resolve address to an ObjectPair in result.
   /// \return true iff an object was found.
-  bool resolveOne(ref<ConstantPointerExpr> address, KType *objectType,
-                  ObjectPair &result) const;
+  bool resolveOne(ref<ConstantPointerExpr> address, ObjectPair &result) const;
 
   /// Resolve address to an ObjectPair in result.
   ///
@@ -97,8 +95,7 @@ public:
   ///               (when returning true).
   /// \return true iff an object was found at \a address.
   bool resolveOne(ExecutionState &state, TimingSolver *solver,
-                  ref<PointerExpr> address, KType *objectType,
-                  ObjectPair &result, bool &success,
+                  ref<PointerExpr> address, ObjectPair &result, bool &success,
                   const std::atomic_bool &haltExecution) const;
 
   /// @brief Tries to resolve the pointer in the concrete object
@@ -111,8 +108,8 @@ public:
   /// @param success True iff object was found.
   /// @return false iff the resolution is incomplete (query timed out).
   bool resolveOneIfUnique(ExecutionState &state, TimingSolver *solver,
-                          ref<PointerExpr> address, KType *objectType,
-                          ObjectPair &result, bool &success) const;
+                          ref<PointerExpr> address, ObjectPair &result,
+                          bool &success) const;
 
   /// Resolve pointer `p` to a list of `ObjectPairs` it can point
   /// to. If `maxResolutions` is non-zero then no more than that many
@@ -121,8 +118,7 @@ public:
   /// \return true iff the resolution is incomplete (`maxResolutions`
   /// is non-zero and it was reached, or a query timed out).
   bool resolve(ExecutionState &state, TimingSolver *solver, ref<PointerExpr> p,
-               KType *objectType, ResolutionList &rl,
-               unsigned maxResolutions = 0,
+               ResolutionList &rl, unsigned maxResolutions = 0,
                time::Span timeout = time::Span()) const;
 
   /***/
@@ -175,6 +171,8 @@ public:
   /// @param mo The MemoryObject to update
   /// @param os The associated memory state containing the actual data
   /// @param src_address the address to copy from
+  /// @param concretize fully concretize the object representation if changed
+  /// externally
   /// @return
   bool copyInConcrete(const MemoryObject *mo, const ObjectState *os,
                       uint64_t src_address, const Assignment &assignment);

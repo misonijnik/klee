@@ -3,6 +3,7 @@
 // RUN: %klee --write-kqueries --output-dir=%t.klee-out --skip-not-symbolic-objects %t.bc > %t.log
 // RUN: FileCheck %s -input-file=%t.log
 #include "klee/klee.h"
+#include <stdio.h>
 
 int main() {
   int *a;
