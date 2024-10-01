@@ -34,6 +34,7 @@
 #include <optional>
 
 #include "bitwuzla/cpp/bitwuzla.h"
+#include "bindings.h"
 
 namespace {
 // NOTE: Very useful for debugging Bitwuzla behaviour. These files can be given
