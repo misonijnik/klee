@@ -2,7 +2,7 @@
 # Variables that any artifact of this package might depend on
 setup_build_variables_smithril() {
   SMITHRIL_INSTALL_PATH="${BASE}/smithril-${SMITHRIL_VERSION}"
-  SMITHRIL_SYS_INSTALL_PATH="${BASE}/smithril-sys-${SMITHRIL_VERSION}"
+  SMITHRIL_SYS_INSTALL_PATH="${BASE}/smithril-sys"
   smithril_url="git@github.com:smithril/smithril.git"
 
   return 0
