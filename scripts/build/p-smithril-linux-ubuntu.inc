@@ -1,5 +1,5 @@
-# Build dependencies Bitwuzla
-install_build_dependencies_bitwuzla() {
+# Build dependencies Smithril
+install_build_dependencies_smithril() {
   source "${DIR}/common-functions"
   with_sudo apt update -y
 
