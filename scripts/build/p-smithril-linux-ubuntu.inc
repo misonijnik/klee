@@ -25,4 +25,6 @@ install_build_dependencies_smithril() {
   pip3 install --user meson
   base_path="$(python3 -m site --user-base)"
   export PATH="$PATH:${base_path}/bin"
+
+  curl https://sh.rustup.rs -sSf | sh -s -- -y
 }
