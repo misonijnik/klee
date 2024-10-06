@@ -128,9 +128,9 @@ jobs:
             env:
               SOLVERS: BITWUZLA
           # Test just using Smithril only
-          - name: "Smithril only"
+          - name: "Bitwuzla and Smithril only"
             env:
-              SOLVERS: SMITHRIL
+              SOLVERS: BITWUZLA:SMITHRIL
           # Check we can build latest klee-uclibc branch
           - name: "Latest klee-uclibc"
             env:

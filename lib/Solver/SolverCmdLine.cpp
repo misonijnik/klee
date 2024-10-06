@@ -195,6 +195,7 @@ cl::opt<klee::MetaSMTBackendType> MetaSMTBackend(
 #define STP_IS_DEFAULT_STR ""
 #define METASMT_IS_DEFAULT_STR ""
 #define Z3_IS_DEFAULT_STR ""
+#define SMITHRIL_IS_DEFAULT_STR ""
 #define BITWUZLA_IS_DEFAULT_STR " (default)"
 #define DEFAULT_CORE_SOLVER BITWUZLA_SOLVER
 #elif ENABLE_Z3
@@ -202,19 +203,28 @@ cl::opt<klee::MetaSMTBackendType> MetaSMTBackend(
 #define METASMT_IS_DEFAULT_STR ""
 #define Z3_IS_DEFAULT_STR " (default)"
 #define BITWUZLA_IS_DEFAULT_STR ""
+#define SMITHRIL_IS_DEFAULT_STR ""
 #define DEFAULT_CORE_SOLVER Z3_SOLVER
+#elif ENABLE_SMITHRIL
+#define STP_IS_DEFAULT_STR ""
+#define METASMT_IS_DEFAULT_STR ""
+#define Z3_IS_DEFAULT_STR ""
+#define BITWUZLA_IS_DEFAULT_STR ""
+#define SMITHRIL_IS_DEFAULT_STR " (default)"
+#define DEFAULT_CORE_SOLVER SMITHRIL_SOLVER
 #elif ENABLE_STP
 #define STP_IS_DEFAULT_STR " (default)"
 #define METASMT_IS_DEFAULT_STR ""
 #define Z3_IS_DEFAULT_STR ""
 #define BITWUZLA_IS_DEFAULT_STR ""
+#define SMITHRIL_IS_DEFAULT_STR ""
 #define DEFAULT_CORE_SOLVER STP_SOLVER
 #elif ENABLE_METASMT
 #define STP_IS_DEFAULT_STR ""
+#define SMITHRIL_IS_DEFAULT_STR ""
 #define METASMT_IS_DEFAULT_STR " (default)"
 #define Z3_IS_DEFAULT_STR ""
 #define DEFAULT_CORE_SOLVER METASMT_SOLVER
-#define Z3_IS_DEFAULT_STR ""
 #define BITWUZLA_IS_DEFAULT_STR ""
 #else
 #error "Unsupported solver configuration"
@@ -262,4 +272,5 @@ llvm::cl::opt<unsigned> SymbolicAllocationThreshold(
 #undef METASMT_IS_DEFAULT_STR
 #undef Z3_IS_DEFAULT_STR
 #undef BITWUZLA_IS_DEFAULT_STR
+#undef SMITHRIL_IS_DEFAULT_STR
 #undef DEFAULT_CORE_SOLVER
