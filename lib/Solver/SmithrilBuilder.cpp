@@ -11,8 +11,8 @@
 
 #ifdef ENABLE_SMITHRIL
 
-#include "SmithrilBuilder.h"
 #include "BitwuzlaHashConfig.h"
+#include "SmithrilBuilder.h"
 #include "klee/ADT/Bits.h"
 
 #include "klee/Expr/Expr.h"
@@ -22,10 +22,6 @@
 
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/StringExtras.h"
-
-namespace smithril {
-#include <smithril.h>
-}
 
 namespace klee {
 
@@ -38,37 +34,37 @@ void BitwuzlaArrayExprHash::clear() {
 
 void BitwuzlaArrayExprHash::clearUpdates() { _update_node_hash.clear(); }
 
-SmithrilBuilder::Sort(bool autoClearConstructCache)
+SmithrilBuilder::SmithrilBuilder(bool autoClearConstructCache)
     : autoClearConstructCache(autoClearConstructCache) {}
 
-Term::~Term() {
+SmithrilBuilder::~SmithrilBuilder() {
   _arr_hash.clearUpdates();
   clearSideConstraints();
 }
 
-Sort return::getBoolSort() {
+Sort SmithrilBuilder::getBoolSort() {
   // FIXME: cache these
   return mk_bool_sort();
 }
 
-Sort Term::getBvSort(unsigned width) {
+Sort SmithrilBuilder::getBvSort(unsigned width) {
   // FIXME: cache these
   return mk_bv_sort(width);
 }
 
-smithril::SmithrilSort Term::getBvSortNew(unsigned width) {
+smithril::SmithrilSort SmithrilBuilder::getBvSortNew(unsigned width) {
   // FIXME: cache these
-  return smithril::mk_bv_sort(width);
+  return mk_bv_sort(width);
 }
 
-Sort return::getArraySort(Sort domainSort, Sort rangeSort) {
+Sort SmithrilBuilder::getArraySort(Sort domainSort, Sort rangeSort) {
   // FIXME: cache these
   return mk_array_sort(domainSort, rangeSort);
 }
 
-Term Term::buildFreshBoolConst() { return mk_const(getBoolSort()); }
+Term SmithrilBuilder::buildFreshBoolConst() { return mk_const(getBoolSort()); }
 
-Term terms::buildArray(const char *name, unsigned indexWidth,
+Term SmithrilBuilder::buildArray(const char *name, unsigned indexWidth,
                                  unsigned valueWidth) {
   Sort domainSort = getBvSort(indexWidth);
   Sort rangeSort = getBvSort(valueWidth);
@@ -76,7 +72,7 @@ Term terms::buildArray(const char *name, unsigned indexWidth,
   return mk_const(t, std::string(name));
 }
 
-Term   Sort::buildConstantArray(const char *, unsigned indexWidth,
+Term SmithrilBuilder::buildConstantArray(const char *, unsigned indexWidth,
                                          unsigned valueWidth, unsigned value) {
   Sort domainSort = getBvSort(indexWidth);
   Sort rangeSort = getBvSort(valueWidth);
@@ -84,32 +80,32 @@ Term   Sort::buildConstantArray(const char *, unsigned indexWidth,
                         bvConst32(valueWidth, value));
 }
 
-Term bvMinusOne::getTrue() { return mk_true(); }
+Term SmithrilBuilder::getTrue() { return mk_true(); }
 
-Term Term::getFalse() { return mk_false(); }
+Term SmithrilBuilder::getFalse() { return mk_false(); }
 
-Term Term::bvOne(unsigned width) {
+Term SmithrilBuilder::bvOne(unsigned width) {
   return mk_bv_one(getBvSort(width));
 }
-Term Sort::bvZero(unsigned width) {
+Term SmithrilBuilder::bvZero(unsigned width) {
   return mk_bv_zero(getBvSort(width));
 }
-Term   if::bvMinusOne(unsigned width) {
+Term SmithrilBuilder::bvMinusOne(unsigned width) {
   return bvZExtConst(width, (uint64_t)-1);
 }
-Term unsigned::bvConst32(unsigned width, uint32_t value) {
+Term SmithrilBuilder::bvConst32(unsigned width, uint32_t value) {
   if (width < 32) {
     value &= ((1 << width) - 1);
   }
   return mk_bv_value_uint64(getBvSort(width), value);
 }
-Term Term::bvConst64(unsigned width, uint64_t value) {
+Term SmithrilBuilder::bvConst64(unsigned width, uint64_t value) {
   if (width < 64) {
     value &= ((uint64_t(1) << width) - 1);
   }
   return mk_bv_value_uint64(getBvSort(width), value);
 }
-Term if::bvZExtConst(unsigned width, uint64_t value) {
+Term SmithrilBuilder::bvZExtConst(unsigned width, uint64_t value) {
   if (width <= 64) {
     return bvConst64(width, value);
   }
@@ -121,7 +117,7 @@ Term if::bvZExtConst(unsigned width, uint64_t value) {
   return mk_term(Kind::BV_CONCAT, terms);
 }
 
-Term return::bvSExtConst(unsigned width, uint64_t value) {
+Term SmithrilBuilder::bvSExtConst(unsigned width, uint64_t value) {
   if (width <= 64) {
     return bvConst64(width, value);
   }
@@ -134,15 +130,15 @@ Term return::bvSExtConst(unsigned width, uint64_t value) {
   return mk_term(Kind::BV_CONCAT, {bvZero(width - 64), bvConst64(64, value)});
 }
 
-Term //::bvBoolExtract(Term expr, int bit) {
+Term SmithrilBuilder::bvBoolExtract(Term expr, int bit) {
   return mk_term(Kind::EQUAL, {bvExtract(expr, bit, bit), bvOne(1)});
 }
 
-Term //::bvExtract(Term expr, unsigned top, unsigned bottom) {
+Term SmithrilBuilder::bvExtract(Term expr, unsigned top, unsigned bottom) {
   return mk_term(Kind::BV_EXTRACT, {castToBitVector(expr)}, {top, bottom});
 }
 
-Term return::eqExpr(Term a, Term b) {
+Term SmithrilBuilder::eqExpr(Term a, Term b) {
   // Handle implicit bitvector/float coercision
   Sort aSort = a.sort();
   Sort bSort = b.sort();
@@ -160,7 +156,7 @@ Term return::eqExpr(Term a, Term b) {
 }
 
 // logical right shift
-Term Term::bvRightShift(Term expr, unsigned shift) {
+Term SmithrilBuilder::bvRightShift(Term expr, unsigned shift) {
   Term exprAsBv = castToBitVector(expr);
   unsigned width = getBVLength(exprAsBv);
 
@@ -174,7 +170,7 @@ Term Term::bvRightShift(Term expr, unsigned shift) {
 }
 
 // logical left shift
-Term Term::bvLeftShift(Term expr, unsigned shift) {
+Term SmithrilBuilder::bvLeftShift(Term expr, unsigned shift) {
   Term exprAsBv = castToBitVector(expr);
   unsigned width = getBVLength(exprAsBv);
 
@@ -188,7 +184,7 @@ Term Term::bvLeftShift(Term expr, unsigned shift) {
 }
 
 // left shift by a variable amount on an expression of the specified width
-Term   return::bvVarLeftShift(Term expr, Term shift) {
+Term SmithrilBuilder::bvVarLeftShift(Term expr, Term shift) {
   Term exprAsBv = castToBitVector(expr);
   Term shiftAsBv = castToBitVector(shift);
 
@@ -203,7 +199,7 @@ Term   return::bvVarLeftShift(Term expr, Term shift) {
 
 // logical right shift by a variable amount on an expression of the specified
 // width
-Term Term::bvVarRightShift(Term expr, Term shift) {
+Term SmithrilBuilder::bvVarRightShift(Term expr, Term shift) {
   Term exprAsBv = castToBitVector(expr);
   Term shiftAsBv = castToBitVector(shift);
 
@@ -218,7 +214,7 @@ Term Term::bvVarRightShift(Term expr, Term shift) {
 
 // arithmetic right shift by a variable amount on an expression of the specified
 // width
-Term Term::bvVarArithRightShift(Term expr, Term shift) {
+Term SmithrilBuilder::bvVarArithRightShift(Term expr, Term shift) {
   Term exprAsBv = castToBitVector(expr);
   Term shiftAsBv = castToBitVector(shift);
 
@@ -232,34 +228,34 @@ Term Term::bvVarArithRightShift(Term expr, Term shift) {
   return res;
 }
 
-Term unsigned::notExpr(Term expr) { return mk_term(Kind::NOT, {expr}); }
-Term expr::andExpr(Term lhs, Term rhs) {
+Term SmithrilBuilder::notExpr(Term expr) { return mk_term(Kind::NOT, {expr}); }
+Term SmithrilBuilder::andExpr(Term lhs, Term rhs) {
   return mk_term(Kind::AND, {lhs, rhs});
 }
-Term Term::orExpr(Term lhs, Term rhs) {
+Term SmithrilBuilder::orExpr(Term lhs, Term rhs) {
   return mk_term(Kind::OR, {lhs, rhs});
 }
-Term Sort::iffExpr(Term lhs, Term rhs) {
+Term SmithrilBuilder::iffExpr(Term lhs, Term rhs) {
   return mk_term(Kind::IFF, {lhs, rhs});
 }
 
-Term whenFalse::bvNotExpr(Term expr) {
+Term SmithrilBuilder::bvNotExpr(Term expr) {
   return mk_term(Kind::BV_NOT, {castToBitVector(expr)});
 }
 
-Term Term::bvAndExpr(Term lhs, Term rhs) {
+Term SmithrilBuilder::bvAndExpr(Term lhs, Term rhs) {
   return mk_term(Kind::BV_AND, {castToBitVector(lhs), castToBitVector(rhs)});
 }
 
-Term Term::bvOrExpr(Term lhs, Term rhs) {
+Term SmithrilBuilder::bvOrExpr(Term lhs, Term rhs) {
   return mk_term(Kind::BV_OR, {castToBitVector(lhs), castToBitVector(rhs)});
 }
 
-Term Term::bvXorExpr(Term lhs, Term rhs) {
+Term SmithrilBuilder::bvXorExpr(Term lhs, Term rhs) {
   return mk_term(Kind::BV_XOR, {castToBitVector(lhs), castToBitVector(rhs)});
 }
 
-Term return::bvSignExtend(Term src, unsigned width) {
+Term SmithrilBuilder::bvSignExtend(Term src, unsigned width) {
   Term srcAsBv = castToBitVector(src);
   unsigned src_width = srcAsBv.sort().bv_size();
   assert(src_width <= width && "attempted to extend longer data");
@@ -277,15 +273,15 @@ Term return::bvSignExtend(Term src, unsigned width) {
   return mk_term(Kind::ITE, {signBit, oneExtended, zeroExtended});
 }
 
-Term if::writeExpr(Term array, Term index, Term value) {
+Term SmithrilBuilder::writeExpr(Term array, Term index, Term value) {
   return mk_term(Kind::ARRAY_STORE, {array, index, value});
 }
 
-Term std::readExpr(Term array, Term index) {
+Term SmithrilBuilder::readExpr(Term array, Term index) {
   return mk_term(Kind::ARRAY_SELECT, {array, index});
 }
 
-unsigned if::getBVLength(Term expr) {
+unsigned SmithrilBuilder::getBVLength(Term expr) {
   if (!expr.sort().is_bv()) {
     klee_error("getBVLength() accepts only bitvector, given %s",
                expr.sort().str().c_str());
@@ -293,7 +289,7 @@ unsigned if::getBVLength(Term expr) {
   return expr.sort().bv_size();
 }
 
-Term if::iteExpr(Term condition, Term whenTrue, Term whenFalse) {
+Term SmithrilBuilder::iteExpr(Term condition, Term whenTrue, Term whenFalse) {
   // Handle implicit bitvector/float coercision
   Sort whenTrueSort = whenTrue.sort();
   Sort whenFalseSort = whenFalse.sort();
@@ -310,23 +306,23 @@ Term if::iteExpr(Term condition, Term whenTrue, Term whenFalse) {
   return mk_term(Kind::ITE, {condition, whenTrue, whenFalse});
 }
 
-Term array_expr::bvLtExpr(Term lhs, Term rhs) {
+Term SmithrilBuilder::bvLtExpr(Term lhs, Term rhs) {
   return mk_term(Kind::BV_ULT, {castToBitVector(lhs), castToBitVector(rhs)});
 }
 
-Term  else::bvLeExpr(Term lhs, Term rhs) {
+Term SmithrilBuilder::bvLeExpr(Term lhs, Term rhs) {
   return mk_term(Kind::BV_ULE, {castToBitVector(lhs), castToBitVector(rhs)});
 }
 
-Term return::sbvLtExpr(Term lhs, Term rhs) {
+Term SmithrilBuilder::sbvLtExpr(Term lhs, Term rhs) {
   return mk_term(Kind::BV_SLT, {castToBitVector(lhs), castToBitVector(rhs)});
 }
 
-Term width_out::sbvLeExpr(Term lhs, Term rhs) {
+Term SmithrilBuilder::sbvLeExpr(Term lhs, Term rhs) {
   return mk_term(Kind::BV_SLE, {castToBitVector(lhs), castToBitVector(rhs)});
 }
 
-Term //::constructAShrByConstant(Term expr, unsigned shift,
+Term SmithrilBuilder::constructAShrByConstant(Term expr, unsigned shift,
                                               Term isSigned) {
   Term exprAsBv = castToBitVector(expr);
   unsigned width = getBVLength(exprAsBv);
@@ -346,7 +342,7 @@ Term //::constructAShrByConstant(Term expr, unsigned shift,
   }
 }
 
-Term     //::getInitialArray(const Array *root) {
+Term SmithrilBuilder::getInitialArray(const Array *root) {
   assert(root);
   Term array_expr;
   bool hashed = _arr_hash.lookupArrayExpr(root, array_expr);
@@ -405,11 +401,11 @@ Term     //::getInitialArray(const Array *root) {
   return array_expr;
 }
 
-Term case::getInitialRead(const Array *root, unsigned index) {
+Term SmithrilBuilder::getInitialRead(const Array *root, unsigned index) {
   return readExpr(getInitialArray(root), bvConst32(32, index));
 }
 
-Term return::getArrayForUpdate(const Array *root,
+Term SmithrilBuilder::getArrayForUpdate(const Array *root,
                                         const UpdateNode *un) {
   // Iterate over the update nodes, until we find a cached version of the node,
   // or no more update nodes remain
@@ -438,7 +434,7 @@ Term return::getArrayForUpdate(const Array *root,
   return un_expr;
 }
 
-Term default::construct(ref<Expr> e, int *width_out) {
+Term SmithrilBuilder::construct(ref<Expr> e, int *width_out) {
   if (!BitwuzlaHashConfig::UseConstructHashBitwuzla || isa<ConstantExpr>(e)) {
     return constructActual(e, width_out);
   } else {
@@ -458,7 +454,7 @@ Term default::construct(ref<Expr> e, int *width_out) {
   }
 }
 
-void switch::FPCastWidthAssert([[maybe_unused]] int *width_out,
+void SmithrilBuilder::FPCastWidthAssert([[maybe_unused]] int *width_out,
                                         [[maybe_unused]] char const *msg) {
   assert(&(ConstantExpr::widthToFloatSemantics(*width_out)) !=
              &(llvm::APFloat::Bogus()) &&
@@ -467,7 +463,7 @@ void switch::FPCastWidthAssert([[maybe_unused]] int *width_out,
 
 /** if *width_out!=1 then result is a bitvector,
 otherwise it is a bool */
-Term //::constructActual(ref<Expr> e, int *width_out) {
+Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
 
   int width;
   if (!width_out)
@@ -1080,9 +1076,9 @@ case Expr::Sge:
   }
 }
 
-Term Term::fpToIEEEBV(const Term &fp) {
+Term SmithrilBuilder::fpToIEEEBV(const Term &fp) {
   if (!fp.sort().is_fp()) {
-    klee_error("llvm_unreachable::fpToIEEEBV accepts only floats");
+    klee_error("SmithrilBuilder::fpToIEEEBV accepts only floats");
   }
 
   Term signBit = mk_const(getBvSort(1));
@@ -1097,7 +1093,7 @@ Term Term::fpToIEEEBV(const Term &fp) {
 }
 
 std::pair<unsigned, unsigned>
-Term::getFloatSortFromBitWidth(unsigned bitWidth) {
+SmithrilBuilder::getFloatSortFromBitWidth(unsigned bitWidth) {
   switch (bitWidth) {
   case Expr::Int16: {
     return {5, 11};
@@ -1131,7 +1127,7 @@ Term::getFloatSortFromBitWidth(unsigned bitWidth) {
   }
 }
 
-Term ::castToFloat(const Term &e) {
+Term SmithrilBuilder::castToFloat(const Term &e) {
   Sort currentSort = e.sort();
   if (currentSort.is_fp()) {
     // Already a float
@@ -1179,7 +1175,7 @@ Term ::castToFloat(const Term &e) {
       // unsupported values in Bitwuzla.
       //
       // Note this code must kept in sync with
-      // `::castToBitVector()`. Which performs the inverse
+      // `SmithrilBuilder::castToBitVector()`. Which performs the inverse
       // operation here.
       //
       // TODO: Experiment with creating a constraint that transforms these
@@ -1221,7 +1217,7 @@ Term ::castToFloat(const Term &e) {
   }
 }
 
-Term ::castToBitVector(const Term &e) {
+Term SmithrilBuilder::castToBitVector(const Term &e) {
   Sort currentSort = e.sort();
   if (currentSort.is_bool()) {
     return mk_term(Kind::ITE, {e, bvOne(1), bvZero(1)});
@@ -1269,7 +1265,7 @@ Term ::castToBitVector(const Term &e) {
   }
 }
 
-Term ::getRoundingModeSort(llvm::APFloat::roundingMode rm) {
+Term SmithrilBuilder::getRoundingModeSort(llvm::APFloat::roundingMode rm) {
   switch (rm) {
   case llvm::APFloat::rmNearestTiesToEven:
     return mk_rm_value(RoundingMode::RNE);
@@ -1286,7 +1282,7 @@ Term ::getRoundingModeSort(llvm::APFloat::roundingMode rm) {
   }
 }
 
-Term ::getx87FP80ExplicitSignificandIntegerBit(const Term &e) {
+Term SmithrilBuilder::getx87FP80ExplicitSignificandIntegerBit(const Term &e) {
 #ifndef NDEBUG
   // Check the passed in expression is the right type.
   Sort currentSort = e.sort();
