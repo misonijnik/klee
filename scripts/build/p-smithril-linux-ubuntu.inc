@@ -10,6 +10,7 @@ install_build_dependencies_smithril() {
     python3
     python3-pip
     cmake
+    curl
     git
     wget
     ca-certificates
