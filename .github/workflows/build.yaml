@@ -61,7 +61,7 @@ jobs:
           "metaSMT",
           "STP master",
           "Bitwuzla only",
-          "Smithril only",
+          "Bitwuzla and Smithril only",
           "Latest klee-uclibc",
           "Asserts disabled",
           "No TCMalloc, optimised runtime",
@@ -127,7 +127,7 @@ jobs:
           - name: "Bitwuzla only"
             env:
               SOLVERS: BITWUZLA
-          # Test just using Smithril only
+          # Test just using Bitwuzla and Smithril only
           - name: "Bitwuzla and Smithril only"
             env:
               SOLVERS: BITWUZLA:SMITHRIL
