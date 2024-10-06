@@ -28,4 +28,5 @@ install_build_dependencies_smithril() {
   export PATH="$PATH:${base_path}/bin"
 
   curl https://sh.rustup.rs -sSf | sh -s -- -y
+  . "$HOME/.cargo/env"
 }
