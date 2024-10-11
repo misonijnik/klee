@@ -6,10 +6,11 @@
 namespace klee {
 
 /// SmithrilCompleteSolver - A complete solver based on Smithril
-class SmithrilCompleteSolver : public Solver {
+class SmithrilSolver : public Solver {
 public:
   /// SmithrilSolver - Construct a new SmithrilSolver.
-  SmithrilCompleteSolver();
+  SmithrilSolver();
+  std::string getConstraintLog(const Query &) final;
 };
 
 class SmithrilTreeSolver : public Solver {

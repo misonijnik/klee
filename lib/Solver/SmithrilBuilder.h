@@ -16,13 +16,13 @@
 #include "llvm/ADT/APFloat.h"
 
 #include <bitwuzla/cpp/bitwuzla.h>
-#include <smithril.h> 
+// #include <smithril.h>
 #include <unordered_map>
 
-// namespace smithril {
-// #include <smithril.h>
-// }
-//mixa117
+namespace smithril {
+#include <smithril.h>
+}
+// mixa117
 
 using namespace bitwuzla;
 
@@ -38,6 +38,17 @@ public:
   void clearUpdates();
 };
 
+struct SmithrilTermHash {
+  unsigned operator()(const smithril::SmithrilTerm &e) const {
+    return (unsigned long)(e._0);
+  }
+};
+
+struct SmithrilTermCmp {
+  bool operator()(const smithril::SmithrilTerm &a, const smithril::SmithrilTerm &b) const {
+    return a._0 == b._0;
+  }
+};
 class SmithrilBuilder {
 private:
   void FPCastWidthAssert(int *width_out, char const *msg);
@@ -95,14 +106,14 @@ protected:
   Term getArrayForUpdate(const Array *root, const UpdateNode *un);
 
   Term constructActual(ref<Expr> e, int *width_out);
-  SmithrilTerm construct(ref<Expr> e, int *width_out);
+  smithril::SmithrilTerm construct(ref<Expr> e, int *width_out);
   Term buildArray(const char *name, unsigned indexWidth, unsigned valueWidth);
   Term buildConstantArray(const char *name, unsigned indexWidth,
                           unsigned valueWidth, unsigned value);
 
   Sort getBoolSort();
   Sort getBvSort(unsigned width);
-  SmithrilSort getBvSortNew(unsigned width);
+  smithril::SmithrilSort getBvSortNew(unsigned width);
   Sort getArraySort(Sort domainSort, Sort rangeSort);
 
   std::pair<unsigned, unsigned> getFloatSortFromBitWidth(unsigned bitWidth);
@@ -119,6 +130,7 @@ protected:
   bool autoClearConstructCache;
 
 public:
+  smithril::SmithrilContext ctx;
   std::unordered_map<const Array *, std::vector<Term>>
       constant_array_assertions;
   // These are additional constraints that are generated during the
@@ -132,10 +144,10 @@ public:
   Term getTrue();
   Term getFalse();
   Term buildFreshBoolConst();
-  SmithrilTerm getInitialRead(const Array *os, unsigned index);
+  smithril::SmithrilTerm getInitialRead(const Array *os, unsigned index);
 
-  SmithrilTerm construct(ref<Expr> e) {
-    SmithrilTerm res = construct(std::move(e), nullptr);
+  smithril::SmithrilTerm construct(ref<Expr> e) {
+    smithril::SmithrilTerm res = construct(std::move(e), nullptr);
     if (autoClearConstructCache)
       clearConstructCache();
     return res;

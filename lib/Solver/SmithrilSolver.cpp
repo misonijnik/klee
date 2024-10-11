@@ -29,15 +29,14 @@
 
 #include "llvm/Support/ErrorHandling.h"
 
+namespace smithril {
+#include <smithril.h>
+}
+
 #include <csignal>
 #include <cstdarg>
 #include <functional>
 #include <optional>
-
-#include "smithril.h"
-namespace smithril {
-#include "smithril.h"
-}
 
 namespace {
 llvm::cl::opt<unsigned> SmithrilVerbosityLevel(
@@ -53,55 +52,17 @@ void signal_handler(int) { interrupted = true; }
 } // namespace
 
 namespace klee {
-class Terminator { // mixa117 terminator??
-public:
-  /** Destructor. */
-  virtual ~Terminator();
-  /**
-   * Termination function.
-   * If terminator has been connected, SMITHRIL calls this function periodically
-   * to determine if the connected instance should be terminated.
-   * @return True if the associated instance of SMITHRIL should be terminated.
-   */
-  virtual bool terminate() = 0;
-};
-class SmithrilTerminator : public Terminator {
-private:
-  uint64_t time_limit_micro;
-  time::Point start;
 
-  bool _isTimeout = false;
-
-public:
-  SmithrilTerminator(uint64_t);
-  bool terminate() override;
-
-  bool isTimeout() const { return _isTimeout; }
-};
-
-SmithrilTerminator::SmithrilTerminator(uint64_t time_limit_micro)
-    : Terminator(), time_limit_micro(time_limit_micro),
-      start(time::getWallTime()) {}
-
-bool SmithrilTerminator::terminate() {
-  time::Point end = time::getWallTime();
-  if ((end - start).toMicroseconds() >= time_limit_micro) {
-    _isTimeout = true;
-    return true;
-  }
-  if (interrupted) {
-    return true;
-  }
-  return false;
-}
-
-// mixa117 z3 has more here, why?
 using ConstraintFrames = inc_vector<ref<Expr>>;
-using ExprIncMap = inc_umap<SmithrilTerm, ref<Expr>>;
-using SmithrilASTIncMap = inc_umap<SmithrilTerm, SmithrilTerm>;
+using ExprIncMap = inc_umap<smithril::SmithrilTerm, ref<Expr>, SmithrilTermHash,
+                            SmithrilTermCmp>;
+using SmithrilASTIncMap =
+    inc_umap<smithril::SmithrilTerm, smithril::SmithrilTerm, SmithrilTermHash,
+             SmithrilTermCmp>;
 using ExprIncSet =
     inc_uset<ref<Expr>, klee::util::ExprHash, klee::util::ExprCmp>;
-using SmithrilASTIncSet = inc_uset<SmithrilTerm>;
+using SmithrilASTIncSet =
+    inc_uset<smithril::SmithrilTerm, SmithrilTermHash, SmithrilTermCmp>;
 
 void dump(const ConstraintFrames &frames) {
   llvm::errs() << "frame sizes:";
@@ -176,12 +137,13 @@ struct SmithrilSolverEnv {
   using arr_vec = std::vector<const Array *>;
   inc_vector<const Array *> objects;
   arr_vec objectsForGetModel;
+  inc_vector<smithril::SmithrilTerm> smithril_ast_expr_constraints;
   ExprIncMap smithril_ast_expr_to_klee_expr;
   SmithrilASTIncSet expr_to_track;
   inc_umap<const Array *, ExprHashSet> usedArrayBytes;
   ExprIncSet symbolicObjects;
 
-  explicit SmithrilSolverEnv() = default;  //mixa117 - wtf?
+  explicit SmithrilSolverEnv() = default;
   explicit SmithrilSolverEnv(const arr_vec &objects);
 
   void pop(size_t popSize);
@@ -191,7 +153,7 @@ struct SmithrilSolverEnv {
   const arr_vec *getObjectsForGetModel(ObjectAssignment oa) const;
 };
 
-SmithrilSolverEnv::SmithrilSolverEnv(const arr_vec &objects) // mixa117 - why?
+SmithrilSolverEnv::SmithrilSolverEnv(const arr_vec &objects)
     : objectsForGetModel(objects) {}
 
 void SmithrilSolverEnv::pop(size_t popSize) {
@@ -239,7 +201,7 @@ SmithrilSolverEnv::getObjectsForGetModel(ObjectAssignment oa) const {
 class SmithrilSolverImpl : public SolverImpl {
 protected:
   std::unique_ptr<SmithrilBuilder> builder;
-  SmithrilOptions solverParameters;
+  smithril::SmithrilOptions solverParameters;
 
 private:
   time::Span timeout;
@@ -251,17 +213,18 @@ private:
                          ValidityCore *validityCore, bool &hasSolution);
 
   SolverImpl::SolverRunStatus handleSolverResponse(
-      SmithrilSolver &theSolver, SolverResult satisfiable,
+      smithril::SmithrilSolver theSolver, smithril::SolverResult satisfiable,
       const SmithrilSolverEnv &env, ObjectAssignment needObjects,
       std::vector<SparseStorageImpl<unsigned char>> *values, bool &hasSolution);
 
 protected:
   SmithrilSolverImpl();
 
-  virtual SmithrilSolver &initNativeSmithril(const ConstraintQuery &query,
-                                             SmithrilASTIncSet &assertions) = 0;
-  virtual void deinitNativeSmithril(SmithrilSolver &theSolver) = 0;
-  virtual void push(SmithrilSolver &s) = 0;
+  virtual smithril::SmithrilSolver
+  initNativeSmithril(const ConstraintQuery &query,
+                     SmithrilASTIncSet &assertions) = 0;
+  virtual void deinitNativeSmithril(smithril::SmithrilSolver theSolver) = 0;
+  virtual void push(smithril::SmithrilSolver s) = 0;
 
   bool computeTruth(const ConstraintQuery &, SmithrilSolverEnv &env,
                     bool &isValid);
@@ -281,12 +244,10 @@ public:
   SolverImpl::SolverRunStatus getOperationStatusCode() final;
   void setCoreSolverTimeout(time::Span _timeout) final { timeout = _timeout; }
   void enableUnsatCore() {
-    solverParameters.set(Option::PRODUCE_UNSAT_CORES,
-                         true); // mixa117 no such thing?
+    smithril::smithril_set_produce_unsat_core(solverParameters, true);
   }
   void disableUnsatCore() {
-    solverParameters.set(Option::PRODUCE_UNSAT_CORES,
-                         false); // mixa117 no such thing?
+    smithril::smithril_set_produce_unsat_core(solverParameters, false);
   }
 
   // pass virtual functions to children
@@ -297,8 +258,8 @@ public:
   using SolverImpl::computeValue;
 };
 
-void deleteNativeSmithril(std::optional<SmithrilSolver> &theSolver) {
-  theSolver.reset(); // mixa117 not native??
+void deleteNativeSmithril(smithril::SmithrilSolver theSolver) {
+  smithril::smithril_delete_solver(theSolver);
 }
 
 SmithrilSolverImpl::SmithrilSolverImpl()
@@ -306,8 +267,6 @@ SmithrilSolverImpl::SmithrilSolverImpl()
   builder = std::unique_ptr<SmithrilBuilder>(new SmithrilBuilder(
       /*autoClearConstructCache=*/false));
   assert(builder && "unable to create SmithrilBuilder");
-
-  solverParameters.set(Option::PRODUCE_MODELS, true); // mixa117 no such thing?
 
   setCoreSolverTimeout(timeout);
 
@@ -318,20 +277,19 @@ SmithrilSolverImpl::SmithrilSolverImpl()
   }
 
   // Set verbosity
-  if (SmithrilVerbosityLevel > 0) {
-    solverParameters.set(Option::VERBOSITY,
-                         SmithrilVerbosityLevel); // mixa117 no such thing?
-  }
+  // if (SmithrilVerbosityLevel > 0) {
+  //   solverParameters.set(Option::VERBOSITY,
+  //                        SmithrilVerbosityLevel); // mixa117 no such thing?
+  // }
 
-  if (SmithrilVerbosityLevel) {
-    solverParameters.set(Option::DBG_CHECK_MODEL,
-                         true); // mixa117 no such thing?
-  }
+  // if (SmithrilVerbosityLevel) {
+  //   solverParameters.set(Option::DBG_CHECK_MODEL,
+  //                        true); // mixa117 no such thing?
+  // }
 }
 
-std::string SmithrilSolverImpl::getConstraintLog(const Query &query) {
-
-  return impl->getConstraintLog(query); // mixa117 - works in z3 not here?
+std::string SmithrilSolver::getConstraintLog(const Query &query) {
+  return impl->getConstraintLog(query);
 }
 
 bool SmithrilSolverImpl::computeTruth(const ConstraintQuery &query,
@@ -410,8 +368,7 @@ bool SmithrilSolverImpl::internalRunSolver(
   runStatusCode = SolverImpl::SOLVER_RUN_STATUS_FAILURE;
 
   std::unordered_set<const Array *> all_constant_arrays_in_query;
-  SmithrilASTIncSet
-      exprs; // mixa117 - why not working? (no distructor for SmithrilTerm?)
+  SmithrilASTIncSet exprs;
 
   for (size_t i = 0; i < query.constraints.framesSize();
        i++, env.push(), exprs.push()) {
@@ -428,7 +385,8 @@ bool SmithrilSolverImpl::internalRunSolver(
               cs_ite = query.constraints.end(i);
          cs_it != cs_ite; cs_it++) {
       const auto &constraint = *cs_it;
-      SmithrilTerm smithrilConstraint = builder->construct(constraint);
+      smithril::SmithrilTerm smithrilConstraint =
+          builder->construct(constraint);
       if (ProduceUnsatCore && validityCore) {
         env.smithril_ast_expr_to_klee_expr.insert(
             {smithrilConstraint, constraint});
@@ -468,47 +426,35 @@ bool SmithrilSolverImpl::internalRunSolver(
   if (!env.objects.v.empty())
     ++stats::queryCounterexamples;
 
-  // Prepare signal handler and terminator fot bitwuzla
-  auto timeoutInMicroSeconds = static_cast<uint64_t>(timeout.toMicroseconds());
-  if (!timeoutInMicroSeconds)
-    timeoutInMicroSeconds = UINT_MAX;
-  SmithrilTerminator terminator(timeoutInMicroSeconds);
-
   struct sigaction action {};
   struct sigaction old_action {};
   action.sa_handler = signal_handler;
   action.sa_flags = 0;
   sigaction(SIGINT, &action, &old_action);
 
-  SmithrilSolver &theSolver = initNativeSmithril(query, exprs);
-  //   theSolver.configure_terminator(&terminator); //mixa117 ??? (probably redo
-  //   as z3)
+  smithril::SmithrilSolver theSolver = initNativeSmithril(query, exprs);
 
   for (size_t i = 0; i < exprs.framesSize(); i++) {
     push(theSolver);
     for (auto it = exprs.begin(i), ie = exprs.end(i); it != ie; ++it) {
-      smithril_assert(theSolver, (*it));
+      smithril::smithril_assert(theSolver, (*it));
     }
   }
 
-  SolverResult satisfiable = smithril_check_sat(theSolver);
+  smithril::SolverResult satisfiable = smithril_check_sat(theSolver);
 
-  //   theSolver.configure_terminator(nullptr);
-  //   mixa117???
   runStatusCode = handleSolverResponse(theSolver, satisfiable, env, needObjects,
                                        values, hasSolution);
   sigaction(SIGINT, &old_action, nullptr);
 
   if (runStatusCode == SolverImpl::SOLVER_RUN_STATUS_FAILURE) {
-    if (terminator.isTimeout()) {
-      runStatusCode = SolverImpl::SOLVER_RUN_STATUS_TIMEOUT;
-    }
     if (interrupted) {
       runStatusCode = SolverImpl::SOLVER_RUN_STATUS_INTERRUPTED;
     }
   }
 
-  // if (ProduceUnsatCore && validityCore && satisfiable == SolverResult::Unsat) {
+  // if (ProduceUnsatCore && validityCore && satisfiable == SolverResult::Unsat)
+  // {
 
   //   const SmithrilTermVector smithril_unsat_core_vec =
   //       smithril_unsat_core(theSolver);
@@ -534,51 +480,48 @@ bool SmithrilSolverImpl::internalRunSolver(
   //   stats::validityCoresSize += smithril_unsat_core_vec.size();
   //   ++stats::queryValidityCores;
   // }
-  //mixa117 redo that part above as z3 below 
-  //   if (ProduceUnsatCore && validityCore && satisfiable == SolverResult::Unsat) {
-  //   constraints_ty unsatCore;
-  //   const SmithrilTermVector smithril_unsat_core_vec =
-  //       smithril_unsat_core(theSolver);
-  //   smithril_ast_vector_inc_ref(smithril_unsat_core_vec); //mixa117 we dont have that?
+  // mixa117 redo that part above as z3 below
+  if (ProduceUnsatCore && validityCore &&
+      satisfiable == smithril::SolverResult::Unsat) {
+    constraints_ty unsatCore;
+    const smithril::SmithrilTermVector smithril_unsat_core_vec =
+        smithril_unsat_core(theSolver);
+    unsigned size = smithril_unsat_core_size(smithril_unsat_core_vec);
 
-  //   // unsigned size = Z3_ast_vector_size(builder->ctx, z3_unsat_core);
-  //   unsigned size = smithril_unsat_core_size(smithril_unsat_core_vec);  //mixa117 ok?
+    std::unordered_set<smithril::SmithrilTerm, SmithrilTermHash,
+                       SmithrilTermCmp>
+        smithril_ast_expr_unsat_core;
 
-  //   // std::unordered_set<Z3ASTHandle, Z3ASTHandleHash, Z3ASTHandleCmp>
-  //   //     z3_ast_expr_unsat_core;
-  //   constraints_ty unsatCore; 
+    for (unsigned index = 0; index < size; ++index) {
+      smithril::SmithrilTerm constraint = smithril::smithril_unsat_core_get(
+          builder->ctx, smithril_unsat_core_vec, index);
+      smithril_ast_expr_unsat_core.insert(constraint);
+    }
 
-  //   for (unsigned index = 0; index < size; ++index) {
-  //     Z3ASTHandle constraint = Z3ASTHandle(
-  //         Z3_ast_vector_get(builder->ctx, z3_unsat_core, index), builder->ctx);
-  //     z3_ast_expr_unsat_core.insert(constraint);
-  //   }
+    for (const auto &z3_constraint : env.smithril_ast_expr_constraints.v) {
+      if (smithril_ast_expr_unsat_core.find(z3_constraint) !=
+          smithril_ast_expr_unsat_core.end()) {
+        ref<Expr> constraint =
+            env.smithril_ast_expr_to_klee_expr[z3_constraint];
+        if (Expr::createIsZero(constraint) != query.getOriginalQueryExpr()) {
+          unsatCore.insert(constraint);
+        }
+      }
+    }
 
-  //   for (const auto &z3_constraint : env.z3_ast_expr_constraints.v) {
-  //     if (z3_ast_expr_unsat_core.find(z3_constraint) !=
-  //         z3_ast_expr_unsat_core.end()) {
-  //       ref<Expr> constraint = env.z3_ast_expr_to_klee_expr[z3_constraint];
-  //       if (Expr::createIsZero(constraint) != query.getOriginalQueryExpr()) {
-  //         unsatCore.insert(constraint);
-  //       }
-  //     }
-  //   }
-  //   assert(validityCore && "validityCore cannot be nullptr");
-  //   *validityCore = ValidityCore(unsatCore, query.getOriginalQueryExpr());
+    assert(validityCore && "validityCore cannot be nullptr");
+    *validityCore = ValidityCore(unsatCore, query.getOriginalQueryExpr());
 
-  //   Z3_ast_vector assertions =
-  //       Z3_solver_get_assertions(builder->ctx, theSolver);
-  //   Z3_ast_vector_inc_ref(builder->ctx, assertions);
-  //   unsigned assertionsCount = Z3_ast_vector_size(builder->ctx, assertions);
+    // Z3_ast_vector assertions =
+    //     Z3_solver_get_assertions(builder->ctx, theSolver);
+    // Z3_ast_vector_inc_ref(builder->ctx, assertions);
+    // unsigned assertionsCount = Z3_ast_vector_size(builder->ctx, assertions);
+    unsigned assertionsCount = 0; // mixa117 impl smithril_solver_get_assertions
 
-  //   stats::validQueriesSize += assertionsCount;
-  //   stats::validityCoresSize += size;
-  //   ++stats::queryValidityCores;
-
-  //   Z3_ast_vector_dec_ref(builder->ctx, z3_unsat_core);
-  //   Z3_ast_vector_dec_ref(builder->ctx, assertions);
-  // }
-
+    stats::validQueriesSize += assertionsCount;
+    stats::validityCoresSize += size;
+    ++stats::queryValidityCores;
+  }
 
   deinitNativeSmithril(theSolver);
 
@@ -606,11 +549,11 @@ bool SmithrilSolverImpl::internalRunSolver(
 
 // mixa117 version from bitwuzla (not good), z3 is bad too(have models we don't)
 SolverImpl::SolverRunStatus SmithrilSolverImpl::handleSolverResponse(
-    SmithrilSolver &theSolver, SolverResult satisfiable,
+    smithril::SmithrilSolver theSolver, smithril::SolverResult satisfiable,
     const SmithrilSolverEnv &env, ObjectAssignment needObjects,
     std::vector<SparseStorageImpl<unsigned char>> *values, bool &hasSolution) {
   switch (satisfiable) {
-  case SolverResult::Sat: {
+  case smithril::SolverResult::Sat: {
     hasSolution = true;
     auto objects = env.getObjectsForGetModel(needObjects);
     if (!objects) {
@@ -627,25 +570,23 @@ SolverImpl::SolverRunStatus SmithrilSolverImpl::handleSolverResponse(
       if (env.usedArrayBytes.count(array)) {
         std::unordered_set<uint64_t> offsetValues;
         for (const ref<Expr> &offsetExpr : env.usedArrayBytes.at(array)) {
-          SmithrilTerm arrayElementOffsetExpr =
-              theSolver.get_value( // mixa117 we dont have that?
-                  builder->construct(offsetExpr));
+          std::string arrayElementOffsetExpr = smithril::smithril_eval(
+              theSolver, builder->construct(offsetExpr));
 
-          uint64_t concretizedOffsetValue =
-              std::stoull(arrayElementOffsetExpr.value<std::string>(
-                  10)); // mixa117 we dont have that?
+          uint64_t concretizedOffsetValue = std::stoull(arrayElementOffsetExpr);
+          // mixa117 works if eval return in decimal str (not binary?)
           offsetValues.insert(concretizedOffsetValue);
         }
 
         for (unsigned offset : offsetValues) {
           // We can't use Term here so have to do ref counting manually
-          SmithrilTerm initial_read = builder->getInitialRead(array, offset);
-          SmithrilTerm initial_read_expr =
-              theSolver.get_value(initial_read); // mixa117 we dont have that?
+          smithril::SmithrilTerm initial_read =
+              builder->getInitialRead(array, offset);
 
-          uint64_t arrayElementValue =
-              std::stoull(initial_read_expr.value<std::string>(
-                  10)); // mixa117 we dont have that?
+          std::string initial_read_expr =
+              smithril::smithril_eval(theSolver, initial_read);
+
+          uint64_t arrayElementValue = std::stoull(initial_read_expr);
           data.store(offset, arrayElementValue);
         }
       }
@@ -657,10 +598,10 @@ SolverImpl::SolverRunStatus SmithrilSolverImpl::handleSolverResponse(
 
     return SolverImpl::SOLVER_RUN_STATUS_SUCCESS_SOLVABLE;
   }
-  case SolverResult::Unsat:
+  case smithril::SolverResult::Unsat:
     hasSolution = false;
     return SolverImpl::SOLVER_RUN_STATUS_SUCCESS_UNSOLVABLE;
-  case SolverResult::Unknown: {
+  case smithril::SolverResult::Unknown: {
     return SolverImpl::SOLVER_RUN_STATUS_FAILURE;
   }
   default:
@@ -674,23 +615,26 @@ SolverImpl::SolverRunStatus SmithrilSolverImpl::getOperationStatusCode() {
 
 class SmithrilNonIncSolverImpl final : public SmithrilSolverImpl {
 private:
-  std::optional<SmithrilSolver> theSolver;
-
 public:
   SmithrilNonIncSolverImpl() = default;
 
   /// implementation of BitwuzlaSolverImpl interface
-  SmithrilSolver &initNativeSmithril(const ConstraintQuery &,
-                                     SmithrilASTIncSet &) override {
-    theSolver.emplace(solverParameters); // mixa117 todo!
-    return theSolver.value();
+  smithril::SmithrilSolver initNativeSmithril(const ConstraintQuery &,
+                                              SmithrilASTIncSet &) override {
+    auto ctx = builder->ctx;
+
+    // smithril::SmithrilSolver theSolver = smithril::smithril_new_solver(ctx,
+    // solverParameters);
+    // mixa117 uncomment when solverParameters ready
+    smithril::SmithrilSolver theSolver = smithril::smithril_new_solver(ctx);
+    return theSolver;
   }
 
-  void deinitNativeSmithril(SmithrilSolver &) override {
+  void deinitNativeSmithril(smithril::SmithrilSolver theSolver) override {
     deinitNativeSmithril(theSolver); // mixa117 why?
   }
 
-  void push(SmithrilSolver &) override {}
+  void push(smithril::SmithrilSolver) override {}
 
   /// implementation of the SolverImpl interface
   bool computeTruth(const Query &query, bool &isValid) override {
@@ -726,7 +670,7 @@ public:
   void notifyStateTermination(std::uint32_t) override {}
 };
 
-SmithrilCompleteSolver::SmithrilCompleteSolver()
+SmithrilSolver::SmithrilSolver()
     : Solver(std::make_unique<SmithrilNonIncSolverImpl>()) {}
 
 struct ConstraintDistance {

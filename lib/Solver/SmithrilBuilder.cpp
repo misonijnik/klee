@@ -9,7 +9,8 @@
 //===----------------------------------------------------------------------===//
 #include "klee/Config/config.h"
 
-#ifdef ENABLE_SMITHRIL
+// #ifdef ENABLE_SMITHRIL
+// mixa117 uncomment later
 
 #include "BitwuzlaHashConfig.h"
 #include "SmithrilBuilder.h"
@@ -35,7 +36,9 @@ void BitwuzlaArrayExprHash::clear() {
 void BitwuzlaArrayExprHash::clearUpdates() { _update_node_hash.clear(); }
 
 SmithrilBuilder::SmithrilBuilder(bool autoClearConstructCache)
-    : autoClearConstructCache(autoClearConstructCache) {}
+    : autoClearConstructCache(autoClearConstructCache) {
+  ctx = smithril::smithril_new_context();
+}
 
 SmithrilBuilder::~SmithrilBuilder() {
   _arr_hash.clearUpdates();
