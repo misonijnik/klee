@@ -16,11 +16,13 @@
 #include "llvm/ADT/APFloat.h"
 
 #include <bitwuzla/cpp/bitwuzla.h>
+#include <smithril.h> 
 #include <unordered_map>
 
-namespace smithril {
-#include <smithril.h>
-}
+// namespace smithril {
+// #include <smithril.h>
+// }
+//mixa117
 
 using namespace bitwuzla;
 
@@ -93,14 +95,14 @@ protected:
   Term getArrayForUpdate(const Array *root, const UpdateNode *un);
 
   Term constructActual(ref<Expr> e, int *width_out);
-  Term construct(ref<Expr> e, int *width_out);
+  SmithrilTerm construct(ref<Expr> e, int *width_out);
   Term buildArray(const char *name, unsigned indexWidth, unsigned valueWidth);
   Term buildConstantArray(const char *name, unsigned indexWidth,
                           unsigned valueWidth, unsigned value);
 
   Sort getBoolSort();
   Sort getBvSort(unsigned width);
-  smithril::SmithrilSort getBvSortNew(unsigned width);
+  SmithrilSort getBvSortNew(unsigned width);
   Sort getArraySort(Sort domainSort, Sort rangeSort);
 
   std::pair<unsigned, unsigned> getFloatSortFromBitWidth(unsigned bitWidth);
@@ -130,10 +132,10 @@ public:
   Term getTrue();
   Term getFalse();
   Term buildFreshBoolConst();
-  Term getInitialRead(const Array *os, unsigned index);
+  SmithrilTerm getInitialRead(const Array *os, unsigned index);
 
-  Term construct(ref<Expr> e) {
-    Term res = construct(std::move(e), nullptr);
+  SmithrilTerm construct(ref<Expr> e) {
+    SmithrilTerm res = construct(std::move(e), nullptr);
     if (autoClearConstructCache)
       clearConstructCache();
     return res;

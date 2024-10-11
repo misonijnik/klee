@@ -1,20 +1,20 @@
-#ifndef BITWUZLASOLVER_H_
-#define BITWUZLASOLVER_H_
+#ifndef SMITHRILSOLVER_H_
+#define SMITHRILSOLVER_H_  
 
 #include "klee/Solver/Solver.h"
 
 namespace klee {
 
-/// BitwuzlaSolver - A complete solver based on Bitwuzla
-class BitwuzlaSolver : public Solver {
+/// SmithrilCompleteSolver - A complete solver based on Smithril
+class SmithrilCompleteSolver : public Solver {
 public:
-  /// BitwuzlaSolver - Construct a new BitwuzlaSolver.
-  BitwuzlaSolver();
+  /// SmithrilSolver - Construct a new SmithrilSolver.
+  SmithrilCompleteSolver();
 };
 
-class BitwuzlaTreeSolver : public Solver {
+class SmithrilTreeSolver : public Solver {
 public:
-  BitwuzlaTreeSolver(unsigned maxSolvers);
+  SmithrilTreeSolver(unsigned maxSolvers);
 };
 
 } // namespace klee

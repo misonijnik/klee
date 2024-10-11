@@ -1,5 +1,5 @@
 
-//===-- BitwuzlaSolver.cpp ---------------------------------------*-C++-*-====//
+//===-- SmithrilSolver.cpp ---------------------------------------*-C++-*-====//
 //
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -13,10 +13,8 @@
 #include "klee/Solver/SolverStats.h"
 #include "klee/Statistics/TimerStatIncrementer.h"
 
-#ifdef ENABLE_BITWUZLA
-
-#include "BitwuzlaBuilder.h"
-#include "BitwuzlaSolver.h"
+#include "SmithrilBuilder.h"
+#include "SmithrilSolver.h"
 
 #include "klee/ADT/Incremental.h"
 #include "klee/ADT/SparseStorage.h"
@@ -29,34 +27,24 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include "llvm/Support/ErrorHandling.h"
+
 #include <csignal>
+#include <cstdarg>
 #include <functional>
 #include <optional>
 
-#include "bitwuzla/cpp/bitwuzla.h"
-
+#include "smithril.h"
 namespace smithril {
 #include "smithril.h"
 }
 
 namespace {
-// NOTE: Very useful for debugging Bitwuzla behaviour. These files can be given
-// to the Bitwuzla binary to replay all Bitwuzla API calls using its `-log`
-// option.
-
-llvm::cl::opt<bool> BitwuzlaValidateModels(
-    "debug-bitwuzla-validate-models", llvm::cl::init(false),
-    llvm::cl::desc(
-        "When generating Bitwuzla models validate these against the query"),
+llvm::cl::opt<unsigned> SmithrilVerbosityLevel(
+    "debug-smithril-verbosity", llvm::cl::init(0),
+    llvm::cl::desc("smithril verbosity level (default=0)"),
     llvm::cl::cat(klee::SolvingCat));
-
-llvm::cl::opt<unsigned> BitwuzlaVerbosityLevel(
-    "debug-bitwuzla-verbosity", llvm::cl::init(0),
-    llvm::cl::desc("Bitwuzla verbosity level (default=0)"),
-    llvm::cl::cat(klee::SolvingCat));
-} // namespace
-
-#include "llvm/Support/ErrorHandling.h"
+}
 
 namespace {
 bool interrupted = false;
@@ -65,8 +53,19 @@ void signal_handler(int) { interrupted = true; }
 } // namespace
 
 namespace klee {
-
-class BitwuzlaTerminator : public bitwuzla::Terminator {
+class Terminator { // mixa117 terminator??
+public:
+  /** Destructor. */
+  virtual ~Terminator();
+  /**
+   * Termination function.
+   * If terminator has been connected, SMITHRIL calls this function periodically
+   * to determine if the connected instance should be terminated.
+   * @return True if the associated instance of SMITHRIL should be terminated.
+   */
+  virtual bool terminate() = 0;
+};
+class SmithrilTerminator : public Terminator {
 private:
   uint64_t time_limit_micro;
   time::Point start;
@@ -74,17 +73,17 @@ private:
   bool _isTimeout = false;
 
 public:
-  BitwuzlaTerminator(uint64_t);
+  SmithrilTerminator(uint64_t);
   bool terminate() override;
 
   bool isTimeout() const { return _isTimeout; }
 };
 
-BitwuzlaTerminator::BitwuzlaTerminator(uint64_t time_limit_micro)
+SmithrilTerminator::SmithrilTerminator(uint64_t time_limit_micro)
     : Terminator(), time_limit_micro(time_limit_micro),
       start(time::getWallTime()) {}
 
-bool BitwuzlaTerminator::terminate() {
+bool SmithrilTerminator::terminate() {
   time::Point end = time::getWallTime();
   if ((end - start).toMicroseconds() >= time_limit_micro) {
     _isTimeout = true;
@@ -96,14 +95,25 @@ bool BitwuzlaTerminator::terminate() {
   return false;
 }
 
+// mixa117 z3 has more here, why?
 using ConstraintFrames = inc_vector<ref<Expr>>;
-using ExprIncMap = inc_umap<Term, ref<Expr>>;
-using BitwuzlaASTIncMap = inc_umap<Term, Term>;
+using ExprIncMap = inc_umap<SmithrilTerm, ref<Expr>>;
+using SmithrilASTIncMap = inc_umap<SmithrilTerm, SmithrilTerm>;
 using ExprIncSet =
     inc_uset<ref<Expr>, klee::util::ExprHash, klee::util::ExprCmp>;
-using BitwuzlaASTIncSet = inc_uset<Term>;
+using SmithrilASTIncSet = inc_uset<SmithrilTerm>;
 
-extern void dump(const ConstraintFrames &);
+void dump(const ConstraintFrames &frames) {
+  llvm::errs() << "frame sizes:";
+  for (auto size : frames.frame_sizes) {
+    llvm::errs() << " " << size;
+  }
+  llvm::errs() << "\n";
+  llvm::errs() << "frames:\n";
+  for (auto &x : frames.v) {
+    llvm::errs() << x->toString() << "\n";
+  }
+}
 
 class ConstraintQuery {
 private:
@@ -113,7 +123,7 @@ private:
 public:
   // KLEE Queries are validity queries i.e.
   // ∀ X Constraints(X) → query(X)
-  // but Bitwuzla works in terms of satisfiability so instead we ask the
+  // but Smithril works in terms of satisfiability so instead we ask the
   // negation of the equivalent i.e.
   // ∃ X Constraints(X) ∧ ¬ query(X)
   // so this `constraints` field contains: Constraints(X) ∧ ¬ query(X)
@@ -162,17 +172,17 @@ enum class ObjectAssignment {
   NeededForObjectsFromQuery
 };
 
-struct BitwuzlaSolverEnv {
+struct SmithrilSolverEnv {
   using arr_vec = std::vector<const Array *>;
   inc_vector<const Array *> objects;
   arr_vec objectsForGetModel;
-  ExprIncMap bitwuzla_ast_expr_to_klee_expr;
-  BitwuzlaASTIncSet expr_to_track;
+  ExprIncMap smithril_ast_expr_to_klee_expr;
+  SmithrilASTIncSet expr_to_track;
   inc_umap<const Array *, ExprHashSet> usedArrayBytes;
   ExprIncSet symbolicObjects;
 
-  explicit BitwuzlaSolverEnv() = default;
-  explicit BitwuzlaSolverEnv(const arr_vec &objects);
+  explicit SmithrilSolverEnv() = default;  //mixa117 - wtf?
+  explicit SmithrilSolverEnv(const arr_vec &objects);
 
   void pop(size_t popSize);
   void push();
@@ -181,39 +191,39 @@ struct BitwuzlaSolverEnv {
   const arr_vec *getObjectsForGetModel(ObjectAssignment oa) const;
 };
 
-BitwuzlaSolverEnv::BitwuzlaSolverEnv(const arr_vec &objects)
+SmithrilSolverEnv::SmithrilSolverEnv(const arr_vec &objects) // mixa117 - why?
     : objectsForGetModel(objects) {}
 
-void BitwuzlaSolverEnv::pop(size_t popSize) {
+void SmithrilSolverEnv::pop(size_t popSize) {
   if (popSize == 0)
     return;
   objects.pop(popSize);
   objectsForGetModel.clear();
-  bitwuzla_ast_expr_to_klee_expr.pop(popSize);
+  smithril_ast_expr_to_klee_expr.pop(popSize);
   expr_to_track.pop(popSize);
   usedArrayBytes.pop(popSize);
   symbolicObjects.pop(popSize);
 }
 
-void BitwuzlaSolverEnv::push() {
+void SmithrilSolverEnv::push() {
   objects.push();
-  bitwuzla_ast_expr_to_klee_expr.push();
+  smithril_ast_expr_to_klee_expr.push();
   expr_to_track.push();
   usedArrayBytes.push();
   symbolicObjects.push();
 }
 
-void BitwuzlaSolverEnv::clear() {
+void SmithrilSolverEnv::clear() {
   objects.clear();
   objectsForGetModel.clear();
-  bitwuzla_ast_expr_to_klee_expr.clear();
+  smithril_ast_expr_to_klee_expr.clear();
   expr_to_track.clear();
   usedArrayBytes.clear();
   symbolicObjects.clear();
 }
 
-const BitwuzlaSolverEnv::arr_vec *
-BitwuzlaSolverEnv::getObjectsForGetModel(ObjectAssignment oa) const {
+const SmithrilSolverEnv::arr_vec *
+SmithrilSolverEnv::getObjectsForGetModel(ObjectAssignment oa) const {
   switch (oa) {
   case ObjectAssignment::NotNeeded:
     return nullptr;
@@ -226,44 +236,44 @@ BitwuzlaSolverEnv::getObjectsForGetModel(ObjectAssignment oa) const {
   }
 }
 
-class BitwuzlaSolverImpl : public SolverImpl {
+class SmithrilSolverImpl : public SolverImpl {
 protected:
-  std::unique_ptr<BitwuzlaBuilder> builder;
-  Options solverParameters;
+  std::unique_ptr<SmithrilBuilder> builder;
+  SmithrilOptions solverParameters;
 
 private:
   time::Span timeout;
   SolverImpl::SolverRunStatus runStatusCode;
 
-  bool internalRunSolver(const ConstraintQuery &query, BitwuzlaSolverEnv &env,
+  bool internalRunSolver(const ConstraintQuery &query, SmithrilSolverEnv &env,
                          ObjectAssignment needObjects,
                          std::vector<SparseStorageImpl<unsigned char>> *values,
                          ValidityCore *validityCore, bool &hasSolution);
 
   SolverImpl::SolverRunStatus handleSolverResponse(
-      Bitwuzla &theSolver, Result satisfiable, const BitwuzlaSolverEnv &env,
-      ObjectAssignment needObjects,
+      SmithrilSolver &theSolver, SolverResult satisfiable,
+      const SmithrilSolverEnv &env, ObjectAssignment needObjects,
       std::vector<SparseStorageImpl<unsigned char>> *values, bool &hasSolution);
 
 protected:
-  BitwuzlaSolverImpl();
+  SmithrilSolverImpl();
 
-  virtual Bitwuzla &initNativeBitwuzla(const ConstraintQuery &query,
-                                       BitwuzlaASTIncSet &assertions) = 0;
-  virtual void deinitNativeBitwuzla(Bitwuzla &theSolver) = 0;
-  virtual void push(Bitwuzla &s) = 0;
+  virtual SmithrilSolver &initNativeSmithril(const ConstraintQuery &query,
+                                             SmithrilASTIncSet &assertions) = 0;
+  virtual void deinitNativeSmithril(SmithrilSolver &theSolver) = 0;
+  virtual void push(SmithrilSolver &s) = 0;
 
-  bool computeTruth(const ConstraintQuery &, BitwuzlaSolverEnv &env,
+  bool computeTruth(const ConstraintQuery &, SmithrilSolverEnv &env,
                     bool &isValid);
-  bool computeValue(const ConstraintQuery &, BitwuzlaSolverEnv &env,
+  bool computeValue(const ConstraintQuery &, SmithrilSolverEnv &env,
                     ref<Expr> &result);
   bool
-  computeInitialValues(const ConstraintQuery &, BitwuzlaSolverEnv &env,
+  computeInitialValues(const ConstraintQuery &, SmithrilSolverEnv &env,
                        std::vector<SparseStorageImpl<unsigned char>> &values,
                        bool &hasSolution);
-  bool check(const ConstraintQuery &query, BitwuzlaSolverEnv &env,
+  bool check(const ConstraintQuery &query, SmithrilSolverEnv &env,
              ref<SolverResponse> &result);
-  bool computeValidityCore(const ConstraintQuery &query, BitwuzlaSolverEnv &env,
+  bool computeValidityCore(const ConstraintQuery &query, SmithrilSolverEnv &env,
                            ValidityCore &validityCore, bool &isValid);
 
 public:
@@ -271,10 +281,12 @@ public:
   SolverImpl::SolverRunStatus getOperationStatusCode() final;
   void setCoreSolverTimeout(time::Span _timeout) final { timeout = _timeout; }
   void enableUnsatCore() {
-    solverParameters.set(Option::PRODUCE_UNSAT_CORES, true);
+    solverParameters.set(Option::PRODUCE_UNSAT_CORES,
+                         true); // mixa117 no such thing?
   }
   void disableUnsatCore() {
-    solverParameters.set(Option::PRODUCE_UNSAT_CORES, false);
+    solverParameters.set(Option::PRODUCE_UNSAT_CORES,
+                         false); // mixa117 no such thing?
   }
 
   // pass virtual functions to children
@@ -285,17 +297,17 @@ public:
   using SolverImpl::computeValue;
 };
 
-void deleteNativeBitwuzla(std::optional<Bitwuzla> &theSolver) {
-  theSolver.reset();
+void deleteNativeSmithril(std::optional<SmithrilSolver> &theSolver) {
+  theSolver.reset(); // mixa117 not native??
 }
 
-BitwuzlaSolverImpl::BitwuzlaSolverImpl()
+SmithrilSolverImpl::SmithrilSolverImpl()
     : runStatusCode(SolverImpl::SOLVER_RUN_STATUS_FAILURE) {
-  builder = std::unique_ptr<BitwuzlaBuilder>(new BitwuzlaBuilder(
+  builder = std::unique_ptr<SmithrilBuilder>(new SmithrilBuilder(
       /*autoClearConstructCache=*/false));
-  assert(builder && "unable to create BitwuzlaBuilder");
+  assert(builder && "unable to create SmithrilBuilder");
 
-  solverParameters.set(Option::PRODUCE_MODELS, true);
+  solverParameters.set(Option::PRODUCE_MODELS, true); // mixa117 no such thing?
 
   setCoreSolverTimeout(timeout);
 
@@ -306,94 +318,24 @@ BitwuzlaSolverImpl::BitwuzlaSolverImpl()
   }
 
   // Set verbosity
-  if (BitwuzlaVerbosityLevel > 0) {
-    solverParameters.set(Option::VERBOSITY, BitwuzlaVerbosityLevel);
+  if (SmithrilVerbosityLevel > 0) {
+    solverParameters.set(Option::VERBOSITY,
+                         SmithrilVerbosityLevel); // mixa117 no such thing?
   }
 
-  if (BitwuzlaValidateModels) {
-    solverParameters.set(Option::DBG_CHECK_MODEL, true);
+  if (SmithrilVerbosityLevel) {
+    solverParameters.set(Option::DBG_CHECK_MODEL,
+                         true); // mixa117 no such thing?
   }
 }
 
-std::string BitwuzlaSolverImpl::getConstraintLog(const Query &query) {
-  std::stringstream outputLog;
+std::string SmithrilSolverImpl::getConstraintLog(const Query &query) {
 
-  // We use a different builder here because we don't want to interfere
-  // with the solver's builder because it may change the solver builder's
-  // cache.
-  std::unique_ptr<BitwuzlaBuilder> tempBuilder(new BitwuzlaBuilder(false));
-  ConstantArrayFinder constant_arrays_in_query;
-
-  std::function<std::unordered_set<Term>(const Term &)> constantsIn =
-      [&constantsIn](const Term &term) {
-        if (term.is_const()) {
-          return std::unordered_set<Term>{term};
-        }
-        std::unordered_set<Term> symbols;
-        for (const auto &child : term.children()) {
-          for (const auto &childsSymbol : constantsIn(child)) {
-            symbols.emplace(childsSymbol);
-          }
-        }
-        return symbols;
-      };
-
-  std::function<void(const Term &)> declareLog =
-      [&outputLog](const Term &term) {
-        outputLog << "(declare-fun " << term.str(10) << " () "
-                  << term.sort().str() << ")\n";
-      };
-  std::function<void(const Term &)> assertLog = [&outputLog](const Term &term) {
-    outputLog << "(assert " << term.str(10) << ")\n";
-  };
-
-  std::vector<Term> assertions;
-  std::unordered_set<Term> assertionSymbols;
-
-  for (auto const &constraint : query.constraints.cs()) {
-    Term constraintTerm = tempBuilder->construct(constraint);
-    assertions.push_back(std::move(constraintTerm));
-    constant_arrays_in_query.visit(constraint);
-  }
-
-  // KLEE Queries are validity queries i.e.
-  // ∀ X Constraints(X) → query(X)
-  // but Bitwuzla works in terms of satisfiability so instead we ask the
-  // the negation of the equivalent i.e.
-  // ∃ X Constraints(X) ∧ ¬ query(X)
-  assertions.push_back(
-      mk_term(Kind::NOT, {tempBuilder->construct(query.expr)}));
-  constant_arrays_in_query.visit(query.expr);
-
-  for (auto const &constant_array : constant_arrays_in_query.results) {
-    for (auto const &arrayIndexValueExpr :
-         tempBuilder->constant_array_assertions[constant_array]) {
-      assertions.push_back(arrayIndexValueExpr);
-    }
-  }
-
-  for (const Term &constraintTerm : assertions) {
-    std::unordered_set<Term> constantsInConstraintTerm =
-        constantsIn(constraintTerm);
-    assertionSymbols.insert(constantsInConstraintTerm.begin(),
-                            constantsInConstraintTerm.end());
-  }
-
-  for (const Term &symbol : assertionSymbols) {
-    declareLog(symbol);
-  }
-  for (const Term &constraint : assertions) {
-    assertLog(constraint);
-  }
-
-  outputLog << "(check-sat)\n";
-
-  // Client is responsible for freeing the returned C-string
-  return outputLog.str();
+  return impl->getConstraintLog(query); // mixa117 - works in z3 not here?
 }
 
-bool BitwuzlaSolverImpl::computeTruth(const ConstraintQuery &query,
-                                      BitwuzlaSolverEnv &env, bool &isValid) {
+bool SmithrilSolverImpl::computeTruth(const ConstraintQuery &query,
+                                      SmithrilSolverEnv &env, bool &isValid) {
   bool hasSolution = false; // to remove compiler warning
   bool status = internalRunSolver(query, /*env=*/env,
                                   ObjectAssignment::NotNeeded, /*values=*/NULL,
@@ -402,8 +344,8 @@ bool BitwuzlaSolverImpl::computeTruth(const ConstraintQuery &query,
   return status;
 }
 
-bool BitwuzlaSolverImpl::computeValue(const ConstraintQuery &query,
-                                      BitwuzlaSolverEnv &env,
+bool SmithrilSolverImpl::computeValue(const ConstraintQuery &query,
+                                      SmithrilSolverEnv &env,
                                       ref<Expr> &result) {
   std::vector<SparseStorageImpl<unsigned char>> values;
   bool hasSolution;
@@ -422,16 +364,16 @@ bool BitwuzlaSolverImpl::computeValue(const ConstraintQuery &query,
   return true;
 }
 
-bool BitwuzlaSolverImpl::computeInitialValues(
-    const ConstraintQuery &query, BitwuzlaSolverEnv &env,
+bool SmithrilSolverImpl::computeInitialValues(
+    const ConstraintQuery &query, SmithrilSolverEnv &env,
     std::vector<SparseStorageImpl<unsigned char>> &values, bool &hasSolution) {
   return internalRunSolver(query, env,
                            ObjectAssignment::NeededForObjectsFromEnv, &values,
                            /*validityCore=*/NULL, hasSolution);
 }
 
-bool BitwuzlaSolverImpl::check(const ConstraintQuery &query,
-                               BitwuzlaSolverEnv &env,
+bool SmithrilSolverImpl::check(const ConstraintQuery &query,
+                               SmithrilSolverEnv &env,
                                ref<SolverResponse> &result) {
   std::vector<SparseStorageImpl<unsigned char>> values;
   ValidityCore validityCore;
@@ -447,8 +389,8 @@ bool BitwuzlaSolverImpl::check(const ConstraintQuery &query,
   return status;
 }
 
-bool BitwuzlaSolverImpl::computeValidityCore(const ConstraintQuery &query,
-                                             BitwuzlaSolverEnv &env,
+bool SmithrilSolverImpl::computeValidityCore(const ConstraintQuery &query,
+                                             SmithrilSolverEnv &env,
                                              ValidityCore &validityCore,
                                              bool &isValid) {
   bool hasSolution = false; // to remove compiler warning
@@ -459,8 +401,8 @@ bool BitwuzlaSolverImpl::computeValidityCore(const ConstraintQuery &query,
   return status;
 }
 
-bool BitwuzlaSolverImpl::internalRunSolver(
-    const ConstraintQuery &query, BitwuzlaSolverEnv &env,
+bool SmithrilSolverImpl::internalRunSolver(
+    const ConstraintQuery &query, SmithrilSolverEnv &env,
     ObjectAssignment needObjects,
     std::vector<SparseStorageImpl<unsigned char>> *values,
     ValidityCore *validityCore, bool &hasSolution) {
@@ -468,7 +410,8 @@ bool BitwuzlaSolverImpl::internalRunSolver(
   runStatusCode = SolverImpl::SOLVER_RUN_STATUS_FAILURE;
 
   std::unordered_set<const Array *> all_constant_arrays_in_query;
-  BitwuzlaASTIncSet exprs;
+  SmithrilASTIncSet
+      exprs; // mixa117 - why not working? (no distructor for SmithrilTerm?)
 
   for (size_t i = 0; i < query.constraints.framesSize();
        i++, env.push(), exprs.push()) {
@@ -485,14 +428,14 @@ bool BitwuzlaSolverImpl::internalRunSolver(
               cs_ite = query.constraints.end(i);
          cs_it != cs_ite; cs_it++) {
       const auto &constraint = *cs_it;
-      Term bitwuzlaConstraint = builder->construct(constraint);
+      SmithrilTerm smithrilConstraint = builder->construct(constraint);
       if (ProduceUnsatCore && validityCore) {
-        env.bitwuzla_ast_expr_to_klee_expr.insert(
-            {bitwuzlaConstraint, constraint});
-        env.expr_to_track.insert(bitwuzlaConstraint);
+        env.smithril_ast_expr_to_klee_expr.insert(
+            {smithrilConstraint, constraint});
+        env.expr_to_track.insert(smithrilConstraint);
       }
 
-      exprs.insert(bitwuzlaConstraint);
+      exprs.insert(smithrilConstraint);
 
       constant_arrays_in_query.visit(constraint);
 
@@ -529,7 +472,7 @@ bool BitwuzlaSolverImpl::internalRunSolver(
   auto timeoutInMicroSeconds = static_cast<uint64_t>(timeout.toMicroseconds());
   if (!timeoutInMicroSeconds)
     timeoutInMicroSeconds = UINT_MAX;
-  BitwuzlaTerminator terminator(timeoutInMicroSeconds);
+  SmithrilTerminator terminator(timeoutInMicroSeconds);
 
   struct sigaction action {};
   struct sigaction old_action {};
@@ -537,19 +480,21 @@ bool BitwuzlaSolverImpl::internalRunSolver(
   action.sa_flags = 0;
   sigaction(SIGINT, &action, &old_action);
 
-  Bitwuzla &theSolver = initNativeBitwuzla(query, exprs);
-  smithril::SmithrilContext context = smithril::smithril_new_context();
-  theSolver.configure_terminator(&terminator);
+  SmithrilSolver &theSolver = initNativeSmithril(query, exprs);
+  //   theSolver.configure_terminator(&terminator); //mixa117 ??? (probably redo
+  //   as z3)
 
   for (size_t i = 0; i < exprs.framesSize(); i++) {
     push(theSolver);
     for (auto it = exprs.begin(i), ie = exprs.end(i); it != ie; ++it) {
-      theSolver.assert_formula(*it);
+      smithril_assert(theSolver, (*it));
     }
   }
 
-  Result satisfiable = theSolver.check_sat();
-  theSolver.configure_terminator(nullptr);
+  SolverResult satisfiable = smithril_check_sat(theSolver);
+
+  //   theSolver.configure_terminator(nullptr);
+  //   mixa117???
   runStatusCode = handleSolverResponse(theSolver, satisfiable, env, needObjects,
                                        values, hasSolution);
   sigaction(SIGINT, &old_action, nullptr);
@@ -563,30 +508,79 @@ bool BitwuzlaSolverImpl::internalRunSolver(
     }
   }
 
-  if (ProduceUnsatCore && validityCore && satisfiable == Result::UNSAT) {
-    const std::vector<Term> bitwuzla_unsat_core = theSolver.get_unsat_core();
-    const std::unordered_set<Term> bitwuzla_term_unsat_core(
-        bitwuzla_unsat_core.begin(), bitwuzla_unsat_core.end());
+  // if (ProduceUnsatCore && validityCore && satisfiable == SolverResult::Unsat) {
 
-    constraints_ty unsatCore;
-    for (const auto &bitwuzla_constraint : env.expr_to_track) {
-      if (bitwuzla_term_unsat_core.count(bitwuzla_constraint)) {
-        ref<Expr> constraint =
-            env.bitwuzla_ast_expr_to_klee_expr[bitwuzla_constraint];
-        if (Expr::createIsZero(constraint) != query.getOriginalQueryExpr()) {
-          unsatCore.insert(constraint);
-        }
-      }
-    }
-    assert(validityCore && "validityCore cannot be nullptr");
-    *validityCore = ValidityCore(unsatCore, query.getOriginalQueryExpr());
+  //   const SmithrilTermVector smithril_unsat_core_vec =
+  //       smithril_unsat_core(theSolver);
+  //   const std::unordered_set<SmithrilTerm> smithril_term_unsat_core(
+  //       smithril_unsat_core_vec.begin(), smithril_unsat_core_vec.end());
 
-    stats::validQueriesSize += theSolver.get_assertions().size();
-    stats::validityCoresSize += bitwuzla_unsat_core.size();
-    ++stats::queryValidityCores;
-  }
+  //   constraints_ty unsatCore;
+  //   for (const auto &smithril_constraint : env.expr_to_track) {
+  //     if (smithril_term_unsat_core.count(smithril_constraint)) {
+  //       ref<Expr> constraint =
+  //           env.smithril_ast_expr_to_klee_expr[smithril_constraint];
+  //       if (Expr::createIsZero(constraint) != query.getOriginalQueryExpr()) {
+  //         unsatCore.insert(constraint);
+  //       }
+  //     }
+  //   }
+  //   assert(validityCore && "validityCore cannot be nullptr");
+  //   *validityCore = ValidityCore(unsatCore, query.getOriginalQueryExpr());
 
-  deinitNativeBitwuzla(theSolver);
+  //   stats::validQueriesSize +=
+  //       theSolver.get_assertions().size(); // mixa117 we dont have that?
+  //   // mixa117 maybe not needed if redo as z3
+  //   stats::validityCoresSize += smithril_unsat_core_vec.size();
+  //   ++stats::queryValidityCores;
+  // }
+  //mixa117 redo that part above as z3 below 
+  //   if (ProduceUnsatCore && validityCore && satisfiable == SolverResult::Unsat) {
+  //   constraints_ty unsatCore;
+  //   const SmithrilTermVector smithril_unsat_core_vec =
+  //       smithril_unsat_core(theSolver);
+  //   smithril_ast_vector_inc_ref(smithril_unsat_core_vec); //mixa117 we dont have that?
+
+  //   // unsigned size = Z3_ast_vector_size(builder->ctx, z3_unsat_core);
+  //   unsigned size = smithril_unsat_core_size(smithril_unsat_core_vec);  //mixa117 ok?
+
+  //   // std::unordered_set<Z3ASTHandle, Z3ASTHandleHash, Z3ASTHandleCmp>
+  //   //     z3_ast_expr_unsat_core;
+  //   constraints_ty unsatCore; 
+
+  //   for (unsigned index = 0; index < size; ++index) {
+  //     Z3ASTHandle constraint = Z3ASTHandle(
+  //         Z3_ast_vector_get(builder->ctx, z3_unsat_core, index), builder->ctx);
+  //     z3_ast_expr_unsat_core.insert(constraint);
+  //   }
+
+  //   for (const auto &z3_constraint : env.z3_ast_expr_constraints.v) {
+  //     if (z3_ast_expr_unsat_core.find(z3_constraint) !=
+  //         z3_ast_expr_unsat_core.end()) {
+  //       ref<Expr> constraint = env.z3_ast_expr_to_klee_expr[z3_constraint];
+  //       if (Expr::createIsZero(constraint) != query.getOriginalQueryExpr()) {
+  //         unsatCore.insert(constraint);
+  //       }
+  //     }
+  //   }
+  //   assert(validityCore && "validityCore cannot be nullptr");
+  //   *validityCore = ValidityCore(unsatCore, query.getOriginalQueryExpr());
+
+  //   Z3_ast_vector assertions =
+  //       Z3_solver_get_assertions(builder->ctx, theSolver);
+  //   Z3_ast_vector_inc_ref(builder->ctx, assertions);
+  //   unsigned assertionsCount = Z3_ast_vector_size(builder->ctx, assertions);
+
+  //   stats::validQueriesSize += assertionsCount;
+  //   stats::validityCoresSize += size;
+  //   ++stats::queryValidityCores;
+
+  //   Z3_ast_vector_dec_ref(builder->ctx, z3_unsat_core);
+  //   Z3_ast_vector_dec_ref(builder->ctx, assertions);
+  // }
+
+
+  deinitNativeSmithril(theSolver);
 
   // Clear the builder's cache to prevent memory usage exploding.
   // By using ``autoClearConstructCache=false`` and clearning now
@@ -610,12 +604,13 @@ bool BitwuzlaSolverImpl::internalRunSolver(
   return false; // failed
 }
 
-SolverImpl::SolverRunStatus BitwuzlaSolverImpl::handleSolverResponse(
-    Bitwuzla &theSolver, Result satisfiable, const BitwuzlaSolverEnv &env,
-    ObjectAssignment needObjects,
+// mixa117 version from bitwuzla (not good), z3 is bad too(have models we don't)
+SolverImpl::SolverRunStatus SmithrilSolverImpl::handleSolverResponse(
+    SmithrilSolver &theSolver, SolverResult satisfiable,
+    const SmithrilSolverEnv &env, ObjectAssignment needObjects,
     std::vector<SparseStorageImpl<unsigned char>> *values, bool &hasSolution) {
   switch (satisfiable) {
-  case Result::SAT: {
+  case SolverResult::Sat: {
     hasSolution = true;
     auto objects = env.getObjectsForGetModel(needObjects);
     if (!objects) {
@@ -632,21 +627,25 @@ SolverImpl::SolverRunStatus BitwuzlaSolverImpl::handleSolverResponse(
       if (env.usedArrayBytes.count(array)) {
         std::unordered_set<uint64_t> offsetValues;
         for (const ref<Expr> &offsetExpr : env.usedArrayBytes.at(array)) {
-          Term arrayElementOffsetExpr =
-              theSolver.get_value(builder->construct(offsetExpr));
+          SmithrilTerm arrayElementOffsetExpr =
+              theSolver.get_value( // mixa117 we dont have that?
+                  builder->construct(offsetExpr));
 
           uint64_t concretizedOffsetValue =
-              std::stoull(arrayElementOffsetExpr.value<std::string>(10));
+              std::stoull(arrayElementOffsetExpr.value<std::string>(
+                  10)); // mixa117 we dont have that?
           offsetValues.insert(concretizedOffsetValue);
         }
 
         for (unsigned offset : offsetValues) {
           // We can't use Term here so have to do ref counting manually
-          Term initial_read = builder->getInitialRead(array, offset);
-          Term initial_read_expr = theSolver.get_value(initial_read);
+          SmithrilTerm initial_read = builder->getInitialRead(array, offset);
+          SmithrilTerm initial_read_expr =
+              theSolver.get_value(initial_read); // mixa117 we dont have that?
 
           uint64_t arrayElementValue =
-              std::stoull(initial_read_expr.value<std::string>(10));
+              std::stoull(initial_read_expr.value<std::string>(
+                  10)); // mixa117 we dont have that?
           data.store(offset, arrayElementValue);
         }
       }
@@ -658,50 +657,50 @@ SolverImpl::SolverRunStatus BitwuzlaSolverImpl::handleSolverResponse(
 
     return SolverImpl::SOLVER_RUN_STATUS_SUCCESS_SOLVABLE;
   }
-  case Result::UNSAT:
+  case SolverResult::Unsat:
     hasSolution = false;
     return SolverImpl::SOLVER_RUN_STATUS_SUCCESS_UNSOLVABLE;
-  case Result::UNKNOWN: {
+  case SolverResult::Unknown: {
     return SolverImpl::SOLVER_RUN_STATUS_FAILURE;
   }
   default:
-    llvm_unreachable("unhandled Bitwuzla result");
+    llvm_unreachable("unhandled smithril result");
   }
 }
 
-SolverImpl::SolverRunStatus BitwuzlaSolverImpl::getOperationStatusCode() {
+SolverImpl::SolverRunStatus SmithrilSolverImpl::getOperationStatusCode() {
   return runStatusCode;
 }
 
-class BitwuzlaNonIncSolverImpl final : public BitwuzlaSolverImpl {
+class SmithrilNonIncSolverImpl final : public SmithrilSolverImpl {
 private:
-  std::optional<Bitwuzla> theSolver;
+  std::optional<SmithrilSolver> theSolver;
 
 public:
-  BitwuzlaNonIncSolverImpl() = default;
+  SmithrilNonIncSolverImpl() = default;
 
   /// implementation of BitwuzlaSolverImpl interface
-  Bitwuzla &initNativeBitwuzla(const ConstraintQuery &,
-                               BitwuzlaASTIncSet &) override {
-    theSolver.emplace(solverParameters);
+  SmithrilSolver &initNativeSmithril(const ConstraintQuery &,
+                                     SmithrilASTIncSet &) override {
+    theSolver.emplace(solverParameters); // mixa117 todo!
     return theSolver.value();
   }
 
-  void deinitNativeBitwuzla(Bitwuzla &) override {
-    deleteNativeBitwuzla(theSolver);
+  void deinitNativeSmithril(SmithrilSolver &) override {
+    deinitNativeSmithril(theSolver); // mixa117 why?
   }
 
-  void push(Bitwuzla &) override {}
+  void push(SmithrilSolver &) override {}
 
   /// implementation of the SolverImpl interface
   bool computeTruth(const Query &query, bool &isValid) override {
-    BitwuzlaSolverEnv env;
-    return BitwuzlaSolverImpl::computeTruth(ConstraintQuery(query, false), env,
+    SmithrilSolverEnv env;
+    return SmithrilSolverImpl::computeTruth(ConstraintQuery(query, false), env,
                                             isValid);
   }
   bool computeValue(const Query &query, ref<Expr> &result) override {
-    BitwuzlaSolverEnv env;
-    return BitwuzlaSolverImpl::computeValue(ConstraintQuery(query, false), env,
+    SmithrilSolverEnv env;
+    return SmithrilSolverImpl::computeValue(ConstraintQuery(query, false), env,
                                             result);
   }
   bool
@@ -709,26 +708,26 @@ public:
                        const std::vector<const Array *> &objects,
                        std::vector<SparseStorageImpl<unsigned char>> &values,
                        bool &hasSolution) override {
-    BitwuzlaSolverEnv env(objects);
-    return BitwuzlaSolverImpl::computeInitialValues(
+    SmithrilSolverEnv env(objects);
+    return SmithrilSolverImpl::computeInitialValues(
         ConstraintQuery(query, false), env, values, hasSolution);
   }
   bool check(const Query &query, ref<SolverResponse> &result) override {
-    BitwuzlaSolverEnv env;
-    return BitwuzlaSolverImpl::check(ConstraintQuery(query, false), env,
+    SmithrilSolverEnv env;
+    return SmithrilSolverImpl::check(ConstraintQuery(query, false), env,
                                      result);
   }
   bool computeValidityCore(const Query &query, ValidityCore &validityCore,
                            bool &isValid) override {
-    BitwuzlaSolverEnv env;
-    return BitwuzlaSolverImpl::computeValidityCore(
+    SmithrilSolverEnv env;
+    return SmithrilSolverImpl::computeValidityCore(
         ConstraintQuery(query, false), env, validityCore, isValid);
   }
   void notifyStateTermination(std::uint32_t) override {}
 };
 
-BitwuzlaSolver::BitwuzlaSolver()
-    : Solver(std::make_unique<BitwuzlaNonIncSolverImpl>()) {}
+SmithrilCompleteSolver::SmithrilCompleteSolver()
+    : Solver(std::make_unique<SmithrilNonIncSolverImpl>()) {}
 
 struct ConstraintDistance {
   size_t toPopSize = 0;
@@ -749,10 +748,13 @@ struct ConstraintDistance {
   }
 };
 
-class BitwuzlaIncNativeSolver {
+class SmithrilIncNativeSolver {
 private:
-  std::optional<Bitwuzla> nativeSolver;
-  Options solverParameters;
+  std::optional<SmithrilSolver> nativeSolver;
+  SmithrilContext
+      solverContext; // mixa117 added (was in z3 not bitwuzla), maybe should add
+                     // mixa117 all ctx instances like in z3?
+  SmithrilOptions solverParameters;
   /// underlying solver frames
   /// saved only for calculating distances from next queries
   ConstraintFrames frames;
@@ -760,13 +762,13 @@ private:
   void pop(size_t popSize);
 
 public:
-  BitwuzlaSolverEnv env;
+  SmithrilSolverEnv env;
   std::uint32_t stateID = 0;
   bool isRecycled = false;
 
-  BitwuzlaIncNativeSolver(Options solverParameters)
+  SmithrilIncNativeSolver(SmithrilOptions solverParameters)
       : solverParameters(solverParameters) {}
-  ~BitwuzlaIncNativeSolver();
+  ~SmithrilIncNativeSolver();
 
   void clear();
 
@@ -774,7 +776,7 @@ public:
 
   void popPush(ConstraintDistance &delta);
 
-  Bitwuzla &getOrInit();
+  SmithrilSolver &getOrInit();
 
   bool isConsistent() const {
     return frames.framesSize() == env.objects.framesSize();
@@ -783,42 +785,48 @@ public:
   void dump() const { ::klee::dump(frames); }
 };
 
-void BitwuzlaIncNativeSolver::pop(size_t popSize) {
-  if (!nativeSolver.has_value() || !popSize)
+void SmithrilIncNativeSolver::pop(size_t popSize) {
+  if (!nativeSolver || !popSize)
     return;
-  nativeSolver.value().pop(popSize);
+  smithril_pop(nativeSolver.value());
+  // mixa117 should use !!!popSize!!! like
+  // "nativeSolver.value().pop(popSize);" in bitwuzla
 }
 
-void BitwuzlaIncNativeSolver::popPush(ConstraintDistance &delta) {
+void SmithrilIncNativeSolver::popPush(ConstraintDistance &delta) {
   env.pop(delta.toPopSize);
   pop(delta.toPopSize);
   frames.pop(delta.toPopSize);
   frames.extend(delta.toPush.constraints);
 }
 
-Bitwuzla &BitwuzlaIncNativeSolver::getOrInit() {
-  if (!nativeSolver.has_value()) {
-    nativeSolver.emplace(solverParameters);
+SmithrilSolver &SmithrilIncNativeSolver::getOrInit() {
+  if (!nativeSolver.has_value()) { // mixa117 good?
+    nativeSolver = smithril_new_solver(solverContext);
+    // Z3_solver_inc_ref(solverContext, nativeSolver);
+    // mixa117 no such thing?
+    // Z3_solver_set_params(solverContext, nativeSolver, solverParameters);
+    // mixa117 no such thing?
   }
   return nativeSolver.value();
 }
 
-BitwuzlaIncNativeSolver::~BitwuzlaIncNativeSolver() {
+SmithrilIncNativeSolver::~SmithrilIncNativeSolver() {
   if (nativeSolver.has_value()) {
-    deleteNativeBitwuzla(nativeSolver);
+    deleteNativeSmithril(nativeSolver);
   }
 }
 
-void BitwuzlaIncNativeSolver::clear() {
+void SmithrilIncNativeSolver::clear() {
   if (!nativeSolver.has_value())
     return;
   env.clear();
   frames.clear();
-  nativeSolver.emplace(solverParameters);
+  smithril_reset(nativeSolver.value());
   isRecycled = false;
 }
 
-void BitwuzlaIncNativeSolver::distance(const ConstraintQuery &query,
+void SmithrilIncNativeSolver::distance(const ConstraintQuery &query,
                                        ConstraintDistance &delta) const {
   auto sit = frames.v.begin();
   auto site = frames.v.end();
@@ -850,13 +858,13 @@ void BitwuzlaIncNativeSolver::distance(const ConstraintQuery &query,
   delta = ConstraintDistance(toPop, std::move(q));
 }
 
-class BitwuzlaTreeSolverImpl final : public BitwuzlaSolverImpl {
+class SmithrilTreeSolverImpl final : public SmithrilSolverImpl {
 private:
-  using solvers_ty = std::vector<std::unique_ptr<BitwuzlaIncNativeSolver>>;
+  using solvers_ty = std::vector<std::unique_ptr<SmithrilIncNativeSolver>>;
   using solvers_it = solvers_ty::iterator;
 
   const size_t maxSolvers;
-  std::unique_ptr<BitwuzlaIncNativeSolver> currentSolver = nullptr;
+  std::unique_ptr<SmithrilIncNativeSolver> currentSolver = nullptr;
   solvers_ty solvers;
 
   void findSuitableSolver(const ConstraintQuery &query,
@@ -865,18 +873,20 @@ private:
   ConstraintQuery prepare(const Query &q);
 
 public:
-  BitwuzlaTreeSolverImpl(size_t maxSolvers) : maxSolvers(maxSolvers){};
+  SmithrilTreeSolverImpl(size_t maxSolvers) : maxSolvers(maxSolvers){};
 
   /// implementation of BitwuzlaSolverImpl interface
-  Bitwuzla &initNativeBitwuzla(const ConstraintQuery &,
-                               BitwuzlaASTIncSet &) override {
+  SmithrilSolver &initNativeSmithril(const ConstraintQuery &,
+                                     SmithrilASTIncSet &) override {
     return currentSolver->getOrInit();
   }
-  void deinitNativeBitwuzla(Bitwuzla &) override {
+  void deinitNativeSmithril(SmithrilSolver &) override {
     assert(currentSolver->isConsistent());
     solvers.push_back(std::move(currentSolver));
   }
-  void push(Bitwuzla &s) override { s.push(1); }
+  void push(SmithrilSolver &s) override {
+    smithril_push(s);
+  } // mixa117 s.push(1) - that was with bitwuzla (in z3 seems ok without '1')
 
   /// implementation of the SolverImpl interface
   bool computeTruth(const Query &query, bool &isValid) override;
@@ -893,7 +903,7 @@ public:
   void notifyStateTermination(std::uint32_t id) override;
 };
 
-void BitwuzlaTreeSolverImpl::setSolver(solvers_it &it, bool recycle) {
+void SmithrilTreeSolverImpl::setSolver(solvers_it &it, bool recycle) {
   assert(it != solvers.end());
   currentSolver = std::move(*it);
   solvers.erase(it);
@@ -902,7 +912,7 @@ void BitwuzlaTreeSolverImpl::setSolver(solvers_it &it, bool recycle) {
     currentSolver->clear();
 }
 
-void BitwuzlaTreeSolverImpl::findSuitableSolver(const ConstraintQuery &query,
+void SmithrilTreeSolverImpl::findSuitableSolver(const ConstraintQuery &query,
                                                 ConstraintDistance &delta) {
   ConstraintDistance min_delta;
   auto min_distance = std::numeric_limits<size_t>::max();
@@ -929,7 +939,7 @@ void BitwuzlaTreeSolverImpl::findSuitableSolver(const ConstraintQuery &query,
       // it is cheaper to create new solver
       if (free_it == solvers.end())
         currentSolver =
-            std::make_unique<BitwuzlaIncNativeSolver>(solverParameters);
+            std::make_unique<SmithrilIncNativeSolver>(solverParameters);
       else
         setSolver(free_it, /*recycle=*/true);
       return;
@@ -940,7 +950,7 @@ void BitwuzlaTreeSolverImpl::findSuitableSolver(const ConstraintQuery &query,
   setSolver(min_it);
 }
 
-ConstraintQuery BitwuzlaTreeSolverImpl::prepare(const Query &q) {
+ConstraintQuery SmithrilTreeSolverImpl::prepare(const Query &q) {
   ConstraintDistance delta;
   ConstraintQuery query(q, true);
   findSuitableSolver(query, delta);
@@ -950,48 +960,50 @@ ConstraintQuery BitwuzlaTreeSolverImpl::prepare(const Query &q) {
   return delta.toPush;
 }
 
-bool BitwuzlaTreeSolverImpl::computeTruth(const Query &query, bool &isValid) {
+bool SmithrilTreeSolverImpl::computeTruth(const Query &query, bool &isValid) {
   auto q = prepare(query);
-  return BitwuzlaSolverImpl::computeTruth(q, currentSolver->env, isValid);
+  return SmithrilSolverImpl::computeTruth(q, currentSolver->env, isValid);
 }
 
-bool BitwuzlaTreeSolverImpl::computeValue(const Query &query,
+bool SmithrilTreeSolverImpl::computeValue(const Query &query,
                                           ref<Expr> &result) {
   auto q = prepare(query);
-  return BitwuzlaSolverImpl::computeValue(q, currentSolver->env, result);
+  return SmithrilSolverImpl::computeValue(q, currentSolver->env, result);
 }
 
-bool BitwuzlaTreeSolverImpl::computeInitialValues(
+bool SmithrilTreeSolverImpl::computeInitialValues(
     const Query &query, const std::vector<const Array *> &objects,
     std::vector<SparseStorageImpl<unsigned char>> &values, bool &hasSolution) {
   auto q = prepare(query);
   currentSolver->env.objectsForGetModel = objects;
-  return BitwuzlaSolverImpl::computeInitialValues(q, currentSolver->env, values,
+  return SmithrilSolverImpl::computeInitialValues(q, currentSolver->env, values,
                                                   hasSolution);
 }
 
-bool BitwuzlaTreeSolverImpl::check(const Query &query,
+bool SmithrilTreeSolverImpl::check(const Query &query,
                                    ref<SolverResponse> &result) {
   auto q = prepare(query);
-  return BitwuzlaSolverImpl::check(q, currentSolver->env, result);
+  return SmithrilSolverImpl::check(q, currentSolver->env, result);
 }
 
-bool BitwuzlaTreeSolverImpl::computeValidityCore(const Query &query,
+bool SmithrilTreeSolverImpl::computeValidityCore(const Query &query,
                                                  ValidityCore &validityCore,
                                                  bool &isValid) {
   auto q = prepare(query);
-  return BitwuzlaSolverImpl::computeValidityCore(q, currentSolver->env,
+  return SmithrilSolverImpl::computeValidityCore(q, currentSolver->env,
                                                  validityCore, isValid);
 }
 
-void BitwuzlaTreeSolverImpl::notifyStateTermination(std::uint32_t id) {
+void SmithrilTreeSolverImpl::notifyStateTermination(std::uint32_t id) {
   for (auto &s : solvers)
     if (s->stateID == id)
       s->isRecycled = true;
 }
 
-BitwuzlaTreeSolver::BitwuzlaTreeSolver(unsigned maxSolvers)
-    : Solver(std::make_unique<BitwuzlaTreeSolverImpl>(maxSolvers)) {}
+SmithrilTreeSolver::SmithrilTreeSolver(unsigned maxSolvers)
+    : Solver(std::make_unique<SmithrilTreeSolverImpl>(maxSolvers)) {}
 
 } // namespace klee
-#endif // ENABLE_BITWUZLA
+
+#ifdef ENABLE_SMITHRIL // mixa117 move to start?
+#endif
