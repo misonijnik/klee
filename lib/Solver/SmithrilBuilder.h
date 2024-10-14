@@ -1,4 +1,4 @@
-//===-- BitwuzlaBuilder.h --------------------------------------------*- C++
+//===-- SmithrilBuilder.h --------------------------------------------*- C++
 //-*-====//
 //
 //                     The KLEE Symbolic Virtual Machine
@@ -15,8 +15,6 @@
 
 #include "llvm/ADT/APFloat.h"
 
-#include <bitwuzla/cpp/bitwuzla.h>
-// #include <smithril.h>
 #include <unordered_map>
 
 namespace smithril {
@@ -24,130 +22,129 @@ namespace smithril {
 }
 // mixa117
 
-using namespace bitwuzla;
+using namespace smithril;
 
 namespace klee {
 
-class BitwuzlaArrayExprHash : public ArrayExprHash<Term> {
+class SmithrilArrayExprHash : public ArrayExprHash<SmithrilTerm> {
   friend class SmithrilBuilder;
 
 public:
-  BitwuzlaArrayExprHash(){};
-  virtual ~BitwuzlaArrayExprHash();
+  SmithrilArrayExprHash(){};
+  virtual ~SmithrilArrayExprHash();
   void clear();
   void clearUpdates();
 };
 
 struct SmithrilTermHash {
-  unsigned operator()(const smithril::SmithrilTerm &e) const {
+  unsigned operator()(const SmithrilTerm &e) const {
     return (unsigned long)(e._0);
   }
 };
 
 struct SmithrilTermCmp {
-  bool operator()(const smithril::SmithrilTerm &a, const smithril::SmithrilTerm &b) const {
+  bool operator()(const SmithrilTerm &a, const SmithrilTerm &b) const {
     return a._0 == b._0;
   }
 };
 class SmithrilBuilder {
 private:
   void FPCastWidthAssert(int *width_out, char const *msg);
-  Term fpToIEEEBV(const Term &);
+  SmithrilTerm fpToIEEEBV(const SmithrilTerm &);
 
 protected:
-  Term bvOne(unsigned width);
-  Term bvZero(unsigned width);
-  Term bvMinusOne(unsigned width);
-  Term bvConst32(unsigned width, uint32_t value);
-  Term bvConst64(unsigned width, uint64_t value);
-  Term bvZExtConst(unsigned width, uint64_t value);
-  Term bvSExtConst(unsigned width, uint64_t value);
-  Term bvBoolExtract(Term expr, int bit);
-  Term bvExtract(Term expr, unsigned top, unsigned bottom);
-  Term eqExpr(Term a, Term b);
+  SmithrilTerm bvOne(unsigned width);
+  SmithrilTerm bvZero(unsigned width);
+  SmithrilTerm bvMinusOne(unsigned width);
+  SmithrilTerm bvConst32(unsigned width, uint32_t value);
+  SmithrilTerm bvConst64(unsigned width, uint64_t value);
+  SmithrilTerm bvZExtConst(unsigned width, uint64_t value);
+  SmithrilTerm bvSExtConst(unsigned width, uint64_t value);
+  SmithrilTerm bvBoolExtract(SmithrilTerm expr, int bit);
+  SmithrilTerm bvExtract(SmithrilTerm expr, unsigned top, unsigned bottom);
+  SmithrilTerm eqExpr(SmithrilTerm a, SmithrilTerm b);
 
   // logical left and right shift (not arithmetic)
-  Term bvLeftShift(Term expr, unsigned shift);
-  Term bvRightShift(Term expr, unsigned shift);
-  Term bvVarLeftShift(Term expr, Term shift);
-  Term bvVarRightShift(Term expr, Term shift);
-  Term bvVarArithRightShift(Term expr, Term shift);
+  SmithrilTerm bvLeftShift(SmithrilTerm expr, unsigned shift);
+  SmithrilTerm bvRightShift(SmithrilTerm expr, unsigned shift);
+  SmithrilTerm bvVarLeftShift(SmithrilTerm expr, SmithrilTerm shift);
+  SmithrilTerm bvVarRightShift(SmithrilTerm expr, SmithrilTerm shift);
+  SmithrilTerm bvVarArithRightShift(SmithrilTerm expr, SmithrilTerm shift);
 
-  Term notExpr(Term expr);
-  Term andExpr(Term lhs, Term rhs);
-  Term orExpr(Term lhs, Term rhs);
-  Term iffExpr(Term lhs, Term rhs);
+  SmithrilTerm notExpr(SmithrilTerm expr);
+  SmithrilTerm andExpr(SmithrilTerm lhs, SmithrilTerm rhs);
+  SmithrilTerm orExpr(SmithrilTerm lhs, SmithrilTerm rhs);
+  SmithrilTerm iffExpr(SmithrilTerm lhs, SmithrilTerm rhs);
 
-  Term bvNotExpr(Term expr);
-  Term bvAndExpr(Term lhs, Term rhs);
-  Term bvOrExpr(Term lhs, Term rhs);
-  Term bvXorExpr(Term lhs, Term rhs);
-  Term bvSignExtend(Term src, unsigned width);
+  SmithrilTerm bvNotExpr(SmithrilTerm expr);
+  SmithrilTerm bvAndExpr(SmithrilTerm lhs, SmithrilTerm rhs);
+  SmithrilTerm bvOrExpr(SmithrilTerm lhs, SmithrilTerm rhs);
+  SmithrilTerm bvXorExpr(SmithrilTerm lhs, SmithrilTerm rhs);
+  SmithrilTerm bvSignExtend(SmithrilTerm src, unsigned width);
 
   // Array operations
-  Term writeExpr(Term array, Term index, Term value);
-  Term readExpr(Term array, Term index);
+  SmithrilTerm writeExpr(SmithrilTerm array, SmithrilTerm index, SmithrilTerm value);
+  SmithrilTerm readExpr(SmithrilTerm array, SmithrilTerm index);
 
   // ITE-expression constructor
-  Term iteExpr(Term condition, Term whenTrue, Term whenFalse);
+  SmithrilTerm iteExpr(SmithrilTerm condition, SmithrilTerm whenTrue, SmithrilTerm whenFalse);
 
   // Bitvector length
-  unsigned getBVLength(Term expr);
+  unsigned getBVLength(SmithrilTerm expr);
 
   // Bitvector comparison
-  Term bvLtExpr(Term lhs, Term rhs);
-  Term bvLeExpr(Term lhs, Term rhs);
-  Term sbvLtExpr(Term lhs, Term rhs);
-  Term sbvLeExpr(Term lhs, Term rhs);
+  SmithrilTerm bvLtExpr(SmithrilTerm lhs, SmithrilTerm rhs);
+  SmithrilTerm bvLeExpr(SmithrilTerm lhs, SmithrilTerm rhs);
+  SmithrilTerm sbvLtExpr(SmithrilTerm lhs, SmithrilTerm rhs);
+  SmithrilTerm sbvLeExpr(SmithrilTerm lhs, SmithrilTerm rhs);
 
-  Term constructAShrByConstant(Term expr, unsigned shift, Term isSigned);
+  SmithrilTerm constructAShrByConstant(SmithrilTerm expr, unsigned shift, SmithrilTerm isSigned);
 
-  Term getInitialArray(const Array *os);
-  Term getArrayForUpdate(const Array *root, const UpdateNode *un);
+  SmithrilTerm getInitialArray(const Array *os);
+  SmithrilTerm getArrayForUpdate(const Array *root, const UpdateNode *un);
 
-  Term constructActual(ref<Expr> e, int *width_out);
-  smithril::SmithrilTerm construct(ref<Expr> e, int *width_out);
-  Term buildArray(const char *name, unsigned indexWidth, unsigned valueWidth);
-  Term buildConstantArray(const char *name, unsigned indexWidth,
+  SmithrilTerm constructActual(ref<Expr> e, int *width_out);
+  SmithrilTerm construct(ref<Expr> e, int *width_out);
+  SmithrilTerm buildArray(const char *name, unsigned indexWidth, unsigned valueWidth);
+  SmithrilTerm buildConstantArray(const char *name, unsigned indexWidth,
                           unsigned valueWidth, unsigned value);
 
-  Sort getBoolSort();
-  Sort getBvSort(unsigned width);
-  smithril::SmithrilSort getBvSortNew(unsigned width);
-  Sort getArraySort(Sort domainSort, Sort rangeSort);
+  SmithrilSort getBoolSort();
+  SmithrilSort getBvSort(unsigned width);
+  SmithrilSort getArraySort(SmithrilSort domainSort, SmithrilSort rangeSort);
 
   std::pair<unsigned, unsigned> getFloatSortFromBitWidth(unsigned bitWidth);
 
   // Float casts
-  Term castToFloat(const Term &e);
-  Term castToBitVector(const Term &e);
+  SmithrilTerm castToFloat(const SmithrilTerm &e);
+  SmithrilTerm castToBitVector(const SmithrilTerm &e);
 
-  Term getRoundingModeSort(llvm::APFloat::roundingMode rm);
-  Term getx87FP80ExplicitSignificandIntegerBit(const Term &e);
+  RoundingMode getRoundingModeSort(llvm::APFloat::roundingMode rm);
+  SmithrilTerm getx87FP80ExplicitSignificandIntegerBit(const SmithrilTerm &e);
 
-  ExprHashMap<std::pair<Term, unsigned>> constructed;
-  BitwuzlaArrayExprHash _arr_hash;
+  ExprHashMap<std::pair<SmithrilTerm, unsigned>> constructed;
+  SmithrilArrayExprHash _arr_hash;
   bool autoClearConstructCache;
 
 public:
-  smithril::SmithrilContext ctx;
-  std::unordered_map<const Array *, std::vector<Term>>
+  SmithrilContext ctx;
+  std::unordered_map<const Array *, std::vector<SmithrilTerm>>
       constant_array_assertions;
   // These are additional constraints that are generated during the
-  // translation to Bitwuzla's constraint language. Clients should assert
+  // translation to Smithril's constraint language. Clients should assert
   // these.
-  std::vector<Term> sideConstraints;
+  std::vector<SmithrilTerm> sideConstraints;
 
   SmithrilBuilder(bool autoClearConstructCache);
   ~SmithrilBuilder();
 
-  Term getTrue();
-  Term getFalse();
-  Term buildFreshBoolConst();
-  smithril::SmithrilTerm getInitialRead(const Array *os, unsigned index);
+  SmithrilTerm getTrue();
+  SmithrilTerm getFalse();
+  SmithrilTerm buildFreshBoolConst();
+  SmithrilTerm getInitialRead(const Array *os, unsigned index);
 
-  smithril::SmithrilTerm construct(ref<Expr> e) {
-    smithril::SmithrilTerm res = construct(std::move(e), nullptr);
+  SmithrilTerm construct(ref<Expr> e) {
+    SmithrilTerm res = construct(std::move(e), nullptr);
     if (autoClearConstructCache)
       clearConstructCache();
     return res;

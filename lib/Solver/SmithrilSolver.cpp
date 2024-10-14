@@ -453,34 +453,6 @@ bool SmithrilSolverImpl::internalRunSolver(
     }
   }
 
-  // if (ProduceUnsatCore && validityCore && satisfiable == SolverResult::Unsat)
-  // {
-
-  //   const SmithrilTermVector smithril_unsat_core_vec =
-  //       smithril_unsat_core(theSolver);
-  //   const std::unordered_set<SmithrilTerm> smithril_term_unsat_core(
-  //       smithril_unsat_core_vec.begin(), smithril_unsat_core_vec.end());
-
-  //   constraints_ty unsatCore;
-  //   for (const auto &smithril_constraint : env.expr_to_track) {
-  //     if (smithril_term_unsat_core.count(smithril_constraint)) {
-  //       ref<Expr> constraint =
-  //           env.smithril_ast_expr_to_klee_expr[smithril_constraint];
-  //       if (Expr::createIsZero(constraint) != query.getOriginalQueryExpr()) {
-  //         unsatCore.insert(constraint);
-  //       }
-  //     }
-  //   }
-  //   assert(validityCore && "validityCore cannot be nullptr");
-  //   *validityCore = ValidityCore(unsatCore, query.getOriginalQueryExpr());
-
-  //   stats::validQueriesSize +=
-  //       theSolver.get_assertions().size(); // mixa117 we dont have that?
-  //   // mixa117 maybe not needed if redo as z3
-  //   stats::validityCoresSize += smithril_unsat_core_vec.size();
-  //   ++stats::queryValidityCores;
-  // }
-  // mixa117 redo that part above as z3 below
   if (ProduceUnsatCore && validityCore &&
       satisfiable == smithril::SolverResult::Unsat) {
     constraints_ty unsatCore;
@@ -547,7 +519,7 @@ bool SmithrilSolverImpl::internalRunSolver(
   return false; // failed
 }
 
-// mixa117 version from bitwuzla (not good), z3 is bad too(have models we don't)
+// mixa117 handleSolverResponse - double check (for me)
 SolverImpl::SolverRunStatus SmithrilSolverImpl::handleSolverResponse(
     smithril::SmithrilSolver theSolver, smithril::SolverResult satisfiable,
     const SmithrilSolverEnv &env, ObjectAssignment needObjects,
@@ -574,7 +546,6 @@ SolverImpl::SolverRunStatus SmithrilSolverImpl::handleSolverResponse(
               theSolver, builder->construct(offsetExpr));
 
           uint64_t concretizedOffsetValue = std::stoull(arrayElementOffsetExpr);
-          // mixa117 works if eval return in decimal str (not binary?)
           offsetValues.insert(concretizedOffsetValue);
         }
 
@@ -623,15 +594,13 @@ public:
                                               SmithrilASTIncSet &) override {
     auto ctx = builder->ctx;
 
-    // smithril::SmithrilSolver theSolver = smithril::smithril_new_solver(ctx,
-    // solverParameters);
-    // mixa117 uncomment when solverParameters ready
-    smithril::SmithrilSolver theSolver = smithril::smithril_new_solver(ctx);
+    smithril::SmithrilSolver theSolver =
+        smithril::smithril_new_solver(ctx, solverParameters);
     return theSolver;
   }
 
   void deinitNativeSmithril(smithril::SmithrilSolver theSolver) override {
-    deinitNativeSmithril(theSolver); // mixa117 why?
+    deleteNativeSmithril(theSolver);
   }
 
   void push(smithril::SmithrilSolver) override {}
@@ -694,11 +663,10 @@ struct ConstraintDistance {
 
 class SmithrilIncNativeSolver {
 private:
-  std::optional<SmithrilSolver> nativeSolver;
-  SmithrilContext
-      solverContext; // mixa117 added (was in z3 not bitwuzla), maybe should add
-                     // mixa117 all ctx instances like in z3?
-  SmithrilOptions solverParameters;
+  std::optional<smithril::SmithrilSolver> nativeSolver;
+  smithril::SmithrilContext solverContext;
+
+  smithril::SmithrilOptions solverParameters;
   /// underlying solver frames
   /// saved only for calculating distances from next queries
   ConstraintFrames frames;
@@ -710,7 +678,7 @@ public:
   std::uint32_t stateID = 0;
   bool isRecycled = false;
 
-  SmithrilIncNativeSolver(SmithrilOptions solverParameters)
+  SmithrilIncNativeSolver(smithril::SmithrilOptions solverParameters)
       : solverParameters(solverParameters) {}
   ~SmithrilIncNativeSolver();
 
@@ -720,7 +688,7 @@ public:
 
   void popPush(ConstraintDistance &delta);
 
-  SmithrilSolver &getOrInit();
+  smithril::SmithrilSolver getOrInit();
 
   bool isConsistent() const {
     return frames.framesSize() == env.objects.framesSize();
@@ -732,9 +700,8 @@ public:
 void SmithrilIncNativeSolver::pop(size_t popSize) {
   if (!nativeSolver || !popSize)
     return;
-  smithril_pop(nativeSolver.value());
-  // mixa117 should use !!!popSize!!! like
-  // "nativeSolver.value().pop(popSize);" in bitwuzla
+  smithril::smithril_pop(nativeSolver.value(), popSize);
+  // mixa117  !!!popSize!!! fixed
 }
 
 void SmithrilIncNativeSolver::popPush(ConstraintDistance &delta) {
@@ -744,20 +711,16 @@ void SmithrilIncNativeSolver::popPush(ConstraintDistance &delta) {
   frames.extend(delta.toPush.constraints);
 }
 
-SmithrilSolver &SmithrilIncNativeSolver::getOrInit() {
-  if (!nativeSolver.has_value()) { // mixa117 good?
-    nativeSolver = smithril_new_solver(solverContext);
-    // Z3_solver_inc_ref(solverContext, nativeSolver);
-    // mixa117 no such thing?
-    // Z3_solver_set_params(solverContext, nativeSolver, solverParameters);
-    // mixa117 no such thing?
+smithril::SmithrilSolver SmithrilIncNativeSolver::getOrInit() {
+  if (!nativeSolver.has_value()) {
+    nativeSolver = smithril_new_solver(solverContext, solverParameters);
   }
   return nativeSolver.value();
 }
 
 SmithrilIncNativeSolver::~SmithrilIncNativeSolver() {
   if (nativeSolver.has_value()) {
-    deleteNativeSmithril(nativeSolver);
+    deleteNativeSmithril(nativeSolver.value());
   }
 }
 
@@ -819,18 +782,17 @@ private:
 public:
   SmithrilTreeSolverImpl(size_t maxSolvers) : maxSolvers(maxSolvers){};
 
-  /// implementation of BitwuzlaSolverImpl interface
-  SmithrilSolver &initNativeSmithril(const ConstraintQuery &,
-                                     SmithrilASTIncSet &) override {
+  /// implementation of SmithrilSolverImpl interface
+  smithril::SmithrilSolver initNativeSmithril(const ConstraintQuery &,
+                                              SmithrilASTIncSet &) override {
     return currentSolver->getOrInit();
   }
-  void deinitNativeSmithril(SmithrilSolver &) override {
+
+  void deinitNativeSmithril(smithril::SmithrilSolver) override {
     assert(currentSolver->isConsistent());
     solvers.push_back(std::move(currentSolver));
   }
-  void push(SmithrilSolver &s) override {
-    smithril_push(s);
-  } // mixa117 s.push(1) - that was with bitwuzla (in z3 seems ok without '1')
+  void push(smithril::SmithrilSolver s) override { smithril_push(s); }
 
   /// implementation of the SolverImpl interface
   bool computeTruth(const Query &query, bool &isValid) override;
@@ -949,5 +911,5 @@ SmithrilTreeSolver::SmithrilTreeSolver(unsigned maxSolvers)
 
 } // namespace klee
 
-#ifdef ENABLE_SMITHRIL // mixa117 move to start?
+#ifdef ENABLE_SMITHRIL // mixa117 move to start? (fix not grey)
 #endif

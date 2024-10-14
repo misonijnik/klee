@@ -12,8 +12,8 @@
 // #ifdef ENABLE_SMITHRIL
 // mixa117 uncomment later
 
-#include "BitwuzlaHashConfig.h"
 #include "SmithrilBuilder.h"
+#include "SmithrilHashConfig.h"
 #include "klee/ADT/Bits.h"
 
 #include "klee/Expr/Expr.h"
@@ -23,17 +23,18 @@
 
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/StringExtras.h"
+#include <smithril.h>
 
 namespace klee {
 
-BitwuzlaArrayExprHash::~BitwuzlaArrayExprHash() {}
+SmithrilArrayExprHash::~SmithrilArrayExprHash() {}
 
-void BitwuzlaArrayExprHash::clear() {
+void SmithrilArrayExprHash::clear() {
   _update_node_hash.clear();
   _array_hash.clear();
 }
 
-void BitwuzlaArrayExprHash::clearUpdates() { _update_node_hash.clear(); }
+void SmithrilArrayExprHash::clearUpdates() { _update_node_hash.clear(); }
 
 SmithrilBuilder::SmithrilBuilder(bool autoClearConstructCache)
     : autoClearConstructCache(autoClearConstructCache) {
@@ -45,122 +46,132 @@ SmithrilBuilder::~SmithrilBuilder() {
   clearSideConstraints();
 }
 
-Sort SmithrilBuilder::getBoolSort() {
+SmithrilSort SmithrilBuilder::getBoolSort() {
   // FIXME: cache these
-  return mk_bool_sort();
+  return smithril_mk_bool_sort(ctx);
 }
 
-Sort SmithrilBuilder::getBvSort(unsigned width) {
+SmithrilSort SmithrilBuilder::getBvSort(unsigned width) {
   // FIXME: cache these
-  return mk_bv_sort(width);
+  return smithril_mk_bv_sort(ctx, width);
 }
 
-smithril::SmithrilSort SmithrilBuilder::getBvSortNew(unsigned width) {
+SmithrilSort SmithrilBuilder::getArraySort(SmithrilSort domainSort,
+                                           SmithrilSort rangeSort) {
   // FIXME: cache these
-  return mk_bv_sort(width);
+  return smithril_mk_array_sort(ctx, domainSort, rangeSort);
 }
 
-Sort SmithrilBuilder::getArraySort(Sort domainSort, Sort rangeSort) {
-  // FIXME: cache these
-  return mk_array_sort(domainSort, rangeSort);
+SmithrilTerm SmithrilBuilder::buildFreshBoolConst() {
+  return smithril_mk_fresh_smt_symbol(ctx, getBoolSort());
 }
 
-Term SmithrilBuilder::buildFreshBoolConst() { return mk_const(getBoolSort()); }
-
-Term SmithrilBuilder::buildArray(const char *name, unsigned indexWidth,
-                                 unsigned valueWidth) {
-  Sort domainSort = getBvSort(indexWidth);
-  Sort rangeSort = getBvSort(valueWidth);
-  Sort t = getArraySort(domainSort, rangeSort);
-  return mk_const(t, std::string(name));
+SmithrilTerm SmithrilBuilder::buildArray(const char *name, unsigned indexWidth,
+                                         unsigned valueWidth) {
+  SmithrilSort domainSort = getBvSort(indexWidth);
+  SmithrilSort rangeSort = getBvSort(valueWidth);
+  SmithrilSort t = getArraySort(domainSort, rangeSort);
+  return smithril_mk_smt_symbol(ctx, name,
+                                t); // mk_const(t, std::string(name));
 }
 
-Term SmithrilBuilder::buildConstantArray(const char *, unsigned indexWidth,
-                                         unsigned valueWidth, unsigned value) {
-  Sort domainSort = getBvSort(indexWidth);
-  Sort rangeSort = getBvSort(valueWidth);
-  return mk_const_array(getArraySort(domainSort, rangeSort),
-                        bvConst32(valueWidth, value));
+SmithrilTerm SmithrilBuilder::buildConstantArray(const char *,
+                                                 unsigned indexWidth,
+                                                 unsigned valueWidth,
+                                                 unsigned value) {
+  SmithrilSort domainSort = getBvSort(indexWidth);
+  SmithrilSort rangeSort = getBvSort(valueWidth);
+  return mk_const_array(
+      getArraySort(
+          domainSort,
+          rangeSort), // mixa117 - waiting new mk_fresh_array_smt_symnol
+      bvConst32(valueWidth, value));
 }
 
-Term SmithrilBuilder::getTrue() { return mk_true(); }
-
-Term SmithrilBuilder::getFalse() { return mk_false(); }
-
-Term SmithrilBuilder::bvOne(unsigned width) {
-  return mk_bv_one(getBvSort(width));
+SmithrilTerm SmithrilBuilder::getTrue() {
+  return smithril_mk_smt_bool(ctx, true);
 }
-Term SmithrilBuilder::bvZero(unsigned width) {
-  return mk_bv_zero(getBvSort(width));
+
+SmithrilTerm SmithrilBuilder::getFalse() {
+  return smithril_mk_smt_bool(ctx, false);
 }
-Term SmithrilBuilder::bvMinusOne(unsigned width) {
+
+SmithrilTerm SmithrilBuilder::bvOne(unsigned width) {
+  return bvZExtConst(width, 1);
+}
+SmithrilTerm SmithrilBuilder::bvZero(unsigned width) {
+  return bvZExtConst(width, 0);
+}
+SmithrilTerm SmithrilBuilder::bvMinusOne(unsigned width) {
   return bvZExtConst(width, (uint64_t)-1);
 }
-Term SmithrilBuilder::bvConst32(unsigned width, uint32_t value) {
+SmithrilTerm SmithrilBuilder::bvConst32(unsigned width, uint32_t value) {
   if (width < 32) {
     value &= ((1 << width) - 1);
   }
-  return mk_bv_value_uint64(getBvSort(width), value);
+  return smithril_mk_bv_value_uint64(ctx, getBvSort(width), value);
 }
-Term SmithrilBuilder::bvConst64(unsigned width, uint64_t value) {
+SmithrilTerm SmithrilBuilder::bvConst64(unsigned width, uint64_t value) {
   if (width < 64) {
     value &= ((uint64_t(1) << width) - 1);
   }
-  return mk_bv_value_uint64(getBvSort(width), value);
+  return smithril_mk_bv_value_uint64(ctx, getBvSort(width), value);
 }
-Term SmithrilBuilder::bvZExtConst(unsigned width, uint64_t value) {
+SmithrilTerm SmithrilBuilder::bvZExtConst(unsigned width, uint64_t value) {
   if (width <= 64) {
     return bvConst64(width, value);
   }
-  std::vector<Term> terms = {bvConst64(64, value)};
-  for (width -= 64; width > 64; width -= 64) {
-    terms.push_back(bvConst64(64, 0));
-  }
-  terms.push_back(bvConst64(width, 0));
-  return mk_term(Kind::BV_CONCAT, terms);
+  SmithrilTerm expr = bvConst64(64, value);
+  SmithrilTerm zero = bvConst64(64, 0);
+  for (width -= 64; width > 64; width -= 64)
+    expr = smithril_mk_concat(ctx, zero, expr);
+  return smithril_mk_concat(ctx, bvConst64(width, 0), expr);
 }
 
-Term SmithrilBuilder::bvSExtConst(unsigned width, uint64_t value) {
+SmithrilTerm SmithrilBuilder::bvSExtConst(unsigned width, uint64_t value) {
   if (width <= 64) {
     return bvConst64(width, value);
   }
 
-  Sort t = getBvSort(width - 64);
+  SmithrilSort t = getBvSort(width - 64);
   if (value >> 63) {
-    return mk_term(Kind::BV_CONCAT,
-                   {bvMinusOne(width - 64), bvConst64(64, value)});
+    return smithril_mk_concat(ctx, bvMinusOne(width - 64),
+                              bvConst64(64, value));
+    return smithril_mk_concat(ctx, bvZero(width - 64), bvConst64(64, value));
   }
-  return mk_term(Kind::BV_CONCAT, {bvZero(width - 64), bvConst64(64, value)});
 }
 
-Term SmithrilBuilder::bvBoolExtract(Term expr, int bit) {
-  return mk_term(Kind::EQUAL, {bvExtract(expr, bit, bit), bvOne(1)});
+SmithrilTerm SmithrilBuilder::bvBoolExtract(SmithrilTerm expr, int bit) {
+  return smithril_mk_eq(ctx, bvExtract(expr, bit, bit), bvOne(1));
 }
 
-Term SmithrilBuilder::bvExtract(Term expr, unsigned top, unsigned bottom) {
-  return mk_term(Kind::BV_EXTRACT, {castToBitVector(expr)}, {top, bottom});
+SmithrilTerm SmithrilBuilder::bvExtract(SmithrilTerm expr, unsigned top,
+                                        unsigned bottom) {
+  return smithril_mk_extract(ctx, top, bottom, castToBitVector(expr));
 }
 
-Term SmithrilBuilder::eqExpr(Term a, Term b) {
+SmithrilTerm SmithrilBuilder::eqExpr(SmithrilTerm a, SmithrilTerm b) {
   // Handle implicit bitvector/float coercision
-  Sort aSort = a.sort();
-  Sort bSort = b.sort();
+  SmithrilSort aSort = smithril_get_sort(ctx, a);
+  SmithrilSort bSort = smithril_get_sort(ctx, b);
 
-  if (aSort.is_bool() && bSort.is_fp()) {
+  if (smithril_get_sort_kind(aSort) == SortKind::Bv &&
+      smithril_get_sort_kind(bSort) == SortKind::Fp) {
     // Coerce `b` to be a bitvector
     b = castToBitVector(b);
   }
 
-  if (aSort.is_fp() && bSort.is_bool()) {
+  if (smithril_get_sort_kind(aSort) == SortKind::Fp &&
+      smithril_get_sort_kind(bSort) == SortKind::Bv) {
     // Coerce `a` to be a bitvector
     a = castToBitVector(a);
   }
-  return mk_term(Kind::EQUAL, {a, b});
+  return smithril_mk_eq(ctx, a, b);
 }
 
 // logical right shift
-Term SmithrilBuilder::bvRightShift(Term expr, unsigned shift) {
-  Term exprAsBv = castToBitVector(expr);
+SmithrilTerm SmithrilBuilder::bvRightShift(SmithrilTerm expr, unsigned shift) {
+  SmithrilTerm exprAsBv = castToBitVector(expr);
   unsigned width = getBVLength(exprAsBv);
 
   if (shift == 0) {
@@ -168,13 +179,13 @@ Term SmithrilBuilder::bvRightShift(Term expr, unsigned shift) {
   } else if (shift >= width) {
     return bvZero(width); // Overshift to zero
   } else {
-    return mk_term(Kind::BV_SHR, {exprAsBv, bvConst32(width, shift)});
+    return smithril_mk_bvlshr(ctx, exprAsBv, bvConst32(width, shift));
   }
 }
 
 // logical left shift
-Term SmithrilBuilder::bvLeftShift(Term expr, unsigned shift) {
-  Term exprAsBv = castToBitVector(expr);
+SmithrilTerm SmithrilBuilder::bvLeftShift(SmithrilTerm expr, unsigned shift) {
+  SmithrilTerm exprAsBv = castToBitVector(expr);
   unsigned width = getBVLength(exprAsBv);
 
   if (shift == 0) {
@@ -182,152 +193,166 @@ Term SmithrilBuilder::bvLeftShift(Term expr, unsigned shift) {
   } else if (shift >= width) {
     return bvZero(width); // Overshift to zero
   } else {
-    return mk_term(Kind::BV_SHL, {exprAsBv, bvConst32(width, shift)});
+    return smithril_mk_bvshl(ctx, exprAsBv, bvConst32(width, shift));
   }
 }
 
 // left shift by a variable amount on an expression of the specified width
-Term SmithrilBuilder::bvVarLeftShift(Term expr, Term shift) {
-  Term exprAsBv = castToBitVector(expr);
-  Term shiftAsBv = castToBitVector(shift);
+SmithrilTerm SmithrilBuilder::bvVarLeftShift(SmithrilTerm expr,
+                                             SmithrilTerm shift) {
+  SmithrilTerm exprAsBv = castToBitVector(expr);
+  SmithrilTerm shiftAsBv = castToBitVector(shift);
 
   unsigned width = getBVLength(exprAsBv);
-  Term res = mk_term(Kind::BV_SHL, {exprAsBv, shiftAsBv});
+  SmithrilTerm res = smithril_mk_bvshl(ctx, exprAsBv, shiftAsBv);
 
   // If overshifting, shift to zero
-  Term ex = bvLtExpr(shiftAsBv, bvConst32(getBVLength(shiftAsBv), width));
+  SmithrilTerm ex =
+      bvLtExpr(shiftAsBv, bvConst32(getBVLength(shiftAsBv), width));
   res = iteExpr(ex, res, bvZero(width));
   return res;
 }
 
 // logical right shift by a variable amount on an expression of the specified
 // width
-Term SmithrilBuilder::bvVarRightShift(Term expr, Term shift) {
-  Term exprAsBv = castToBitVector(expr);
-  Term shiftAsBv = castToBitVector(shift);
+SmithrilTerm SmithrilBuilder::bvVarRightShift(SmithrilTerm expr,
+                                              SmithrilTerm shift) {
+  SmithrilTerm exprAsBv = castToBitVector(expr);
+  SmithrilTerm shiftAsBv = castToBitVector(shift);
 
   unsigned width = getBVLength(exprAsBv);
-  Term res = mk_term(Kind::BV_SHR, {exprAsBv, shiftAsBv});
+  SmithrilTerm res = smithril_mk_bvlshr(ctx, exprAsBv, shiftAsBv);
 
   // If overshifting, shift to zero
-  Term ex = bvLtExpr(shiftAsBv, bvConst32(getBVLength(shiftAsBv), width));
+  SmithrilTerm ex =
+      bvLtExpr(shiftAsBv, bvConst32(getBVLength(shiftAsBv), width));
   res = iteExpr(ex, res, bvZero(width));
   return res;
 }
 
-// arithmetic right shift by a variable amount on an expression of the specified
-// width
-Term SmithrilBuilder::bvVarArithRightShift(Term expr, Term shift) {
-  Term exprAsBv = castToBitVector(expr);
-  Term shiftAsBv = castToBitVector(shift);
+// arithmetic right shift by a variable amount on an expression of the
+// specified width
+SmithrilTerm SmithrilBuilder::bvVarArithRightShift(SmithrilTerm expr,
+                                                   SmithrilTerm shift) {
+  SmithrilTerm exprAsBv = castToBitVector(expr);
+  SmithrilTerm shiftAsBv = castToBitVector(shift);
 
   unsigned width = getBVLength(exprAsBv);
 
-  Term res = mk_term(Kind::BV_ASHR, {exprAsBv, shiftAsBv});
+  SmithrilTerm res = smithril_mk_bvashr(ctx, exprAsBv, shiftAsBv);
 
   // If overshifting, shift to zero
-  Term ex = bvLtExpr(shiftAsBv, bvConst32(getBVLength(shiftAsBv), width));
+  SmithrilTerm ex =
+      bvLtExpr(shiftAsBv, bvConst32(getBVLength(shiftAsBv), width));
   res = iteExpr(ex, res, bvZero(width));
   return res;
 }
 
-Term SmithrilBuilder::notExpr(Term expr) { return mk_term(Kind::NOT, {expr}); }
-Term SmithrilBuilder::andExpr(Term lhs, Term rhs) {
-  return mk_term(Kind::AND, {lhs, rhs});
+SmithrilTerm SmithrilBuilder::notExpr(SmithrilTerm expr) {
+  return smithril_mk_not(ctx, expr);
 }
-Term SmithrilBuilder::orExpr(Term lhs, Term rhs) {
-  return mk_term(Kind::OR, {lhs, rhs});
+SmithrilTerm SmithrilBuilder::andExpr(SmithrilTerm lhs, SmithrilTerm rhs) {
+  return smithril_mk_and(ctx, lhs, rhs);
 }
-Term SmithrilBuilder::iffExpr(Term lhs, Term rhs) {
-  return mk_term(Kind::IFF, {lhs, rhs});
+SmithrilTerm SmithrilBuilder::orExpr(SmithrilTerm lhs, SmithrilTerm rhs) {
+  return smithril_mk_or(ctx, lhs, rhs);
 }
-
-Term SmithrilBuilder::bvNotExpr(Term expr) {
-  return mk_term(Kind::BV_NOT, {castToBitVector(expr)});
+SmithrilTerm SmithrilBuilder::iffExpr(SmithrilTerm lhs, SmithrilTerm rhs) {
+  return mk_term(Kind::IFF, {lhs, rhs}); // mixa117 no such?
 }
 
-Term SmithrilBuilder::bvAndExpr(Term lhs, Term rhs) {
-  return mk_term(Kind::BV_AND, {castToBitVector(lhs), castToBitVector(rhs)});
+SmithrilTerm SmithrilBuilder::bvNotExpr(SmithrilTerm expr) {
+  return smithril_mk_bvnot(ctx, expr);
 }
 
-Term SmithrilBuilder::bvOrExpr(Term lhs, Term rhs) {
-  return mk_term(Kind::BV_OR, {castToBitVector(lhs), castToBitVector(rhs)});
+SmithrilTerm SmithrilBuilder::bvAndExpr(SmithrilTerm lhs, SmithrilTerm rhs) {
+  return smithril_mk_bvand(ctx, lhs, rhs);
 }
 
-Term SmithrilBuilder::bvXorExpr(Term lhs, Term rhs) {
-  return mk_term(Kind::BV_XOR, {castToBitVector(lhs), castToBitVector(rhs)});
+SmithrilTerm SmithrilBuilder::bvOrExpr(SmithrilTerm lhs, SmithrilTerm rhs) {
+  return smithril_mk_bvor(ctx, lhs, rhs);
 }
 
-Term SmithrilBuilder::bvSignExtend(Term src, unsigned width) {
-  Term srcAsBv = castToBitVector(src);
-  unsigned src_width = srcAsBv.sort().bv_size();
-  assert(src_width <= width && "attempted to extend longer data");
-
-  if (width <= 64) {
-    return mk_term(Kind::BV_SIGN_EXTEND, {srcAsBv}, {width - src_width});
-  }
-
-  Term signBit = bvBoolExtract(srcAsBv, src_width - 1);
-  Term zeroExtended =
-      mk_term(Kind::BV_CONCAT, {bvZero(width - src_width), src});
-  Term oneExtended =
-      mk_term(Kind::BV_CONCAT, {bvMinusOne(width - src_width), src});
-
-  return mk_term(Kind::ITE, {signBit, oneExtended, zeroExtended});
+SmithrilTerm SmithrilBuilder::bvXorExpr(SmithrilTerm lhs, SmithrilTerm rhs) {
+  return smithril_mk_bvxor(ctx, lhs, rhs);
 }
 
-Term SmithrilBuilder::writeExpr(Term array, Term index, Term value) {
-  return mk_term(Kind::ARRAY_STORE, {array, index, value});
+// mixa117 uncomment + fix
+// SmithrilTerm
+// SmithrilBuilder::bvSignExtend(SmithrilTerm src,
+//                               unsigned width) { // mixa117 not such?
+//   SmithrilTerm srcAsBv = castToBitVector(src);
+//   unsigned src_width = srcAsBv.sort().bv_size();
+//   assert(src_width <= width && "attempted to extend longer data");
+//   smithril_mk_bvsge(struct SmithrilContext context, struct SmithrilTerm
+//   term1,
+//                     struct SmithrilTerm term2) if (width <= 64) {
+//     return mk_term(Kind::BV_SIGN_EXTEND, {srcAsBv}, {width - src_width});
+//   }
+
+//   SmithrilTerm signBit = bvBoolExtract(srcAsBv, src_width - 1);
+//   SmithrilTerm zeroExtended =
+//       mk_term(Kind::BV_CONCAT, {bvZero(width - src_width), src});
+//   SmithrilTerm oneExtended =
+//       mk_term(Kind::BV_CONCAT, {bvMinusOne(width - src_width), src});
+
+//   return mk_term(Kind::ITE, {signBit, oneExtended, zeroExtended});
+// }
+
+SmithrilTerm SmithrilBuilder::writeExpr(SmithrilTerm array, SmithrilTerm index,
+                                        SmithrilTerm value) {
+  return smithril_mk_store(ctx, array, index, value);
 }
 
-Term SmithrilBuilder::readExpr(Term array, Term index) {
-  return mk_term(Kind::ARRAY_SELECT, {array, index});
+SmithrilTerm SmithrilBuilder::readExpr(SmithrilTerm array, SmithrilTerm index) {
+  return smithril_mk_select(ctx, array, index); // mixa117 no smithril_mk_select
 }
 
-unsigned SmithrilBuilder::getBVLength(Term expr) {
-  if (!expr.sort().is_bv()) {
-    klee_error("getBVLength() accepts only bitvector, given %s",
-               expr.sort().str().c_str());
-  }
-  return expr.sort().bv_size();
+unsigned SmithrilBuilder::getBVLength(SmithrilTerm expr) {
+  return expr.sort().bv_size(); // mixa117 no such?
 }
 
-Term SmithrilBuilder::iteExpr(Term condition, Term whenTrue, Term whenFalse) {
-  // Handle implicit bitvector/float coercision
-  Sort whenTrueSort = whenTrue.sort();
-  Sort whenFalseSort = whenFalse.sort();
+// mixa117 uncomment later
+//  SmithrilTerm SmithrilBuilder::iteExpr(SmithrilTerm condition,
+//                                        SmithrilTerm whenTrue,
+//                                        SmithrilTerm whenFalse) {
+//    // Handle implicit bitvector/float coercision
+//    SmithrilSort whenTrueSort = smithril_get_sort(ctx, whenTrue);
+//    SmithrilSort whenFalseSort = smithril_get_sort(ctx, whenFalse);
 
-  if (whenTrueSort.is_bv() && whenFalseSort.is_fp()) {
-    // Coerce `whenFalse` to be a bitvector
-    whenFalse = castToBitVector(whenFalse);
-  }
+//   if (whenTrueSort.is_bv() && whenFalseSort.is_fp()) {
+//     // Coerce `whenFalse` to be a bitvector
+//     whenFalse = castToBitVector(whenFalse);
+//   }
 
-  if (whenTrueSort.is_fp() && whenFalseSort.is_bv()) {
-    // Coerce `whenTrue` to be a bitvector
-    whenTrue = castToBitVector(whenTrue);
-  }
-  return mk_term(Kind::ITE, {condition, whenTrue, whenFalse});
+//   if (whenTrueSort.is_fp() && whenFalseSort.is_bv()) {
+//     // Coerce `whenTrue` to be a bitvector
+//     whenTrue = castToBitVector(whenTrue);
+//   }
+//   return mk_term(Kind::ITE,
+//                  {condition, whenTrue, whenFalse}); // mixa117 no such?
+// }
+
+SmithrilTerm SmithrilBuilder::bvLtExpr(SmithrilTerm lhs, SmithrilTerm rhs) {
+  return smithril_mk_bvult(ctx, castToBitVector(lhs), castToBitVector(rhs));
 }
 
-Term SmithrilBuilder::bvLtExpr(Term lhs, Term rhs) {
-  return mk_term(Kind::BV_ULT, {castToBitVector(lhs), castToBitVector(rhs)});
+SmithrilTerm SmithrilBuilder::bvLeExpr(SmithrilTerm lhs, SmithrilTerm rhs) {
+  return smithril_mk_bvule(ctx, castToBitVector(lhs), castToBitVector(rhs));
 }
 
-Term SmithrilBuilder::bvLeExpr(Term lhs, Term rhs) {
-  return mk_term(Kind::BV_ULE, {castToBitVector(lhs), castToBitVector(rhs)});
+SmithrilTerm SmithrilBuilder::sbvLtExpr(SmithrilTerm lhs, SmithrilTerm rhs) {
+  return smithril_mk_bvslt(ctx, castToBitVector(lhs), castToBitVector(rhs));
 }
 
-Term SmithrilBuilder::sbvLtExpr(Term lhs, Term rhs) {
-  return mk_term(Kind::BV_SLT, {castToBitVector(lhs), castToBitVector(rhs)});
+SmithrilTerm SmithrilBuilder::sbvLeExpr(SmithrilTerm lhs, SmithrilTerm rhs) {
+  return smithril_mk_bvsle(ctx, castToBitVector(lhs), castToBitVector(rhs));
 }
 
-Term SmithrilBuilder::sbvLeExpr(Term lhs, Term rhs) {
-  return mk_term(Kind::BV_SLE, {castToBitVector(lhs), castToBitVector(rhs)});
-}
-
-Term SmithrilBuilder::constructAShrByConstant(Term expr, unsigned shift,
-                                              Term isSigned) {
-  Term exprAsBv = castToBitVector(expr);
+SmithrilTerm SmithrilBuilder::constructAShrByConstant(SmithrilTerm expr,
+                                                      unsigned shift,
+                                                      SmithrilTerm isSigned) {
+  SmithrilTerm exprAsBv = castToBitVector(expr);
   unsigned width = getBVLength(exprAsBv);
 
   if (shift == 0) {
@@ -335,19 +360,19 @@ Term SmithrilBuilder::constructAShrByConstant(Term expr, unsigned shift,
   } else if (shift >= width) {
     return bvZero(width); // Overshift to zero
   } else {
-    // FIXME: Is this really the best way to interact with Bitwuzla?
-    Term signed_term =
-        mk_term(Kind::BV_CONCAT,
-                {bvMinusOne(shift), bvExtract(exprAsBv, width - 1, shift)});
-    Term unsigned_term = bvRightShift(exprAsBv, shift);
+    // FIXME: Is this really the best way to interact with Smithril?
+    SmithrilTerm signed_term = smithril_mk_concat(
+        ctx, bvMinusOne(shift), bvExtract(exprAsBv, width - 1, shift));
+    SmithrilTerm unsigned_term = bvRightShift(exprAsBv, shift);
 
-    return mk_term(Kind::ITE, {isSigned, signed_term, unsigned_term});
+    return mk_term(Kind::ITE,
+                   {isSigned, signed_term, unsigned_term}); // mixa117 no such?
   }
 }
 
-Term SmithrilBuilder::getInitialArray(const Array *root) {
+SmithrilTerm SmithrilBuilder::getInitialArray(const Array *root) {
   assert(root);
-  Term array_expr;
+  SmithrilTerm array_expr;
   bool hashed = _arr_hash.lookupArrayExpr(root, array_expr);
 
   if (!hashed) {
@@ -372,13 +397,13 @@ Term SmithrilBuilder::getInitialArray(const Array *root) {
 
     if (source) {
       if (auto constSize = dyn_cast<ConstantExpr>(root->size)) {
-        std::vector<Term> array_assertions;
+        std::vector<SmithrilTerm> array_assertions;
         for (size_t i = 0; i < constSize->getZExtValue(); i++) {
           auto value = source->constantValues->load(i);
           // construct(= (select i root) root->value[i]) to be asserted in
-          // BitwuzlaSolver.cpp
+          // SmithrilSolver.cpp
           int width_out;
-          Term array_value = construct(value, &width_out);
+          SmithrilTerm array_value = construct(value, &width_out);
           assert(width_out == (int)root->getRange() &&
                  "Value doesn't match root range");
           array_assertions.push_back(
@@ -389,7 +414,7 @@ Term SmithrilBuilder::getInitialArray(const Array *root) {
       } else {
         for (const auto &[index, value] : source->constantValues->storage()) {
           int width_out;
-          Term array_value = construct(value, &width_out);
+          SmithrilTerm array_value = construct(value, &width_out);
           assert(width_out == (int)root->getRange() &&
                  "Value doesn't match root range");
           array_expr = writeExpr(
@@ -404,15 +429,16 @@ Term SmithrilBuilder::getInitialArray(const Array *root) {
   return array_expr;
 }
 
-Term SmithrilBuilder::getInitialRead(const Array *root, unsigned index) {
+SmithrilTerm SmithrilBuilder::getInitialRead(const Array *root,
+                                             unsigned index) {
   return readExpr(getInitialArray(root), bvConst32(32, index));
 }
 
-Term SmithrilBuilder::getArrayForUpdate(const Array *root,
-                                        const UpdateNode *un) {
-  // Iterate over the update nodes, until we find a cached version of the node,
-  // or no more update nodes remain
-  Term un_expr;
+SmithrilTerm SmithrilBuilder::getArrayForUpdate(const Array *root,
+                                                const UpdateNode *un) {
+  // Iterate over the update nodes, until we find a cached version of the
+  // node, or no more update nodes remain
+  SmithrilTerm un_expr;
   std::vector<const UpdateNode *> update_nodes;
   for (; un && !_arr_hash.lookupUpdateNodeExpr(un, un_expr);
        un = un->next.get()) {
@@ -424,8 +450,8 @@ Term SmithrilBuilder::getArrayForUpdate(const Array *root,
   // `un_expr` now holds an expression for the array - either from cache or by
   // virtue of being the initial array expression
 
-  // Create and cache solver expressions based on the update nodes starting from
-  // the oldest
+  // Create and cache solver expressions based on the update nodes starting
+  // from the oldest
   for (const auto &un :
        llvm::make_range(update_nodes.crbegin(), update_nodes.crend())) {
     un_expr =
@@ -437,11 +463,12 @@ Term SmithrilBuilder::getArrayForUpdate(const Array *root,
   return un_expr;
 }
 
-Term SmithrilBuilder::construct(ref<Expr> e, int *width_out) {
-  if (!BitwuzlaHashConfig::UseConstructHashBitwuzla || isa<ConstantExpr>(e)) {
+SmithrilTerm SmithrilBuilder::construct(ref<Expr> e, int *width_out) {
+  if (!SmithrilHashConfig::UseConstructHashSmithril || isa<ConstantExpr>(e)) {
     return constructActual(e, width_out);
   } else {
-    ExprHashMap<std::pair<Term, unsigned>>::iterator it = constructed.find(e);
+    ExprHashMap<std::pair<SmithrilTerm, unsigned>>::iterator it =
+        constructed.find(e);
     if (it != constructed.end()) {
       if (width_out)
         *width_out = it->second.second;
@@ -450,7 +477,7 @@ Term SmithrilBuilder::construct(ref<Expr> e, int *width_out) {
       int width;
       if (!width_out)
         width_out = &width;
-      Term res = constructActual(e, width_out);
+      SmithrilTerm res = constructActual(e, width_out);
       constructed.insert(std::make_pair(e, std::make_pair(res, *width_out)));
       return res;
     }
@@ -466,7 +493,7 @@ void SmithrilBuilder::FPCastWidthAssert([[maybe_unused]] int *width_out,
 
 /** if *width_out!=1 then result is a bitvector,
 otherwise it is a bool */
-Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
+SmithrilTerm SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
 
   int width;
   if (!width_out)
@@ -481,21 +508,19 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
     if (*width_out == 1)
       return CE->isTrue() ? getTrue() : getFalse();
 
-    Term Res;
-    if (*width_out <= 32) {
-      // Fast path.
-      Res = bvConst32(*width_out, CE->getZExtValue(32));
-    } else if (*width_out <= 64) {
-      // Fast path.
-      Res = bvConst64(*width_out, CE->getZExtValue());
-    } else {
-      llvm::SmallString<129> CEUValue;
-      CE->getAPValue().toStringUnsigned(CEUValue);
-      Res = mk_bv_value(mk_bv_sort(CE->getWidth()), CEUValue.str().str(), 10);
-    }
-    // Coerce to float if necesary
-    if (CE->isFloat()) {
-      Res = castToFloat(Res);
+    // Fast path.
+    if (*width_out <= 32)
+      return bvConst32(*width_out, CE->getZExtValue(32));
+    if (*width_out <= 64)
+      return bvConst64(*width_out, CE->getZExtValue());
+
+    ref<ConstantExpr> Tmp = CE;
+    SmithrilTerm Res = bvConst64(64, Tmp->Extract(0, 64)->getZExtValue());
+    while (Tmp->getWidth() > 64) {
+      Tmp = Tmp->Extract(64, Tmp->getWidth() - 64);
+      unsigned Width = std::min(64U, Tmp->getWidth());
+      Res = smithril_mk_concat(
+          ctx, bvConst64(Width, Tmp->Extract(0, Width)->getZExtValue()), Res);
     }
     return Res;
   }
@@ -516,29 +541,26 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
 
   case Expr::Select: {
     SelectExpr *se = cast<SelectExpr>(e);
-    Term cond = construct(se->cond, 0);
-    Term tExpr = construct(se->trueExpr, width_out);
-    Term fExpr = construct(se->falseExpr, width_out);
+    SmithrilTerm cond = construct(se->cond, 0);
+    SmithrilTerm tExpr = construct(se->trueExpr, width_out);
+    SmithrilTerm fExpr = construct(se->falseExpr, width_out);
     return iteExpr(cond, tExpr, fExpr);
   }
 
   case Expr::Concat: {
     ConcatExpr *ce = cast<ConcatExpr>(e);
     unsigned numKids = ce->getNumKids();
-    std::vector<Term> term_args;
-    term_args.reserve(numKids);
-
-    for (unsigned i = 0; i < numKids; ++i) {
-      term_args.push_back(construct(ce->getKid(i), 0));
+    SmithrilTerm res = construct(ce->getKid(numKids - 1), 0);
+    for (int i = numKids - 2; i >= 0; i--) {
+      res = smithril_mk_concat(ctx, construct(ce->getKid(i), 0), res);
     }
-
     *width_out = ce->getWidth();
-    return mk_term(Kind::BV_CONCAT, term_args);
+    return res;
   }
 
   case Expr::Extract: {
     ExtractExpr *ee = cast<ExtractExpr>(e);
-    Term src = construct(ee->expr, width_out);
+    SmithrilTerm src = construct(ee->expr, width_out);
     *width_out = ee->getWidth();
     if (*width_out == 1) {
       return bvBoolExtract(src, ee->offset);
@@ -552,21 +574,21 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
   case Expr::ZExt: {
     int srcWidth;
     CastExpr *ce = cast<CastExpr>(e);
-    Term src = construct(ce->src, &srcWidth);
+    SmithrilTerm src = construct(ce->src, &srcWidth);
     *width_out = ce->getWidth();
     if (srcWidth == 1) {
       return iteExpr(src, bvOne(*width_out), bvZero(*width_out));
     } else {
       assert(*width_out > srcWidth && "Invalid width_out");
-      return mk_term(Kind::BV_CONCAT,
-                     {bvZero(*width_out - srcWidth), castToBitVector(src)});
+      return smithril_mk_concat(ctx, bvZero(*width_out - srcWidth),
+                                castToBitVector(src));
     }
   }
 
   case Expr::SExt: {
     int srcWidth;
     CastExpr *ce = cast<CastExpr>(e);
-    Term src = construct(ce->src, &srcWidth);
+    SmithrilTerm src = construct(ce->src, &srcWidth);
     *width_out = ce->getWidth();
     if (srcWidth == 1) {
       return iteExpr(src, bvMinusOne(*width_out), bvZero(*width_out));
@@ -578,88 +600,87 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
   case Expr::FPExt: {
     int srcWidth;
     FPExtExpr *ce = cast<FPExtExpr>(e);
-    Term src = castToFloat(construct(ce->src, &srcWidth));
+    SmithrilTerm src = castToFloat(construct(ce->src, &srcWidth));
     *width_out = ce->getWidth();
     FPCastWidthAssert(width_out, "Invalid FPExt width");
     assert(*width_out >= srcWidth && "Invalid FPExt");
     // Just use any arounding mode here as we are extending
     auto out_widths = getFloatSortFromBitWidth(*width_out);
-    return mk_term(
-        Kind::FP_TO_FP_FROM_FP,
-        {getRoundingModeSort(llvm::APFloat::rmNearestTiesToEven), src},
-        {out_widths.first, out_widths.second});
+
+    return smithril_mk_fp_to_fp_from_fp( // mixa117 to fix
+        ctx, getRoundingModeSort(llvm::APFloat::rmNearestTiesToEven), src,
+        out_widths.first, out_widths.second);
   }
 
   case Expr::FPTrunc: {
     int srcWidth;
     FPTruncExpr *ce = cast<FPTruncExpr>(e);
-    Term src = castToFloat(construct(ce->src, &srcWidth));
+    SmithrilTerm src = castToFloat(construct(ce->src, &srcWidth));
     *width_out = ce->getWidth();
     FPCastWidthAssert(width_out, "Invalid FPTrunc width");
     assert(*width_out <= srcWidth && "Invalid FPTrunc");
 
     auto out_widths = getFloatSortFromBitWidth(*width_out);
-    return mk_term(
-        Kind::FP_TO_FP_FROM_FP,
-        {getRoundingModeSort(llvm::APFloat::rmNearestTiesToEven), src},
-        {out_widths.first, out_widths.second});
+    return smithril_mk_fp_to_fp_from_fp( // mixa117 to fix
+        ctx, getRoundingModeSort(llvm::APFloat::rmNearestTiesToEven), src,
+        out_widths.first, out_widths.second);
   }
 
   case Expr::FPToUI: {
     int srcWidth;
     FPToUIExpr *ce = cast<FPToUIExpr>(e);
-    Term src = castToFloat(construct(ce->src, &srcWidth));
+    SmithrilTerm src = castToFloat(construct(ce->src, &srcWidth));
     *width_out = ce->getWidth();
     FPCastWidthAssert(width_out, "Invalid FPToUI width");
-    return mk_term(Kind::FP_TO_UBV,
-                   {getRoundingModeSort(ce->roundingMode), src},
-                   {ce->getWidth()});
+    return smithril_mk_fp_to_ubv(
+        ctx, getRoundingModeSort(ce->roundingMode), // mixa117 to fix
+        src, ce->getWidth());
   }
 
   case Expr::FPToSI: {
     int srcWidth;
     FPToSIExpr *ce = cast<FPToSIExpr>(e);
-    Term src = castToFloat(construct(ce->src, &srcWidth));
+    SmithrilTerm src = castToFloat(construct(ce->src, &srcWidth));
     *width_out = ce->getWidth();
     FPCastWidthAssert(width_out, "Invalid FPToSI width");
-    return mk_term(Kind::FP_TO_SBV,
-                   {getRoundingModeSort(ce->roundingMode), src},
-                   {ce->getWidth()});
+    return smithril_mk_fp_to_sbv(
+        ctx, getRoundingModeSort(ce->roundingMode), // mixa117 to fix
+        src, ce->getWidth());
   }
 
   case Expr::UIToFP: {
     int srcWidth;
     UIToFPExpr *ce = cast<UIToFPExpr>(e);
-    Term src = castToBitVector(construct(ce->src, &srcWidth));
+    SmithrilTerm src = castToBitVector(construct(ce->src, &srcWidth));
     *width_out = ce->getWidth();
     FPCastWidthAssert(width_out, "Invalid UIToFP width");
 
     auto out_widths = getFloatSortFromBitWidth(*width_out);
-    return mk_term(Kind::FP_TO_FP_FROM_UBV,
-                   {getRoundingModeSort(ce->roundingMode), src},
-                   {out_widths.first, out_widths.second});
+    return smithril_mk_fp_to_fp_from_ubv(
+        ctx, getRoundingModeSort(ce->roundingMode), // mixa117 to fix
+        src, out_widths.first, out_widths.second);
   }
 
   case Expr::SIToFP: {
     int srcWidth;
     SIToFPExpr *ce = cast<SIToFPExpr>(e);
-    Term src = castToBitVector(construct(ce->src, &srcWidth));
+    SmithrilTerm src = castToBitVector(construct(ce->src, &srcWidth));
     *width_out = ce->getWidth();
     FPCastWidthAssert(width_out, "Invalid SIToFP width");
 
     auto out_widths = getFloatSortFromBitWidth(*width_out);
-    return mk_term(Kind::FP_TO_FP_FROM_SBV,
-                   {getRoundingModeSort(ce->roundingMode), src},
-                   {out_widths.first, out_widths.second});
+    return smithril_mk_fp_to_fp_from_sbv(
+        ctx, getRoundingModeSort(ce->roundingMode), // mixa117 to fix
+        src, out_widths.first, out_widths.second);
   }
 
     // Arithmetic
   case Expr::Add: {
     AddExpr *ae = cast<AddExpr>(e);
-    Term left = castToBitVector(construct(ae->left, width_out));
-    Term right = castToBitVector(construct(ae->right, width_out));
+    SmithrilTerm left = castToBitVector(construct(ae->left, width_out));
+    SmithrilTerm right = castToBitVector(construct(ae->right, width_out));
     assert(*width_out != 1 && "uncanonicalized add");
-    Term result = mk_term(Kind::BV_ADD, {left, right});
+    SmithrilTerm result = smithril_mk_bvadd(ctx, left, right);
     assert(getBVLength(result) == static_cast<unsigned>(*width_out) &&
            "width mismatch");
     return result;
@@ -667,10 +688,10 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
 
   case Expr::Sub: {
     SubExpr *se = cast<SubExpr>(e);
-    Term left = castToBitVector(construct(se->left, width_out));
-    Term right = castToBitVector(construct(se->right, width_out));
+    SmithrilTerm left = castToBitVector(construct(se->left, width_out));
+    SmithrilTerm right = castToBitVector(construct(se->right, width_out));
     assert(*width_out != 1 && "uncanonicalized sub");
-    Term result = mk_term(Kind::BV_SUB, {left, right});
+    SmithrilTerm result = smithril_mk_bvsub(ctx, left, right);
     assert(getBVLength(result) == static_cast<unsigned>(*width_out) &&
            "width mismatch");
     return result;
@@ -678,10 +699,10 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
 
   case Expr::Mul: {
     MulExpr *me = cast<MulExpr>(e);
-    Term right = castToBitVector(construct(me->right, width_out));
+    SmithrilTerm right = castToBitVector(construct(me->right, width_out));
     assert(*width_out != 1 && "uncanonicalized mul");
-    Term left = castToBitVector(construct(me->left, width_out));
-    Term result = mk_term(Kind::BV_MUL, {left, right});
+    SmithrilTerm left = castToBitVector(construct(me->left, width_out));
+    SmithrilTerm result = smithril_mk_bvmul(ctx, left, right);
     assert(getBVLength(result) == static_cast<unsigned>(*width_out) &&
            "width mismatch");
     return result;
@@ -689,7 +710,7 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
 
   case Expr::UDiv: {
     UDivExpr *de = cast<UDivExpr>(e);
-    Term left = castToBitVector(construct(de->left, width_out));
+    SmithrilTerm left = castToBitVector(construct(de->left, width_out));
     assert(*width_out != 1 && "uncanonicalized udiv");
 
     if (ConstantExpr *CE = dyn_cast<ConstantExpr>(de->right)) {
@@ -700,8 +721,8 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
       }
     }
 
-    Term right = castToBitVector(construct(de->right, width_out));
-    Term result = mk_term(Kind::BV_UDIV, {left, right});
+    SmithrilTerm right = castToBitVector(construct(de->right, width_out));
+    SmithrilTerm result = smithril_mk_bvudiv(ctx, left, right);
     assert(getBVLength(result) == static_cast<unsigned>(*width_out) &&
            "width mismatch");
     return result;
@@ -709,10 +730,10 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
 
   case Expr::SDiv: {
     SDivExpr *de = cast<SDivExpr>(e);
-    Term left = castToBitVector(construct(de->left, width_out));
+    SmithrilTerm left = castToBitVector(construct(de->left, width_out));
     assert(*width_out != 1 && "uncanonicalized sdiv");
-    Term right = castToBitVector(construct(de->right, width_out));
-    Term result = mk_term(Kind::BV_SDIV, {left, right});
+    SmithrilTerm right = castToBitVector(construct(de->right, width_out));
+    SmithrilTerm result = smithril_mk_bvsdiv(ctx, left, right);
     assert(getBVLength(result) == static_cast<unsigned>(*width_out) &&
            "width mismatch");
     return result;
@@ -720,7 +741,7 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
 
   case Expr::URem: {
     URemExpr *de = cast<URemExpr>(e);
-    Term left = castToBitVector(construct(de->left, width_out));
+    SmithrilTerm left = castToBitVector(construct(de->left, width_out));
     assert(*width_out != 1 && "uncanonicalized urem");
 
     if (ConstantExpr *CE = dyn_cast<ConstantExpr>(de->right)) {
@@ -737,15 +758,17 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
             return bvZero(*width_out);
           } else {
             assert(*width_out > bits && "invalid width_out");
-            return mk_term(Kind::BV_CONCAT, {bvZero(*width_out - bits),
-                                             bvExtract(left, bits - 1, 0)});
+            return smithril_mk_concat(ctx, bvZero(*width_out - bits),
+                                      bvExtract(left, bits - 1, 0));
           }
         }
       }
     }
 
-    Term right = castToBitVector(construct(de->right, width_out));
-    Term result = mk_term(Kind::BV_UREM, {left, right});
+    SmithrilTerm right = castToBitVector(construct(de->right, width_out));
+    SmithrilTerm result = smithril_mk_bvumod(
+        ctx, left, right); // mixa117 why in smithril umod = urem???
+
     assert(getBVLength(result) == static_cast<unsigned>(*width_out) &&
            "width mismatch");
     return result;
@@ -753,10 +776,11 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
 
   case Expr::SRem: {
     SRemExpr *de = cast<SRemExpr>(e);
-    Term left = castToBitVector(construct(de->left, width_out));
-    Term right = castToBitVector(construct(de->right, width_out));
+    SmithrilTerm left = castToBitVector(construct(de->left, width_out));
+    SmithrilTerm right = castToBitVector(construct(de->right, width_out));
     assert(*width_out != 1 && "uncanonicalized srem");
-    Term result = mk_term(Kind::BV_SREM, {left, right});
+    SmithrilTerm result =
+        mk_term(Kind::BV_SREM, {left, right}); // mixa117 no such?
     assert(getBVLength(result) == static_cast<unsigned>(*width_out) &&
            "width mismatch");
     return result;
@@ -765,7 +789,7 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
     // Bitwise
   case Expr::Not: {
     NotExpr *ne = cast<NotExpr>(e);
-    Term expr = construct(ne->expr, width_out);
+    SmithrilTerm expr = construct(ne->expr, width_out);
     if (*width_out == 1) {
       return notExpr(expr);
     } else {
@@ -775,8 +799,8 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
 
   case Expr::And: {
     AndExpr *ae = cast<AndExpr>(e);
-    Term left = construct(ae->left, width_out);
-    Term right = construct(ae->right, width_out);
+    SmithrilTerm left = construct(ae->left, width_out);
+    SmithrilTerm right = construct(ae->right, width_out);
     if (*width_out == 1) {
       return andExpr(left, right);
     } else {
@@ -786,8 +810,8 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
 
   case Expr::Or: {
     OrExpr *oe = cast<OrExpr>(e);
-    Term left = construct(oe->left, width_out);
-    Term right = construct(oe->right, width_out);
+    SmithrilTerm left = construct(oe->left, width_out);
+    SmithrilTerm right = construct(oe->right, width_out);
     if (*width_out == 1) {
       return orExpr(left, right);
     } else {
@@ -797,12 +821,12 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
 
   case Expr::Xor: {
     XorExpr *xe = cast<XorExpr>(e);
-    Term left = construct(xe->left, width_out);
-    Term right = construct(xe->right, width_out);
+    SmithrilTerm left = construct(xe->left, width_out);
+    SmithrilTerm right = construct(xe->right, width_out);
 
     if (*width_out == 1) {
       // XXX check for most efficient?
-      return iteExpr(left, Term(notExpr(right)), right);
+      return iteExpr(left, SmithrilTerm(notExpr(right)), right);
     } else {
       return bvXorExpr(left, right);
     }
@@ -810,44 +834,44 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
 
   case Expr::Shl: {
     ShlExpr *se = cast<ShlExpr>(e);
-    Term left = construct(se->left, width_out);
+    SmithrilTerm left = construct(se->left, width_out);
     assert(*width_out != 1 && "uncanonicalized shl");
 
     if (ConstantExpr *CE = dyn_cast<ConstantExpr>(se->right)) {
       return bvLeftShift(left, (unsigned)CE->getLimitedValue());
     } else {
       int shiftWidth;
-      Term amount = construct(se->right, &shiftWidth);
+      SmithrilTerm amount = construct(se->right, &shiftWidth);
       return bvVarLeftShift(left, amount);
     }
   }
 
   case Expr::LShr: {
     LShrExpr *lse = cast<LShrExpr>(e);
-    Term left = construct(lse->left, width_out);
+    SmithrilTerm left = construct(lse->left, width_out);
     assert(*width_out != 1 && "uncanonicalized lshr");
 
     if (ConstantExpr *CE = dyn_cast<ConstantExpr>(lse->right)) {
       return bvRightShift(left, (unsigned)CE->getLimitedValue());
     } else {
       int shiftWidth;
-      Term amount = construct(lse->right, &shiftWidth);
+      SmithrilTerm amount = construct(lse->right, &shiftWidth);
       return bvVarRightShift(left, amount);
     }
   }
 
   case Expr::AShr: {
     AShrExpr *ase = cast<AShrExpr>(e);
-    Term left = castToBitVector(construct(ase->left, width_out));
+    SmithrilTerm left = castToBitVector(construct(ase->left, width_out));
     assert(*width_out != 1 && "uncanonicalized ashr");
 
     if (ConstantExpr *CE = dyn_cast<ConstantExpr>(ase->right)) {
       unsigned shift = (unsigned)CE->getLimitedValue();
-      Term signedBool = bvBoolExtract(left, *width_out - 1);
+      SmithrilTerm signedBool = bvBoolExtract(left, *width_out - 1);
       return constructAShrByConstant(left, shift, signedBool);
     } else {
       int shiftWidth;
-      Term amount = construct(ase->right, &shiftWidth);
+      SmithrilTerm amount = construct(ase->right, &shiftWidth);
       return bvVarArithRightShift(left, amount);
     }
   }
@@ -856,8 +880,8 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
 
   case Expr::Eq: {
     EqExpr *ee = cast<EqExpr>(e);
-    Term left = construct(ee->left, width_out);
-    Term right = construct(ee->right, width_out);
+    SmithrilTerm left = construct(ee->left, width_out);
+    SmithrilTerm right = construct(ee->right, width_out);
     if (*width_out == 1) {
       if (ConstantExpr *CE = dyn_cast<ConstantExpr>(ee->left)) {
         if (CE->isTrue())
@@ -874,8 +898,8 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
 
   case Expr::Ult: {
     UltExpr *ue = cast<UltExpr>(e);
-    Term left = construct(ue->left, width_out);
-    Term right = construct(ue->right, width_out);
+    SmithrilTerm left = construct(ue->left, width_out);
+    SmithrilTerm right = construct(ue->right, width_out);
     assert(*width_out != 1 && "uncanonicalized ult");
     *width_out = 1;
     return bvLtExpr(left, right);
@@ -883,8 +907,8 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
 
   case Expr::Ule: {
     UleExpr *ue = cast<UleExpr>(e);
-    Term left = construct(ue->left, width_out);
-    Term right = construct(ue->right, width_out);
+    SmithrilTerm left = construct(ue->left, width_out);
+    SmithrilTerm right = construct(ue->right, width_out);
     assert(*width_out != 1 && "uncanonicalized ule");
     *width_out = 1;
     return bvLeExpr(left, right);
@@ -892,8 +916,8 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
 
   case Expr::Slt: {
     SltExpr *se = cast<SltExpr>(e);
-    Term left = construct(se->left, width_out);
-    Term right = construct(se->right, width_out);
+    SmithrilTerm left = construct(se->left, width_out);
+    SmithrilTerm right = construct(se->right, width_out);
     assert(*width_out != 1 && "uncanonicalized slt");
     *width_out = 1;
     return sbvLtExpr(left, right);
@@ -901,8 +925,8 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
 
   case Expr::Sle: {
     SleExpr *se = cast<SleExpr>(e);
-    Term left = construct(se->left, width_out);
-    Term right = construct(se->right, width_out);
+    SmithrilTerm left = construct(se->left, width_out);
+    SmithrilTerm right = construct(se->right, width_out);
     assert(*width_out != 1 && "uncanonicalized sle");
     *width_out = 1;
     return sbvLeExpr(left, right);
@@ -910,158 +934,167 @@ Term SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
 
   case Expr::FOEq: {
     FOEqExpr *fcmp = cast<FOEqExpr>(e);
-    Term left = castToFloat(construct(fcmp->left, width_out));
-    Term right = castToFloat(construct(fcmp->right, width_out));
+    SmithrilTerm left = castToFloat(construct(fcmp->left, width_out));
+    SmithrilTerm right = castToFloat(construct(fcmp->right, width_out));
     *width_out = 1;
-    return mk_term(Kind::FP_EQUAL, {left, right});
+    return smithril_mk_fp_eq(ctx, left, right);
   }
 
   case Expr::FOLt: {
     FOLtExpr *fcmp = cast<FOLtExpr>(e);
-    Term left = castToFloat(construct(fcmp->left, width_out));
-    Term right = castToFloat(construct(fcmp->right, width_out));
+    SmithrilTerm left = castToFloat(construct(fcmp->left, width_out));
+    SmithrilTerm right = castToFloat(construct(fcmp->right, width_out));
     *width_out = 1;
-    return mk_term(Kind::FP_LT, {left, right});
+    return smithril_mk_fp_lt(ctx, RoundingMode::RNA, left,
+                             right); // mixa117 RoundingMode does not matter
   }
 
   case Expr::FOLe: {
     FOLeExpr *fcmp = cast<FOLeExpr>(e);
-    Term left = castToFloat(construct(fcmp->left, width_out));
-    Term right = castToFloat(construct(fcmp->right, width_out));
+    SmithrilTerm left = castToFloat(construct(fcmp->left, width_out));
+    SmithrilTerm right = castToFloat(construct(fcmp->right, width_out));
     *width_out = 1;
-    return mk_term(Kind::FP_LEQ, {left, right});
+    return smithril_mk_fp_leq(ctx, RoundingMode::RNA, left,
+                              right); // mixa117 RoundingMode does not matter
   }
 
   case Expr::FOGt: {
     FOGtExpr *fcmp = cast<FOGtExpr>(e);
-    Term left = castToFloat(construct(fcmp->left, width_out));
-    Term right = castToFloat(construct(fcmp->right, width_out));
+    SmithrilTerm left = castToFloat(construct(fcmp->left, width_out));
+    SmithrilTerm right = castToFloat(construct(fcmp->right, width_out));
     *width_out = 1;
-    return mk_term(Kind::FP_GT, {left, right});
+    return smithril_mk_fp_gt(ctx, RoundingMode::RNA, left,
+                             right); // mixa117 RoundingMode does not matter
   }
 
   case Expr::FOGe: {
     FOGeExpr *fcmp = cast<FOGeExpr>(e);
-    Term left = castToFloat(construct(fcmp->left, width_out));
-    Term right = castToFloat(construct(fcmp->right, width_out));
+    SmithrilTerm left = castToFloat(construct(fcmp->left, width_out));
+    SmithrilTerm right = castToFloat(construct(fcmp->right, width_out));
     *width_out = 1;
-    return mk_term(Kind::FP_GEQ, {left, right});
+    return smithril_mk_fp_geq(ctx, RoundingMode::RNA, left,
+                              right); // mixa117 RoundingMode does not matter
   }
 
   case Expr::IsNaN: {
     IsNaNExpr *ine = cast<IsNaNExpr>(e);
-    Term arg = castToFloat(construct(ine->expr, width_out));
+    SmithrilTerm arg = castToFloat(construct(ine->expr, width_out));
     *width_out = 1;
-    return mk_term(Kind::FP_IS_NAN, {arg});
+    return smithril_fp_is_nan(ctx, arg);
   }
 
   case Expr::IsInfinite: {
     IsInfiniteExpr *iie = cast<IsInfiniteExpr>(e);
-    Term arg = castToFloat(construct(iie->expr, width_out));
+    SmithrilTerm arg = castToFloat(construct(iie->expr, width_out));
     *width_out = 1;
-    return mk_term(Kind::FP_IS_INF, {arg});
+    return smithril_fp_is_inf(ctx, arg);
   }
 
   case Expr::IsNormal: {
     IsNormalExpr *ine = cast<IsNormalExpr>(e);
-    Term arg = castToFloat(construct(ine->expr, width_out));
+    SmithrilTerm arg = castToFloat(construct(ine->expr, width_out));
     *width_out = 1;
-    return mk_term(Kind::FP_IS_NORMAL, {arg});
+    return smithril_fp_is_normal(ctx, arg);
   }
 
   case Expr::IsSubnormal: {
     IsSubnormalExpr *ise = cast<IsSubnormalExpr>(e);
-    Term arg = castToFloat(construct(ise->expr, width_out));
+    SmithrilTerm arg = castToFloat(construct(ise->expr, width_out));
     *width_out = 1;
-    return mk_term(Kind::FP_IS_SUBNORMAL, {arg});
+    return smithril_fp_is_subnormal(ctx, arg);
   }
 
   case Expr::FAdd: {
     FAddExpr *fadd = cast<FAddExpr>(e);
-    Term left = castToFloat(construct(fadd->left, width_out));
-    Term right = castToFloat(construct(fadd->right, width_out));
+    SmithrilTerm left = castToFloat(construct(fadd->left, width_out));
+    SmithrilTerm right = castToFloat(construct(fadd->right, width_out));
     assert(*width_out != 1 && "uncanonicalized FAdd");
-    return mk_term(Kind::FP_ADD,
-                   {getRoundingModeSort(fadd->roundingMode), left, right});
+    return smithril_mk_fp_add(ctx, getRoundingModeSort(fadd->roundingMode),
+                              left, right);
   }
 
   case Expr::FSub: {
     FSubExpr *fsub = cast<FSubExpr>(e);
-    Term left = castToFloat(construct(fsub->left, width_out));
-    Term right = castToFloat(construct(fsub->right, width_out));
+    SmithrilTerm left = castToFloat(construct(fsub->left, width_out));
+    SmithrilTerm right = castToFloat(construct(fsub->right, width_out));
     assert(*width_out != 1 && "uncanonicalized FSub");
-    return mk_term(Kind::FP_SUB,
-                   {getRoundingModeSort(fsub->roundingMode), left, right});
+    return smithril_mk_fp_sub(ctx, getRoundingModeSort(fsub->roundingMode),
+                              left, right);
   }
 
   case Expr::FMul: {
     FMulExpr *fmul = cast<FMulExpr>(e);
-    Term left = castToFloat(construct(fmul->left, width_out));
-    Term right = castToFloat(construct(fmul->right, width_out));
+    SmithrilTerm left = castToFloat(construct(fmul->left, width_out));
+    SmithrilTerm right = castToFloat(construct(fmul->right, width_out));
     assert(*width_out != 1 && "uncanonicalized FMul");
-    return mk_term(Kind::FP_MUL,
-                   {getRoundingModeSort(fmul->roundingMode), left, right});
+    return smithril_mk_fp_mul(ctx, getRoundingModeSort(fmul->roundingMode),
+                              left, right);
   }
 
   case Expr::FDiv: {
     FDivExpr *fdiv = cast<FDivExpr>(e);
-    Term left = castToFloat(construct(fdiv->left, width_out));
-    Term right = castToFloat(construct(fdiv->right, width_out));
+    SmithrilTerm left = castToFloat(construct(fdiv->left, width_out));
+    SmithrilTerm right = castToFloat(construct(fdiv->right, width_out));
     assert(*width_out != 1 && "uncanonicalized FDiv");
-    return mk_term(Kind::FP_DIV,
-                   {getRoundingModeSort(fdiv->roundingMode), left, right});
+    return smithril_mk_fp_div(ctx, getRoundingModeSort(fdiv->roundingMode),
+                              left, right);
   }
   case Expr::FRem: {
     FRemExpr *frem = cast<FRemExpr>(e);
-    Term left = castToFloat(construct(frem->left, width_out));
-    Term right = castToFloat(construct(frem->right, width_out));
+    SmithrilTerm left = castToFloat(construct(frem->left, width_out));
+    SmithrilTerm right = castToFloat(construct(frem->right, width_out));
     assert(*width_out != 1 && "uncanonicalized FRem");
-    return mk_term(Kind::FP_REM, {left, right});
+    return smithril_mk_fp_rem(ctx, RoundingMode::RNA, left,
+                              right); // mixa117 RoundingMode does not matter
   }
 
   case Expr::FMax: {
     FMaxExpr *fmax = cast<FMaxExpr>(e);
-    Term left = castToFloat(construct(fmax->left, width_out));
-    Term right = castToFloat(construct(fmax->right, width_out));
+    SmithrilTerm left = castToFloat(construct(fmax->left, width_out));
+    SmithrilTerm right = castToFloat(construct(fmax->right, width_out));
     assert(*width_out != 1 && "uncanonicalized FMax");
-    return mk_term(Kind::FP_MAX, {left, right});
+    return smithril_mk_fp_max(ctx, RoundingMode::RNA, left,
+                              right); // mixa117 RoundingMode does not matter
   }
 
   case Expr::FMin: {
     FMinExpr *fmin = cast<FMinExpr>(e);
-    Term left = castToFloat(construct(fmin->left, width_out));
-    Term right = castToFloat(construct(fmin->right, width_out));
+    SmithrilTerm left = castToFloat(construct(fmin->left, width_out));
+    SmithrilTerm right = castToFloat(construct(fmin->right, width_out));
     assert(*width_out != 1 && "uncanonicalized FMin");
-    return mk_term(Kind::FP_MIN, {left, right});
+    return smithril_mk_fp_min(ctx, RoundingMode::RNA, left,
+                              right); // mixa117 RoundingMode does not matter
   }
 
   case Expr::FSqrt: {
     FSqrtExpr *fsqrt = cast<FSqrtExpr>(e);
-    Term arg = castToFloat(construct(fsqrt->expr, width_out));
+    SmithrilTerm arg = castToFloat(construct(fsqrt->expr, width_out));
     assert(*width_out != 1 && "uncanonicalized FSqrt");
-    return mk_term(Kind::FP_SQRT,
-                   {getRoundingModeSort(fsqrt->roundingMode), arg});
+    return smithril_mk_fp_sqrt(ctx, getRoundingModeSort(fsqrt->roundingMode),
+                               arg);
   }
   case Expr::FRint: {
     FRintExpr *frint = cast<FRintExpr>(e);
-    Term arg = castToFloat(construct(frint->expr, width_out));
+    SmithrilTerm arg = castToFloat(construct(frint->expr, width_out));
     assert(*width_out != 1 && "uncanonicalized FSqrt");
-    return mk_term(Kind::FP_RTI,
-                   {getRoundingModeSort(frint->roundingMode), arg});
+    return smithril_mk_fp_rti(ctx, getRoundingModeSort(frint->roundingMode),
+                              arg);
   }
 
   case Expr::FAbs: {
     FAbsExpr *fabsExpr = cast<FAbsExpr>(e);
-    Term arg = castToFloat(construct(fabsExpr->expr, width_out));
+    SmithrilTerm arg = castToFloat(construct(fabsExpr->expr, width_out));
     assert(*width_out != 1 && "uncanonicalized FAbs");
-    return mk_term(Kind::FP_ABS, {arg});
+    return smithril_mk_fp_abs(ctx, RoundingMode::RNA,
+                              arg); // mixa117 RoundingMode does not matter
   }
 
   case Expr::FNeg: {
     FNegExpr *fnegExpr = cast<FNegExpr>(e);
-    Term arg = castToFloat(construct(fnegExpr->expr, width_out));
+    SmithrilTerm arg = castToFloat(construct(fnegExpr->expr, width_out));
     assert(*width_out != 1 && "uncanonicalized FNeg");
-    return mk_term(Kind::FP_NEG, {arg});
+    return smithril_mk_fp_neg(ctx, RoundingMode::RNA,
+                              arg); // mixa117 RoundingMode does not matter
   }
 
 // unused due to canonicalization
@@ -1079,21 +1112,23 @@ case Expr::Sge:
   }
 }
 
-Term SmithrilBuilder::fpToIEEEBV(const Term &fp) {
-  if (!fp.sort().is_fp()) {
-    klee_error("SmithrilBuilder::fpToIEEEBV accepts only floats");
-  }
+//mixa117 need this?
+// SmithrilTerm SmithrilBuilder::fpToIEEEBV(const SmithrilTerm &fp) {
+//   if (smithril_get_sort_kind(smithril_get_sort(ctx, fp)) != SortKind::Fp) {
+//     klee_error("SmithrilBuilder::fpToIEEEBV accepts only floats");
+//   }
 
-  Term signBit = mk_const(getBvSort(1));
-  Term exponentBits = mk_const(getBvSort(fp.sort().fp_exp_size()));
-  Term significandBits = mk_const(getBvSort(fp.sort().fp_sig_size() - 1));
+//   SmithrilTerm signBit = mk_const(getBvSort(1));
+//   SmithrilTerm exponentBits = mk_const(getBvSort(fp.sort().fp_exp_size()));
+//   SmithrilTerm significandBits =
+//       mk_const(getBvSort(fp.sort().fp_sig_size() - 1));
 
-  Term floatTerm =
-      mk_term(Kind::FP_FP, {signBit, exponentBits, significandBits});
-  sideConstraints.push_back(mk_term(Kind::EQUAL, {fp, floatTerm}));
+//   SmithrilTerm floatTerm =
+//       mk_term(Kind::FP_FP, {signBit, exponentBits, significandBits});
+//   sideConstraints.push_back(mk_term(Kind::EQUAL, {fp, floatTerm}));
 
-  return mk_term(Kind::BV_CONCAT, {signBit, exponentBits, significandBits});
-}
+//   return mk_term(Kind::BV_CONCAT, {signBit, exponentBits, significandBits});
+// }
 
 std::pair<unsigned, unsigned>
 SmithrilBuilder::getFloatSortFromBitWidth(unsigned bitWidth) {
@@ -1111,7 +1146,7 @@ SmithrilBuilder::getFloatSortFromBitWidth(unsigned bitWidth) {
     // Note this is an IEEE754 with a 15 bit exponent
     // and 64 bit significand. This is not the same
     // as x87 fp80 which has a different binary encoding.
-    // We can use this Bitwuzla type to get the appropriate
+    // We can use this Smithril type to get the appropriate
     // amount of precision. We just have to be very
     // careful which casting between floats and bitvectors.
     //
@@ -1123,31 +1158,30 @@ SmithrilBuilder::getFloatSortFromBitWidth(unsigned bitWidth) {
     return {15, 113};
   }
   default:
-    assert(
-        0 &&
-        "bitWidth cannot converted to a IEEE-754 binary-* number by Bitwuzla");
+    assert(0 && "bitWidth cannot converted to a IEEE-754 binary-* number by "
+                "Smithril");
     std::abort();
   }
 }
 
-Term SmithrilBuilder::castToFloat(const Term &e) {
-  Sort currentSort = e.sort();
-  if (currentSort.is_fp()) {
+SmithrilTerm SmithrilBuilder::castToFloat(const SmithrilTerm &e) {
+  SmithrilSort currentSort = smithril_get_sort(ctx, e);
+  if (smithril_get_sort_kind(currentSort) == SortKind::Fp) {
     // Already a float
     return e;
-  } else if (currentSort.is_bv()) {
-    unsigned bitWidth = currentSort.bv_size();
+  } else if (smithril_get_sort_kind(currentSort) == SortKind::Bv) {
+    unsigned bitWidth = currentSort.bv_size(); // mixa117 no such?
     switch (bitWidth) {
     case Expr::Int16:
     case Expr::Int32:
     case Expr::Int64:
     case Expr::Int128: {
       auto out_width = getFloatSortFromBitWidth(bitWidth);
-      return mk_term(Kind::FP_TO_FP_FROM_BV, {e},
+      return mk_term(Kind::FP_TO_FP_FROM_BV, {e}, // mixa117 no such?
                      {out_width.first, out_width.second});
     }
     case Expr::Fl80: {
-      // The bit pattern used by x87 fp80 and what we use in Bitwuzla are
+      // The bit pattern used by x87 fp80 and what we use in Smithril are
       // different
       //
       // x87 fp80
@@ -1155,10 +1189,10 @@ Term SmithrilBuilder::castToFloat(const Term &e) {
       // Sign Exponent Significand
       // [1]    [15]   [1] [63]
       //
-      // The exponent has bias 16383 and the significand has the integer portion
-      // as an explicit bit
+      // The exponent has bias 16383 and the significand has the integer
+      // portion as an explicit bit
       //
-      // 79-bit IEEE-754 encoding used in Bitwuzla
+      // 79-bit IEEE-754 encoding used in Smithril
       //
       // Sign Exponent [Significand]
       // [1]    [15]       [63]
@@ -1168,46 +1202,46 @@ Term SmithrilBuilder::castToFloat(const Term &e) {
       //
       // We need to provide the mapping here and also emit a side constraint
       // to make sure the explicit bit is appropriately constrained so when
-      // Bitwuzla generates a model we get the correct bit pattern back.
+      // Smithril generates a model we get the correct bit pattern back.
       //
-      // This assumes Bitwuzla's IEEE semantics, x87 fp80 actually
+      // This assumes Smithril's IEEE semantics, x87 fp80 actually
       // has additional semantics due to the explicit bit (See 8.2.2
       // "Unsupported  Double Extended-Precision Floating-Point Encodings and
       // Pseudo-Denormals" in the Intel 64 and IA-32 Architectures Software
       // Developer's Manual) but this encoding means we can't model these
-      // unsupported values in Bitwuzla.
+      // unsupported values in Smithril.
       //
       // Note this code must kept in sync with
       // `SmithrilBuilder::castToBitVector()`. Which performs the inverse
       // operation here.
       //
       // TODO: Experiment with creating a constraint that transforms these
-      // unsupported bit patterns into a Bitwuzla NaN to approximate the
+      // unsupported bit patterns into a Smithril NaN to approximate the
       // behaviour from those values.
 
       // Note we try very hard here to avoid calling into our functions
       // here that do implicit casting so we can never recursively call
       // into this function.
-      Term signBit = mk_term(Kind::BV_EXTRACT, {e}, {79, 79});
-      Term exponentBits = mk_term(Kind::BV_EXTRACT, {e}, {78, 64});
-      Term significandIntegerBit = mk_term(Kind::BV_EXTRACT, {e}, {63, 63});
-      Term significandFractionBits = mk_term(Kind::BV_EXTRACT, {e}, {62, 0});
+      SmithrilTerm signBit = smithril_mk_extract(ctx, 79, 79, e);
+      SmithrilTerm exponentBits = smithril_mk_extract(ctx, 78, 64, e);
+      SmithrilTerm significandIntegerBit = smithril_mk_extract(ctx, 63, 63, e);
+      SmithrilTerm significandFractionBits = smithril_mk_extract(ctx, 62, 0, e);
 
-      Term ieeeBitPatternAsFloat = mk_term(
-          Kind::FP_FP, {signBit, exponentBits, significandFractionBits});
+      SmithrilTerm ieeeBitPatternAsFloat =
+          mk_term(Kind::FP_FP, {signBit, exponentBits,
+                                significandFractionBits}); // mixa117 no such?
 
       // Generate side constraint on the significand integer bit. It is not
       // used in `ieeeBitPatternAsFloat` so we need to constrain that bit to
-      // have the correct value so that when Bitwuzla gives a model the bit
+      // have the correct value so that when Smithril gives a model the bit
       // pattern has the right value for x87 fp80.
       //
       // If the number is a denormal or zero then the implicit integer bit
       // is zero otherwise it is one.
-      Term significandIntegerBitConstrainedValue =
+      SmithrilTerm significandIntegerBitConstrainedValue =
           getx87FP80ExplicitSignificandIntegerBit(ieeeBitPatternAsFloat);
-      Term significandIntegerBitConstraint =
-          mk_term(Kind::EQUAL, {significandIntegerBit,
-                                significandIntegerBitConstrainedValue});
+      SmithrilTerm significandIntegerBitConstraint = smithril_mk_eq(
+          ctx, significandIntegerBit, significandIntegerBitConstrainedValue);
 
       sideConstraints.push_back(significandIntegerBitConstraint);
       return ieeeBitPatternAsFloat;
@@ -1220,19 +1254,21 @@ Term SmithrilBuilder::castToFloat(const Term &e) {
   }
 }
 
-Term SmithrilBuilder::castToBitVector(const Term &e) {
-  Sort currentSort = e.sort();
-  if (currentSort.is_bool()) {
-    return mk_term(Kind::ITE, {e, bvOne(1), bvZero(1)});
-  } else if (currentSort.is_bv()) {
+SmithrilTerm SmithrilBuilder::castToBitVector(const SmithrilTerm &e) {
+  SmithrilSort currentSort = smithril_get_sort(ctx, e);
+  if (smithril_get_sort_kind(currentSort) == SortKind::Bool) {
+    return mk_term(Kind::ITE, {e, bvOne(1), bvZero(1)}); // mixa117 no such?
+  } else if (smithril_get_sort_kind(currentSort) == SortKind::Bv) {
     // Already a bitvector
     return e;
-  } else if (currentSort.is_fp()) {
+  } else if (smithril_get_sort_kind(currentSort) == SortKind::Fp) {
     // Note this picks a single representation for NaN which means
     // `castToBitVector(castToFloat(e))` might not equal `e`.
-    unsigned exponentBits = currentSort.fp_exp_size();
+    unsigned exponentBits =
+        currentSort.fp_exp_size(); // mixa117 no such? have fp_get_bv_exp_size
     unsigned significandBits =
-        currentSort.fp_sig_size(); // Includes implicit bit
+        currentSort.fp_sig_size(); // Includes implicit bit // mixa117 no such?
+                                   // have fp_get_bv_sig_size
     unsigned floatWidth = exponentBits + significandBits;
 
     switch (floatWidth) {
@@ -1246,18 +1282,21 @@ Term SmithrilBuilder::castToBitVector(const Term &e) {
       // the "implicit" bit actually being implicit in x87 fp80 the sum of
       // the exponent and significand bitwidth is 79 not 80.
 
-      // Get Bitwuzla's IEEE representation
-      Term ieeeBits = fpToIEEEBV(e);
+      // Get Smithril's IEEE representation
+      SmithrilTerm ieeeBits = fpToIEEEBV(e);
 
       // Construct the x87 fp80 bit representation
-      Term signBit = mk_term(Kind::BV_EXTRACT, {ieeeBits}, {78, 78});
-      Term exponentBits = mk_term(Kind::BV_EXTRACT, {ieeeBits}, {77, 63});
-      Term significandIntegerBit = getx87FP80ExplicitSignificandIntegerBit(e);
-      Term significandFractionBits =
-          mk_term(Kind::BV_EXTRACT, {ieeeBits}, {62, 0});
-      Term x87FP80Bits = mk_term(Kind::BV_CONCAT,
-                                 {signBit, exponentBits, significandIntegerBit,
-                                  significandFractionBits});
+      SmithrilTerm signBit = smithril_mk_extract(ctx, 78, 78, ieeeBits);
+      SmithrilTerm exponentBits = smithril_mk_extract(ctx, 77, 63, ieeeBits);
+      SmithrilTerm significandIntegerBit =
+          getx87FP80ExplicitSignificandIntegerBit(e);
+      SmithrilTerm significandFractionBits =
+          smithril_mk_extract(ctx, 62, 0, ieeeBits);
+      SmithrilTerm x87FP80Bits = smithril_mk_concat(ctx, signBit, exponentBits);
+      x87FP80Bits = smithril_mk_concat(ctx, x87FP80Bits, significandIntegerBit);
+      x87FP80Bits =
+          smithril_mk_concat(ctx, x87FP80Bits, significandFractionBits);
+      // mixa117 3 concats vs 1 concat in bitwuzla?
       return x87FP80Bits;
     }
     default:
@@ -1268,27 +1307,29 @@ Term SmithrilBuilder::castToBitVector(const Term &e) {
   }
 }
 
-Term SmithrilBuilder::getRoundingModeSort(llvm::APFloat::roundingMode rm) {
+RoundingMode
+SmithrilBuilder::getRoundingModeSort(llvm::APFloat::roundingMode rm) {
   switch (rm) {
   case llvm::APFloat::rmNearestTiesToEven:
-    return mk_rm_value(RoundingMode::RNE);
+    return RoundingMode::RNE;
   case llvm::APFloat::rmTowardPositive:
-    return mk_rm_value(RoundingMode::RTP);
+    return RoundingMode::RTP;
   case llvm::APFloat::rmTowardNegative:
-    return mk_rm_value(RoundingMode::RTN);
+    return RoundingMode::RTN;
   case llvm::APFloat::rmTowardZero:
-    return mk_rm_value(RoundingMode::RTZ);
+    return RoundingMode::RTZ;
   case llvm::APFloat::rmNearestTiesToAway:
-    return mk_rm_value(RoundingMode::RNA);
+    return RoundingMode::RNA;
   default:
     llvm_unreachable("Unhandled rounding mode");
   }
 }
 
-Term SmithrilBuilder::getx87FP80ExplicitSignificandIntegerBit(const Term &e) {
+SmithrilTerm SmithrilBuilder::getx87FP80ExplicitSignificandIntegerBit(
+    const SmithrilTerm &e) {
 #ifndef NDEBUG
   // Check the passed in expression is the right type.
-  Sort currentSort = e.sort();
+  SmithrilSort currentSort = e.sort();
   assert(currentSort.is_fp());
 
   unsigned exponentBits = currentSort.fp_exp_size();
@@ -1297,23 +1338,23 @@ Term SmithrilBuilder::getx87FP80ExplicitSignificandIntegerBit(const Term &e) {
   assert(significandBits == 64);
 #endif
   // If the number is a denormal or zero then the implicit integer bit is zero
-  // otherwise it is one.  Term isDenormal =
-  Term isDenormal = mk_term(Kind::FP_IS_SUBNORMAL, {e});
-  Term isZero = mk_term(Kind::FP_IS_ZERO, {e});
+  // otherwise it is one.  SmithrilTerm isDenormal =
+  SmithrilTerm isDenormal = smithril_fp_is_subnormal(ctx, e);
+  SmithrilTerm isZero = smithril_fp_is_zero(ctx, e);
 
   // FIXME: Cache these constants somewhere
-  Sort oneBitBvSort = getBvSort(/*width=*/1);
+  SmithrilSort oneBitBvSort = getBvSort(/*width=*/1);
 
-  Term oneBvOne = mk_bv_value_uint64(oneBitBvSort, 1);
-  Term zeroBvOne = mk_bv_value_uint64(oneBitBvSort, 0);
+  SmithrilTerm oneBvOne = smithril_mk_bv_value_uint64(ctx, oneBitBvSort, 1);
+  SmithrilTerm zeroBvOne = smithril_mk_bv_value_uint64(ctx, oneBitBvSort, 0);
 
-  Term significandIntegerBitCondition = orExpr(isDenormal, isZero);
+  SmithrilTerm significandIntegerBitCondition = orExpr(isDenormal, isZero);
 
-  Term significandIntegerBitConstrainedValue =
-      mk_term(Kind::ITE, {significandIntegerBitCondition, zeroBvOne, oneBvOne});
+  SmithrilTerm significandIntegerBitConstrainedValue =
+      mk_term(Kind::ITE, {significandIntegerBitCondition, zeroBvOne, oneBvOne}); //mixa117 no such?
 
   return significandIntegerBitConstrainedValue;
 }
 } // namespace klee
 
-#endif // ENABLE_BITWUZLA
+#endif // ENABLE_SMITHRIL
