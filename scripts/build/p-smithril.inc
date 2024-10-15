@@ -1,7 +1,8 @@
 # Build scripts for Smithril
 # Variables that any artifact of this package might depend on
 setup_build_variables_smithril() {
-  SMITHRIL_INSTALL_PATH="${BASE}/smithril-${SMITHRIL_VERSION}"
+  SMITHRIL_BUILD_PATH="${BASE}/smithril-${SMITHRIL_VERSION}"
+  SMITHRIL_INSTALL_PATH="${BASE}/smithril-${SMITHRIL_VERSION}-install"
   SMITHRIL_SYS_INSTALL_PATH="${BASE}/smithril-sys"
   smithril_url="https://github.com/smithril/smithril.git"
 
@@ -17,11 +18,12 @@ download_smithril() {
 build_smithril() {
   pushd "${BASE}/smithril-${SMITHRIL_VERSION}"
 
-  args+=("--release")
-
   (
     export "SMITHRIL_INSTALL_PATH=${SMITHRIL_SYS_INSTALL_PATH}"
-    cargo build "${args[@]}"
+    rustup default stable
+    cargo build --worspace --release
+    rustup default nightly
+    cargo cinstall --destdir="/" --prefix="${SMITHRIL_SYS_INSTALL_PATH}"
   )
   popd
   cd "${SMITHRIL_INSTALL_PATH}" || return 1

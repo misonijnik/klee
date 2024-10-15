@@ -30,4 +30,5 @@ install_build_dependencies_smithril() {
 
   curl https://sh.rustup.rs -sSf | sh -s -- -y
   . "$HOME/.cargo/env"
+  cargo install cargo-c
 }

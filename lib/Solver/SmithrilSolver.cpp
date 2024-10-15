@@ -221,6 +221,7 @@ private:
 
 protected:
   SmithrilSolverImpl();
+  ~SmithrilSolverImpl();
 
   virtual smithril::SmithrilSolver
   initNativeSmithril(const ConstraintQuery &query,
@@ -269,6 +270,7 @@ SmithrilSolverImpl::SmithrilSolverImpl()
   builder = std::unique_ptr<SmithrilBuilder>(new SmithrilBuilder(
       /*autoClearConstructCache=*/false));
   assert(builder && "unable to create SmithrilBuilder");
+  solverParameters = smithril::smithril_new_options();
 
   setCoreSolverTimeout(timeout);
 
@@ -290,9 +292,16 @@ SmithrilSolverImpl::SmithrilSolverImpl()
   // }
 }
 
+
+SmithrilSolverImpl::~SmithrilSolverImpl() {
+  smithril::smithril_delete_options(solverParameters);
+}
+
 std::string SmithrilSolver::getConstraintLog(const Query &query) {
   return impl->getConstraintLog(query);
 }
+
+std::string SmithrilSolverImpl::getConstraintLog(const Query &) { return ""; }
 
 bool SmithrilSolverImpl::computeTruth(const ConstraintQuery &query,
                                       SmithrilSolverEnv &env, bool &isValid) {
