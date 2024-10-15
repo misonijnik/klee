@@ -1,5 +1,5 @@
 #ifndef SMITHRILSOLVER_H_
-#define SMITHRILSOLVER_H_  
+#define SMITHRILSOLVER_H_
 
 #include "klee/Solver/Solver.h"
 

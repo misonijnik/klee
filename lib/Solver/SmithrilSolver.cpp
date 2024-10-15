@@ -292,7 +292,6 @@ SmithrilSolverImpl::SmithrilSolverImpl()
   // }
 }
 
-
 SmithrilSolverImpl::~SmithrilSolverImpl() {
   smithril::smithril_delete_options(solverParameters);
 }
@@ -476,8 +475,8 @@ bool SmithrilSolverImpl::internalRunSolver(
         smithril_ast_expr_unsat_core;
 
     for (unsigned index = 0; index < size; ++index) {
-      smithril::SmithrilTerm constraint = smithril_unsat_core_get(
-          builder->ctx, smithril_unsat_core_vec, index);
+      smithril::SmithrilTerm constraint =
+          smithril_unsat_core_get(builder->ctx, smithril_unsat_core_vec, index);
       smithril_ast_expr_unsat_core.insert(constraint);
     }
 
@@ -553,8 +552,8 @@ SolverImpl::SolverRunStatus SmithrilSolverImpl::handleSolverResponse(
       if (env.usedArrayBytes.count(array)) {
         std::unordered_set<uint64_t> offsetValues;
         for (const ref<Expr> &offsetExpr : env.usedArrayBytes.at(array)) {
-          std::string arrayElementOffsetExpr = smithril_eval(
-              theSolver, builder->construct(offsetExpr));
+          std::string arrayElementOffsetExpr =
+              smithril_eval(theSolver, builder->construct(offsetExpr));
 
           uint64_t concretizedOffsetValue = std::stoull(arrayElementOffsetExpr);
           offsetValues.insert(concretizedOffsetValue);
@@ -723,7 +722,8 @@ void SmithrilIncNativeSolver::popPush(ConstraintDistance &delta) {
 
 smithril::SmithrilSolver SmithrilIncNativeSolver::getOrInit() {
   if (!nativeSolver.has_value()) {
-    nativeSolver = smithril::smithril_new_solver(solverContext, solverParameters);
+    nativeSolver =
+        smithril::smithril_new_solver(solverContext, solverParameters);
   }
   return nativeSolver.value();
 }

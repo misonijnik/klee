@@ -138,7 +138,8 @@ protected:
 
   smithril::SmithrilSort getBoolSort();
   smithril::SmithrilSort getBvSort(unsigned width);
-  smithril::SmithrilSort getArraySort(smithril::SmithrilSort domainSort, smithril::SmithrilSort rangeSort);
+  smithril::SmithrilSort getArraySort(smithril::SmithrilSort domainSort,
+                                      smithril::SmithrilSort rangeSort);
 
   std::pair<unsigned, unsigned> getFloatSortFromBitWidth(unsigned bitWidth);
 
