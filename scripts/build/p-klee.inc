@@ -104,9 +104,10 @@ fi
       echo "smithril"
       KLEE_SMITHRIL_CONFIGURE_OPTION=(
         "-DENABLE_SOLVER_SMITHRIL=TRUE"
-        "-DSMITHRIL_INCLUDE_DIRS=${SMITHRIL_INSTALL_PATH}/smithril-ffi"
-        "-DSMITHRIL_LIBRARIES=${SMITHRIL_INSTALL_PATH}/target/release/libsmithril_ffi.a"
+        // "-DSMITHRIL_INCLUDE_DIRS=${SMITHRIL_INSTALL_PATH}/smithril-ffi"
+        // "-DSMITHRIL_LIBRARIES=${SMITHRIL_INSTALL_PATH}/target/release/libsmithril_ffi.a"
       )
+      CMAKE_PREFIX_PATH+=("${SMITHRIL_INSTALL_PATH}")
       KLEE_FLOATING_POINT=(
         "-DENABLE_FLOATING_POINT=TRUE"
         "-DENABLE_FP_RUNTIME=TRUE"

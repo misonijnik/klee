@@ -237,6 +237,10 @@ cl::opt<CoreSolverType> CoreSolverToUse(
                    "Bitwuzla" BITWUZLA_IS_DEFAULT_STR),
         clEnumValN(BITWUZLA_TREE_SOLVER, "bitwuzla-tree",
                    "Bitwuzla tree-incremental solver"),
+        clEnumValN(SMITHRIL_SOLVER, "smithril",
+                   "Smithril" SMITHRIL_IS_DEFAULT_STR),
+        clEnumValN(SMITHRIL_TREE_SOLVER, "smithril-tree",
+                   "Smithril tree-incremental solver"),
         clEnumValN(STP_SOLVER, "stp", "STP" STP_IS_DEFAULT_STR),
         clEnumValN(METASMT_SOLVER, "metasmt", "metaSMT" METASMT_IS_DEFAULT_STR),
         clEnumValN(DUMMY_SOLVER, "dummy", "Dummy solver"),
@@ -253,6 +257,7 @@ cl::opt<CoreSolverType> DebugCrossCheckCoreSolverWith(
                clEnumValN(DUMMY_SOLVER, "dummy", "Dummy solver"),
                clEnumValN(Z3_SOLVER, "z3", "Z3"),
                clEnumValN(BITWUZLA_SOLVER, "bitwuzla", "Bitwuzla"),
+               clEnumValN(SMITHRIL_SOLVER, "smithril", "Smithril"),
                clEnumValN(NO_SOLVER, "none", "Do not crosscheck (default)")),
     cl::init(NO_SOLVER), cl::cat(SolvingCat));
 

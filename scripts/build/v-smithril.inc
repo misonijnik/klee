@@ -3,7 +3,7 @@ required_variables_smithril=(
   "SMITHRIL_VERSION"
 )
 
-artifact_dependency_smithril=("")
+artifact_dependency_smithril=("llvm")
 
 install_build_dependencies_smithril() {
   return 0

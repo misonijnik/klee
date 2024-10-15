@@ -6,9 +6,11 @@
 # License. See LICENSE.TXT for details.
 #
 #===------------------------------------------------------------------------===#
-find_package(Smithril)
 
-set(SMITHRIL_FOUND TRUE)
+find_package (PkgConfig REQUIRED)
+pkg_check_modules(SMITHRIL REQUIRED IMPORTED_TARGET smithril)
+
+# set(SMITHRIL_FOUND TRUE)
 if (SMITHRIL_FOUND)
   set(ENABLE_SOLVER_SMITHRIL_DEFAULT ON)
 else()
@@ -26,9 +28,9 @@ if (ENABLE_SOLVER_SMITHRIL)
     message(STATUS "Found Smithril libraries: \"${SMITHRIL_LIBRARIES}\"")
     message(STATUS "Found Smithril include path: \"${SMITHRIL_INCLUDE_DIRS}\"")
     list(APPEND KLEE_COMPONENT_EXTRA_INCLUDE_DIRS ${SMITHRIL_INCLUDE_DIRS})
-    list(APPEND KLEE_SOLVER_LIBRARIES ${SMITHRIL_LIBRARIES})
+    list(APPEND KLEE_SOLVER_LIBRARIES ${SMITHRIL_LINK_LIBRARIES})
     list(APPEND KLEE_SOLVER_INCLUDE_DIRS ${SMITHRIL_INCLUDE_DIRS})
-    list(APPEND KLEE_SOLVER_LIBRARY_DIRS ${SMITHRIL_LIBRARIES})
+    list(APPEND KLEE_SOLVER_LIBRARY_DIRS ${SMITHRIL_LINK_LIBRARIES})
 
   else()
     message(FATAL_ERROR "Smithril not found.")

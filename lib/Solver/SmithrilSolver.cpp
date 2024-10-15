@@ -13,6 +13,8 @@
 #include "klee/Solver/SolverStats.h"
 #include "klee/Statistics/TimerStatIncrementer.h"
 
+#ifdef ENABLE_SMITHRIL
+
 #include "SmithrilBuilder.h"
 #include "SmithrilSolver.h"
 
@@ -437,7 +439,7 @@ bool SmithrilSolverImpl::internalRunSolver(
   for (size_t i = 0; i < exprs.framesSize(); i++) {
     push(theSolver);
     for (auto it = exprs.begin(i), ie = exprs.end(i); it != ie; ++it) {
-      smithril::smithril_assert(theSolver, (*it));
+      smithril_assert(theSolver, (*it));
     }
   }
 
@@ -465,7 +467,7 @@ bool SmithrilSolverImpl::internalRunSolver(
         smithril_ast_expr_unsat_core;
 
     for (unsigned index = 0; index < size; ++index) {
-      smithril::SmithrilTerm constraint = smithril::smithril_unsat_core_get(
+      smithril::SmithrilTerm constraint = smithril_unsat_core_get(
           builder->ctx, smithril_unsat_core_vec, index);
       smithril_ast_expr_unsat_core.insert(constraint);
     }
@@ -542,7 +544,7 @@ SolverImpl::SolverRunStatus SmithrilSolverImpl::handleSolverResponse(
       if (env.usedArrayBytes.count(array)) {
         std::unordered_set<uint64_t> offsetValues;
         for (const ref<Expr> &offsetExpr : env.usedArrayBytes.at(array)) {
-          std::string arrayElementOffsetExpr = smithril::smithril_eval(
+          std::string arrayElementOffsetExpr = smithril_eval(
               theSolver, builder->construct(offsetExpr));
 
           uint64_t concretizedOffsetValue = std::stoull(arrayElementOffsetExpr);
@@ -555,7 +557,7 @@ SolverImpl::SolverRunStatus SmithrilSolverImpl::handleSolverResponse(
               builder->getInitialRead(array, offset);
 
           std::string initial_read_expr =
-              smithril::smithril_eval(theSolver, initial_read);
+              smithril_eval(theSolver, initial_read);
 
           uint64_t arrayElementValue = std::stoull(initial_read_expr);
           data.store(offset, arrayElementValue);
@@ -595,7 +597,7 @@ public:
     auto ctx = builder->ctx;
 
     smithril::SmithrilSolver theSolver =
-        smithril::smithril_new_solver(ctx, solverParameters);
+        smithril_new_solver(ctx, solverParameters);
     return theSolver;
   }
 
@@ -701,7 +703,6 @@ void SmithrilIncNativeSolver::pop(size_t popSize) {
   if (!nativeSolver || !popSize)
     return;
   smithril::smithril_pop(nativeSolver.value(), popSize);
-  // mixa117  !!!popSize!!! fixed
 }
 
 void SmithrilIncNativeSolver::popPush(ConstraintDistance &delta) {
@@ -713,7 +714,7 @@ void SmithrilIncNativeSolver::popPush(ConstraintDistance &delta) {
 
 smithril::SmithrilSolver SmithrilIncNativeSolver::getOrInit() {
   if (!nativeSolver.has_value()) {
-    nativeSolver = smithril_new_solver(solverContext, solverParameters);
+    nativeSolver = smithril::smithril_new_solver(solverContext, solverParameters);
   }
   return nativeSolver.value();
 }
@@ -910,6 +911,4 @@ SmithrilTreeSolver::SmithrilTreeSolver(unsigned maxSolvers)
     : Solver(std::make_unique<SmithrilTreeSolverImpl>(maxSolvers)) {}
 
 } // namespace klee
-
-#ifdef ENABLE_SMITHRIL // mixa117 move to start? (fix not grey)
-#endif
+#endif // ENABLE_SMITHRIL
