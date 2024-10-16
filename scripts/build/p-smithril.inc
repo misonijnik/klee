@@ -19,11 +19,10 @@ build_smithril() {
   pushd "${BASE}/smithril-${SMITHRIL_VERSION}"
 
   (
-    export "SMITHRIL_INSTALL_PATH=${SMITHRIL_SYS_INSTALL_PATH}"
     rustup default stable
-    cargo build --worspace --release
+    cargo build --workspace --release
     rustup default nightly
-    cargo cinstall --destdir="/" --prefix="${SMITHRIL_SYS_INSTALL_PATH}"
+    cargo cinstall --destdir="/" --prefix="${SMITHRIL_INSTALL_PATH}" --release
   )
   popd
   cd "${SMITHRIL_INSTALL_PATH}" || return 1
