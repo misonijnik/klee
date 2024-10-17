@@ -1096,7 +1096,7 @@ SmithrilTerm SmithrilBuilder::fpToIEEEBV(const SmithrilTerm &fp) {
       ctx, getBvSort(smithril_fp_get_bv_sig_size(fp) - 1));
 
   SmithrilTerm floatTerm =
-      smithril_mk_fp_value(ctx, signBit, exponentBits, significandBits);
+      smithril_mk_fp(ctx, signBit, exponentBits, significandBits);
   sideConstraints.push_back(smithril_mk_fp_eq(ctx, fp, floatTerm));
   SmithrilTerm ieeeBits = smithril_mk_concat(ctx, signBit, exponentBits);
   ieeeBits = smithril_mk_concat(ctx, ieeeBits, significandBits);
@@ -1202,8 +1202,8 @@ SmithrilTerm SmithrilBuilder::castToFloat(const SmithrilTerm &e) {
       SmithrilTerm significandIntegerBit = smithril_mk_extract(ctx, 63, 63, e);
       SmithrilTerm significandFractionBits = smithril_mk_extract(ctx, 62, 0, e);
 
-      SmithrilTerm ieeeBitPatternAsFloat = smithril_mk_fp_value(
-          ctx, signBit, exponentBits, significandFractionBits);
+      SmithrilTerm ieeeBitPatternAsFloat =
+          smithril_mk_fp(ctx, signBit, exponentBits, significandFractionBits);
 
       // Generate side constraint on the significand integer bit. It is not
       // used in `ieeeBitPatternAsFloat` so we need to constrain that bit to
