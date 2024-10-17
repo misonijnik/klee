@@ -15,6 +15,7 @@ install_build_dependencies_smithril() {
     wget
     ca-certificates
     libclang-dev
+    openssl
   )
 
 
