@@ -746,7 +746,7 @@ SmithrilTerm SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
     }
 
     SmithrilTerm right = castToBitVector(construct(de->right, width_out));
-    SmithrilTerm result = smithril_mk_bvumod(ctx, left, right);
+    SmithrilTerm result = smithril_mk_bvurem(ctx, left, right);
 
     assert(getBVLength(result) == static_cast<unsigned>(*width_out) &&
            "width mismatch");
@@ -758,7 +758,7 @@ SmithrilTerm SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
     SmithrilTerm left = castToBitVector(construct(de->left, width_out));
     SmithrilTerm right = castToBitVector(construct(de->right, width_out));
     assert(*width_out != 1 && "uncanonicalized srem");
-    SmithrilTerm result = smithril_mk_bvsmod(ctx, left, right);
+    SmithrilTerm result = smithril_mk_bvsrem(ctx, left, right);
     assert(getBVLength(result) == static_cast<unsigned>(*width_out) &&
            "width mismatch");
     return result;
