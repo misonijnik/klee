@@ -13,7 +13,7 @@
 
 namespace SmithrilHashConfig {
 llvm::cl::opt<bool> UseConstructHashSmithril(
-    "use-construct-hash-bitwuzla",
+    "use-construct-hash-smithril",
     llvm::cl::desc(
         "Use hash-consing during Smithril query construction (default=true)"),
     llvm::cl::init(true), llvm::cl::cat(klee::ExprCat));

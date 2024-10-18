@@ -119,8 +119,9 @@ SmithrilTerm SmithrilBuilder::bvZExtConst(unsigned width, uint64_t value) {
   }
   SmithrilTerm expr = bvConst64(64, value);
   SmithrilTerm zero = bvConst64(64, 0);
-  for (width -= 64; width > 64; width -= 64)
+  for (width -= 64; width > 64; width -= 64) {
     expr = smithril_mk_concat(ctx, zero, expr);
+  }
   return smithril_mk_concat(ctx, bvConst64(width, 0), expr);
 }
 
@@ -257,19 +258,19 @@ SmithrilTerm SmithrilBuilder::iffExpr(SmithrilTerm lhs, SmithrilTerm rhs) {
 }
 
 SmithrilTerm SmithrilBuilder::bvNotExpr(SmithrilTerm expr) {
-  return smithril_mk_bvnot(ctx, expr);
+  return smithril_mk_bvnot(ctx, castToBitVector(expr));
 }
 
 SmithrilTerm SmithrilBuilder::bvAndExpr(SmithrilTerm lhs, SmithrilTerm rhs) {
-  return smithril_mk_bvand(ctx, lhs, rhs);
+  return smithril_mk_bvand(ctx, castToBitVector(lhs), castToBitVector(rhs));
 }
 
 SmithrilTerm SmithrilBuilder::bvOrExpr(SmithrilTerm lhs, SmithrilTerm rhs) {
-  return smithril_mk_bvor(ctx, lhs, rhs);
+  return smithril_mk_bvor(ctx, castToBitVector(lhs), castToBitVector(rhs));
 }
 
 SmithrilTerm SmithrilBuilder::bvXorExpr(SmithrilTerm lhs, SmithrilTerm rhs) {
-  return smithril_mk_bvxor(ctx, lhs, rhs);
+  return smithril_mk_bvxor(ctx, castToBitVector(lhs), castToBitVector(rhs));
 }
 
 SmithrilTerm SmithrilBuilder::bvSignExtend(SmithrilTerm src, unsigned width) {
@@ -671,6 +672,8 @@ SmithrilTerm SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
     SmithrilTerm right = castToBitVector(construct(se->right, width_out));
     assert(*width_out != 1 && "uncanonicalized sub");
     SmithrilTerm result = smithril_mk_bvsub(ctx, left, right);
+    auto a = getBVLength(result);
+    auto b = static_cast<unsigned>(*width_out);
     assert(getBVLength(result) == static_cast<unsigned>(*width_out) &&
            "width mismatch");
     return result;
@@ -1097,7 +1100,7 @@ SmithrilTerm SmithrilBuilder::fpToIEEEBV(const SmithrilTerm &fp) {
 
   SmithrilTerm floatTerm =
       smithril_mk_fp(ctx, signBit, exponentBits, significandBits);
-  sideConstraints.push_back(smithril_mk_fp_eq(ctx, fp, floatTerm));
+  sideConstraints.push_back(smithril_mk_eq(ctx, fp, floatTerm));
   SmithrilTerm ieeeBits = smithril_mk_concat(ctx, signBit, exponentBits);
   ieeeBits = smithril_mk_concat(ctx, ieeeBits, significandBits);
 
@@ -1300,12 +1303,13 @@ SmithrilTerm SmithrilBuilder::getx87FP80ExplicitSignificandIntegerBit(
     const SmithrilTerm &e) {
 #ifndef NDEBUG
   // Check the passed in expression is the right type.
-  SmithrilSort currentSort = e.sort();
-  assert(currentSort.is_fp());
+  SmithrilSort currentSort = smithril_get_sort(ctx, e);
+  assert(smithril_get_sort_kind(currentSort) == Fp);
 
-  unsigned exponentBits = currentSort.fp_exp_size();
-  unsigned significandBits = currentSort.fp_sig_size();
+  unsigned exponentBits = smithril_fp_get_bv_exp_size(e);
+  unsigned significandBits = smithril_fp_get_bv_sig_size(e);
   assert(exponentBits == 15);
+  llvm::errs() << "significandBits: " << significandBits << "\n";
   assert(significandBits == 64);
 #endif
   // If the number is a denormal or zero then the implicit integer bit is zero

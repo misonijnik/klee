@@ -12,6 +12,7 @@
 #include "klee/Config/config.h"
 #include "klee/Solver/SolverStats.h"
 #include "klee/Statistics/TimerStatIncrementer.h"
+#include <string>
 
 #ifdef ENABLE_SMITHRIL
 
@@ -245,7 +246,16 @@ protected:
 public:
   std::string getConstraintLog(const Query &) final;
   SolverImpl::SolverRunStatus getOperationStatusCode() final;
-  void setCoreSolverTimeout(time::Span _timeout) final { timeout = _timeout; }
+  void setCoreSolverTimeout(time::Span _timeout) final {
+    timeout = _timeout;
+    auto timeoutInSeconds = static_cast<unsigned>((timeout.toSeconds()));
+    if (timeoutInSeconds) {
+      std::string timeoutInSecondsString =
+          std::to_string(timeoutInSeconds) + "s";
+      smithril::smithril_set_timeout(solverParameters,
+                                     timeoutInSecondsString.c_str());
+    }
+  }
   void enableUnsatCore() {
     smithril::smithril_set_produce_unsat_core(solverParameters, true);
   }
