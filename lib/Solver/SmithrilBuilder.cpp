@@ -672,8 +672,6 @@ SmithrilTerm SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
     SmithrilTerm right = castToBitVector(construct(se->right, width_out));
     assert(*width_out != 1 && "uncanonicalized sub");
     SmithrilTerm result = smithril_mk_bvsub(ctx, left, right);
-    auto a = getBVLength(result);
-    auto b = static_cast<unsigned>(*width_out);
     assert(getBVLength(result) == static_cast<unsigned>(*width_out) &&
            "width mismatch");
     return result;
