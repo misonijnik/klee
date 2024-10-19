@@ -67,17 +67,7 @@ using ExprIncSet =
 using SmithrilASTIncSet =
     inc_uset<smithril::SmithrilTerm, SmithrilTermHash, SmithrilTermCmp>;
 
-void dump(const ConstraintFrames &frames) {
-  llvm::errs() << "frame sizes:";
-  for (auto size : frames.frame_sizes) {
-    llvm::errs() << " " << size;
-  }
-  llvm::errs() << "\n";
-  llvm::errs() << "frames:\n";
-  for (auto &x : frames.v) {
-    llvm::errs() << x->toString() << "\n";
-  }
-}
+extern void dump(const ConstraintFrames &);
 
 class ConstraintQuery {
 private:
@@ -164,6 +154,7 @@ void SmithrilSolverEnv::pop(size_t popSize) {
     return;
   objects.pop(popSize);
   objectsForGetModel.clear();
+  smithril_ast_expr_constraints.pop(popSize);
   smithril_ast_expr_to_klee_expr.pop(popSize);
   expr_to_track.pop(popSize);
   usedArrayBytes.pop(popSize);
@@ -172,6 +163,7 @@ void SmithrilSolverEnv::pop(size_t popSize) {
 
 void SmithrilSolverEnv::push() {
   objects.push();
+  smithril_ast_expr_constraints.push();
   smithril_ast_expr_to_klee_expr.push();
   expr_to_track.push();
   usedArrayBytes.push();
@@ -181,6 +173,7 @@ void SmithrilSolverEnv::push() {
 void SmithrilSolverEnv::clear() {
   objects.clear();
   objectsForGetModel.clear();
+  smithril_ast_expr_constraints.clear();
   smithril_ast_expr_to_klee_expr.clear();
   expr_to_track.clear();
   usedArrayBytes.clear();
@@ -410,6 +403,7 @@ bool SmithrilSolverImpl::internalRunSolver(
       if (ProduceUnsatCore && validityCore) {
         env.smithril_ast_expr_to_klee_expr.insert(
             {smithrilConstraint, constraint});
+        env.smithril_ast_expr_constraints.v.push_back(smithrilConstraint);
         env.expr_to_track.insert(smithrilConstraint);
       }
 
