@@ -482,6 +482,11 @@ SmithrilTerm SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
     width_out = &width;
   ++stats::queryConstructs;
   switch (e->getKind()) {
+  case Expr::Pointer:
+  case Expr::ConstantPointer: {
+    assert(0 && "unreachable");
+  }
+
   case Expr::Constant: {
     ConstantExpr *CE = cast<ConstantExpr>(e);
     *width_out = CE->getWidth();
@@ -490,19 +495,26 @@ SmithrilTerm SmithrilBuilder::constructActual(ref<Expr> e, int *width_out) {
     if (*width_out == 1)
       return CE->isTrue() ? getTrue() : getFalse();
 
-    // Fast path.
-    if (*width_out <= 32)
-      return bvConst32(*width_out, CE->getZExtValue(32));
-    if (*width_out <= 64)
-      return bvConst64(*width_out, CE->getZExtValue());
-
-    ref<ConstantExpr> Tmp = CE;
-    SmithrilTerm Res = bvConst64(64, Tmp->Extract(0, 64)->getZExtValue());
-    while (Tmp->getWidth() > 64) {
-      Tmp = Tmp->Extract(64, Tmp->getWidth() - 64);
-      unsigned Width = std::min(64U, Tmp->getWidth());
-      Res = smithril_mk_concat(
-          ctx, bvConst64(Width, Tmp->Extract(0, Width)->getZExtValue()), Res);
+    SmithrilTerm Res;
+    if (*width_out <= 32) {
+      // Fast path.
+      Res = bvConst32(*width_out, CE->getZExtValue(32));
+    } else if (*width_out <= 64) {
+      // Fast path.
+      Res = bvConst64(*width_out, CE->getZExtValue());
+    } else {
+      ref<ConstantExpr> Tmp = CE;
+      Res = bvConst64(64, Tmp->Extract(0, 64)->getZExtValue());
+      while (Tmp->getWidth() > 64) {
+        Tmp = Tmp->Extract(64, Tmp->getWidth() - 64);
+        unsigned Width = std::min(64U, Tmp->getWidth());
+        Res = smithril_mk_concat(
+            ctx, bvConst64(Width, Tmp->Extract(0, Width)->getZExtValue()), Res);
+      }
+    }
+    // Coerce to float if necesary
+    if (CE->isFloat()) {
+      Res = castToFloat(Res);
     }
     return Res;
   }
