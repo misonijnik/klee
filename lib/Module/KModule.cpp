@@ -15,6 +15,7 @@
 #include "Passes.h"
 
 #include "klee/Core/Interpreter.h"
+#include "klee/Module/CodeGraphInfo.h"
 #include "klee/Module/KInstruction.h"
 #include "klee/Module/KModule.h"
 #include "klee/Module/LocationInfo.h"
@@ -72,6 +73,10 @@ cl::opt<bool>
     DontVerify("disable-verify",
                cl::desc("Do not verify the module integrity (default=false)"),
                cl::init(false), cl::cat(klee::ModuleCat));
+
+cl::opt<bool> SkipNonInterestingFunctions("tmp-skip-fns-in-init", cl::desc(""),
+                                          cl::init(true),
+                                          cl::cat(klee::ModuleCat));
 
 cl::opt<bool> UseKleeFERoundInternals(
     "feround-internals",
@@ -527,6 +532,12 @@ KFunction::KFunction(llvm::Function *_function, KModule *_km,
     assert(function()->begin() != function()->end());
     entryKBlock = blockMap[&*function()->begin()];
   }
+
+  for (const auto &block : blocks) {
+    if (block->getLastInstruction()->inst()->getNumSuccessors() == 0) {
+      finalKBlocks.insert(block.get());
+    }
+  }
 }
 
 size_t KFunction::getLine() const {
@@ -696,3 +707,114 @@ size_t KFunction::getNumArgs() const { return function()->arg_size(); }
 size_t KFunction::getNumRegisters() const {
   return function()->arg_size() + numInstructions;
 }
+
+bool klee::FalsePredicate(KBlock *) { return false; }
+
+bool klee::RegularFunctionPredicate(KBlock *block) {
+  return (isa<KCallBlock>(block) && dyn_cast<KCallBlock>(block)->internal() &&
+          !dyn_cast<KCallBlock>(block)->intrinsic());
+}
+
+bool DefaultBlockPredicate::operator()(KBlock *block) {
+  if (block == block->parent->entryKBlock) {
+    return true;
+  }
+
+  if (block->parent->finalKBlocks.count(block)) {
+    return true;
+  }
+
+  if (initJoinBlocks && (block->basicBlock()->hasNPredecessorsOrMore(2) ||
+                         block->basicBlock()->hasNPredecessors(0))) {
+    return true;
+  }
+
+  if (RegularFunctionPredicate(block)) {
+    return true;
+  }
+
+  return false;
+}
+
+bool DefaultBlockPredicate::isInterestingCallBlock(KBlock *kb) {
+  return RegularFunctionPredicate(kb);
+}
+
+bool TraceVerifyPredicate::operator()(KBlock *block) {
+  if (block == block->parent->entryKBlock) {
+    return true;
+  }
+
+  if (block->parent->finalKBlocks.count(block)) {
+    return true;
+  }
+
+  if (initJoinBlocks && (block->basicBlock()->hasNPredecessorsOrMore(2) ||
+                         block->basicBlock()->hasNPredecessors(0))) {
+    return true;
+  }
+
+  if (isInterestingCallBlock(block)) {
+    return true;
+  }
+
+  if (specialPoints.count(block)) {
+    return true;
+  }
+
+  return false;
+}
+
+bool TraceVerifyPredicate::isInterestingCallBlock(KBlock *kb) {
+  if (RegularFunctionPredicate(kb)) {
+    auto fns = cast<KCallBlock>(kb)->calledFunctions;
+    bool atLeastOneInteresting = false;
+    for (auto f : fns) {
+      if (isInterestingFn(f)) {
+        atLeastOneInteresting = true;
+        break;
+      }
+    }
+    return atLeastOneInteresting;
+  } else {
+    return false;
+  }
+}
+
+bool TraceVerifyPredicate::isInterestingFn(KFunction *kf) {
+  if (!SkipNonInterestingFunctions) {
+    return true;
+  }
+
+  if (uninsterestingFns.count(kf)) {
+    return false;
+  }
+
+  if (interestingFns.count(kf)) {
+    return true;
+  }
+
+  std::unordered_set<KFunction *> specialFunctions;
+  for (auto sp : specialPoints) {
+    specialFunctions.insert(sp->parent);
+  }
+
+  bool atLeastOneInteresting = false;
+  auto &distance = cgd.getDistance(kf);
+  for (auto skf : specialFunctions) {
+    if (distance.count(skf)) {
+      atLeastOneInteresting = true;
+      break;
+    }
+  }
+
+  if (atLeastOneInteresting) {
+    interestingFns.insert(kf);
+    return true;
+  } else {
+    uninsterestingFns.insert(kf);
+    return false;
+  }
+}
+
+bool PredicateAdapter::operator()(KBlock *block) { return predicate(block); }

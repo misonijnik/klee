@@ -106,6 +106,10 @@ std::string KInstruction::toString() const {
          inst()->getOpcodeName() + ")";
 }
 
+bool CallStackFrame::equals(const CallStackFrame &other) const {
+  return kf == other.kf && caller == other.caller;
+}
+
 unsigned KInstruction::getGlobalIndex() const { return globalIndex; }
 
 unsigned KInstruction::getIndex() const {

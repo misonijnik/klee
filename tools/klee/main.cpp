@@ -2471,7 +2471,8 @@ int main(int argc, char **argv, char **envp) {
         << handler->getNumPathsExplored() - handler->getNumPathsCompleted()
         << '\n'
         << "KLEE: done: generated tests = " << handler->getNumTestCases()
-        << '\n';
+        << '\n'
+        << "KLEE: done: solver queries = " << queries << '\n';
 
   bool useColors = llvm::errs().is_displayed();
   if (useColors)

@@ -117,23 +117,34 @@ public:
   using ordered_constraints_ty =
       PersistentMap<Path::PathIndex, constraints_ty, Path::PathIndexCompare>;
 
-  void advancePath(KInstruction *ki);
+  void advancePath(KInstruction *prevPC, KInstruction *pc);
+  void retractPath();
   void advancePath(const Path &path);
 
+  ExprHashSet addConstraint(ref<Expr> e, Path::PathIndex currIndex);
   ExprHashSet addConstraint(ref<Expr> e);
   bool isSymcretized(ref<Expr> expr) const;
   void addSymcrete(ref<Symcrete> s);
   void rewriteConcretization(const Assignment &a);
 
+  const constraints_ty &original() const;
+  const ExprHashMap<ExprHashSet> &simplificationMap() const;
   const ConstraintSet &cs() const;
+  const ConstraintSet &withAssumptions(const ExprHashSet &assumptions) const;
   const Path &path() const;
 
-  static PathConstraints concat(const PathConstraints &l,
-                                const PathConstraints &r);
+  const ordered_constraints_ty &orderedCS() const;
+  PathConstraints() = default;
+  PathConstraints(KInstruction *initpc) : _path(initpc) {}
 
 private:
   Path _path;
+  constraints_ty _original;
   ConstraintSet constraints;
+  mutable ConstraintSet tmpConstraints;
+  ExprHashMap<Path::PathIndex> pathIndexes;
+  ordered_constraints_ty orderedConstraints;
+  ExprHashMap<ExprHashSet> _simplificationMap;
   unsigned long addingCounter = 0UL;
 };
 

@@ -45,15 +45,6 @@ void klee::findReads(ref<Expr> e, bool visitUpdates,
         stack.push_back(re->updates.root->getSize());
       }
 
-      if (isa<LazyInitializationSource>(re->updates.root->source) &&
-          visited
-              .insert(cast<LazyInitializationSource>(re->updates.root->source)
-                          ->pointer)
-              .second) {
-        stack.push_back(
-            cast<LazyInitializationSource>(re->updates.root->source)->pointer);
-      }
-
       if (ref<MockDeterministicSource> mockSource =
               dyn_cast_or_null<MockDeterministicSource>(
                   re->updates.root->source)) {

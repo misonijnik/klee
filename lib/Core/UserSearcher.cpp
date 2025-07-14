@@ -9,6 +9,7 @@
 
 #include "UserSearcher.h"
 
+#include "BackwardSearcher.h"
 #include "Executor.h"
 #include "Searcher.h"
 
@@ -87,6 +88,12 @@ cl::opt<bool> UseFairSearch(
         "(default=false)"),
     cl::init(false), cl::cat(SearchCat));
 
+cl::opt<unsigned long long>
+    MaxPropagations("max-propagations",
+                    cl::desc("propagate at most this amount of propagations "
+                             "with the same state (default=0 (no limit))."),
+                    cl::init(0), cl::cat(TerminationCat));
+
 } // namespace klee
 
 void klee::initializeSearchOptions() {
@@ -157,7 +164,7 @@ Searcher *getNewSearcher(Searcher::CoreSearchType type, RNG &rng,
   return searcher;
 }
 
-Searcher *klee::constructBaseSearcher(Executor &executor) {
+std::unique_ptr<Searcher> klee::constructBaseSearcher(Executor &executor) {
   Searcher *searcher =
       getNewSearcher(CoreSearch[0], executor.theRNG, *executor.processForest);
 
@@ -187,15 +194,15 @@ Searcher *klee::constructBaseSearcher(Executor &executor) {
         new IterativeDeepeningSearcher(searcher, UseIterativeDeepeningSearch);
   }
 
-  return searcher;
+  return std::unique_ptr<Searcher>{searcher};
 }
 
-Searcher *klee::constructUserSearcher(Executor &executor) {
+std::unique_ptr<Searcher> klee::constructUserSearcher(Executor &executor) {
 
-  Searcher *searcher = nullptr;
+  std::unique_ptr<Searcher> searcher;
   if (UseFairSearch) {
-    searcher = new DiscreteTimeFairSearcher(BaseSearcherConstructor(executor),
-                                            executor.theRNG, 1);
+    searcher = std::make_unique<DiscreteTimeFairSearcher>(
+        BaseSearcherConstructor(executor), executor.theRNG, 1);
   } else {
     searcher = constructBaseSearcher(executor);
   }
@@ -207,4 +214,21 @@ Searcher *klee::constructUserSearcher(Executor &executor) {
   os << "END searcher description\n";
 
   return searcher;
+}
+
+std::unique_ptr<BackwardSearcher>
+klee::constructUserBackwardSearcher([[maybe_unused]] Executor &executor) {
+  return std::make_unique<RecencyRankedSearcher>(MaxPropagations - 1);
+}
+
+std::unique_ptr<BidirectionalSearcher> klee::constructUserBidirectionalSearcher(
+    Executor &executor,
+    std::unique_ptr<IsolatedStatesInitializer> initializer) {
+  auto forward = constructUserSearcher(executor);
+  auto branch = constructUserSearcher(executor);
+  auto backward = constructUserBackwardSearcher(executor);
+  auto bidirectionalSearcher = std::make_unique<BidirectionalSearcher>(
+      std::move(forward), std::move(branch), std::move(backward),
+      std::move(initializer));
+  return bidirectionalSearcher;
 }

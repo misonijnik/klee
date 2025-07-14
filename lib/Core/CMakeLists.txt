@@ -8,8 +8,10 @@
 #===------------------------------------------------------------------------===#
 add_library(kleeCore
   AddressSpace.cpp
+        BackwardSearcher.cpp
   BidirectionalSearcher.cpp
   CallPathManager.cpp
+        Composer.cpp
   CodeLocation.cpp
   Context.cpp
   CoreStats.cpp
@@ -20,10 +22,12 @@ add_library(kleeCore
   ExecutorUtil.cpp
   ExternalDispatcher.cpp
   ImpliedValue.cpp
+        IsolatedStatesInitializer.cpp
   Memory.cpp
   MemoryManager.cpp
   ObjectManager.cpp
   PForest.cpp
+        ProofObligation.cpp
   MockBuilder.cpp
   PTree.cpp
   Searcher.cpp

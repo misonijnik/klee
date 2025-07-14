@@ -97,6 +97,7 @@ enum Reason {
   MaxForks,
   CovCheck,
   NoMoreStates,
+  UnreachedTarget,
   ReachedTarget,
   ErrorOnWhichShouldExit,
   Interrupt,

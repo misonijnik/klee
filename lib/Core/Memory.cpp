@@ -101,6 +101,15 @@ std::string MemoryObject::getAllocInfo() const {
 
 /***/
 
+ObjectState::ObjectState(const Array *array)
+    : copyOnWriteOwner(0), object(nullptr),
+      valueOS(ObjectStage(array, nullptr)),
+      baseOS(ObjectStage(array->size, Expr::createPointer(0), false,
+                         Context::get().getPointerWidth())),
+      lastUpdate(nullptr), size(array->size), readOnly(false) {
+  baseOS.initializeToZero();
+}
+
 ObjectState::ObjectState(const MemoryObject *mo, const Array *array)
     : copyOnWriteOwner(0), object(mo), valueOS(ObjectStage(array, nullptr)),
       baseOS(ObjectStage(array->size, Expr::createPointer(0), false,

@@ -44,6 +44,11 @@ void TargetManager::updateMiss(ExecutionState &state, ref<Target> target) {
   auto &stateTargetForest = targetForest(state);
   stateTargetForest.remove(target);
   setTargets(state, stateTargetForest.getTargets());
+
+  if (state.isolated) {
+    return;
+  }
+
   if (guidance == Interpreter::GuidanceKind::CoverageGuidance) {
     if (targets(state).size() == 0) {
       state.setTargeted(false);
@@ -51,7 +56,14 @@ void TargetManager::updateMiss(ExecutionState &state, ref<Target> target) {
   }
 }
 
+void TargetManager::updateMiss(ProofObligation &pob, ref<Target> target) {
+  auto &stateTargetForest = targetForest(pob);
+  stateTargetForest.remove(target);
+}
+
 void TargetManager::updateContinue(ExecutionState &, ref<Target>) {}
+
+void TargetManager::updateContinue(ProofObligation &, ref<Target>) {}
 
 void TargetManager::updateDone(ExecutionState &state, ref<Target> target) {
   auto &stateTargetForest = targetForest(state);
@@ -59,6 +71,11 @@ void TargetManager::updateDone(ExecutionState &state, ref<Target> target) {
   stateTargetForest.stepTo(target);
   setTargets(state, stateTargetForest.getTargets());
   setHistory(state, stateTargetForest.getHistory());
+
+  if (state.isolated) {
+    return;
+  }
+
   if (guidance == Interpreter::GuidanceKind::CoverageGuidance ||
       target->shouldFailOnThisTarget()) {
     if (target->shouldFailOnThisTarget() ||
@@ -71,6 +88,11 @@ void TargetManager::updateDone(ExecutionState &state, ref<Target> target) {
       state.setTargeted(false);
     }
   }
+}
+
+void TargetManager::updateDone(ProofObligation &pob, ref<Target> target) {
+  auto &stateTargetForest = targetForest(pob);
+  stateTargetForest.stepTo(target);
 }
 
 void TargetManager::collect(ExecutionState &state) {
@@ -135,7 +157,11 @@ void TargetManager::collectFiltered(
 }
 
 void TargetManager::updateReached(ExecutionState &state) {
-  auto prevKI = state.prevPC;
+  if (state.isolated) {
+    return;
+  }
+
+  auto prevKI = state.prevPC ? state.prevPC : state.pc;
   auto kf = prevKI->parent->parent;
   auto kmodule = kf->parent;
 
@@ -143,17 +169,20 @@ void TargetManager::updateReached(ExecutionState &state) {
       kmodule->inMainModule(*kf->function())) {
     ref<Target> target;
 
-    if (state.getPrevPCBlock()->getTerminator()->getNumSuccessors() == 0) {
-      target = ReachBlockTarget::create(state.prevPC->parent, true);
-    } else if (isa<KCallBlock>(state.prevPC->parent) &&
+    if (state.getPrevPCBlock()
+            ->basicBlock()
+            ->getTerminator()
+            ->getNumSuccessors() == 0) {
+      target = ReachBlockTarget::create(state.getPrevPCBlock(), true);
+    } else if (isa<KCallBlock>(state.getPrevPCBlock()) &&
                !targetCalculator.uncoveredBlockPredicate(
-                   state.prevPC->parent)) {
-      target = ReachBlockTarget::create(state.prevPC->parent, true);
-    } else if (!isa<KCallBlock>(state.prevPC->parent)) {
+                   state.getPrevPCBlock())) {
+      target = ReachBlockTarget::create(state.getPrevPCBlock(), true);
+    } else if (!isa<KCallBlock>(state.getPrevPCBlock())) {
       unsigned index = 0;
-      for (auto succ : successors(state.getPrevPCBlock())) {
-        if (succ == state.getPCBlock()) {
-          target = CoverBranchTarget::create(state.prevPC->parent, index);
+      for (auto succ : successors(state.getPrevPCBlock()->basicBlock())) {
+        if (succ == state.getPCBlock()->basicBlock()) {
+          target = CoverBranchTarget::create(state.getPrevPCBlock(), index);
           break;
         }
         ++index;
@@ -162,14 +191,15 @@ void TargetManager::updateReached(ExecutionState &state) {
 
     if (target && guidance == Interpreter::GuidanceKind::CoverageGuidance) {
       setReached(target);
-      target = ReachBlockTarget::create(state.pc->parent, false);
+      target = ReachBlockTarget::create(state.getPC()->parent, false);
       setReached(target);
     }
   }
 }
 
 void TargetManager::updateTargets(ExecutionState &state) {
-  if (guidance == Interpreter::GuidanceKind::CoverageGuidance) {
+  if (!state.isolated &&
+      guidance == Interpreter::GuidanceKind::CoverageGuidance) {
     if (targets(state).empty() && state.isStuck(MaxCyclesBeforeStuck)) {
       state.setTargeted(true);
     }
@@ -212,11 +242,47 @@ void TargetManager::updateTargets(ExecutionState &state) {
   }
 }
 
+void TargetManager::updateTargets(ProofObligation &pob) {
+  if (!isTargeted(pob)) {
+    return;
+  }
+
+  auto pobTargets = targets(pob);
+  auto &pobTargetForest = targetForest(pob);
+
+  for (auto target : pobTargets) {
+    if (!pobTargetForest.contains(target)) {
+      continue;
+    }
+
+    DistanceResult pobDistance = distance(pob, target);
+    switch (pobDistance.result) {
+    case WeightResult::Continue:
+      updateContinue(pob, target);
+      break;
+    case WeightResult::Miss:
+      updateMiss(pob, target);
+      break;
+    case WeightResult::Done:
+      updateDone(pob, target);
+      break;
+    default:
+      assert(0 && "unreachable");
+    }
+  }
+}
+
 void TargetManager::update(ref<ObjectManager::Event> e) {
   switch (e->getKind()) {
   case ObjectManager::Event::Kind::States: {
     auto statesEvent = cast<ObjectManager::States>(e);
-    update(statesEvent->modified, statesEvent->added, statesEvent->removed);
+    update(statesEvent->modified, statesEvent->added, statesEvent->removed,
+           statesEvent->isolated);
+    break;
+  }
+  case ObjectManager::Event::Kind::ProofObligations: {
+    auto pobsEvent = cast<ObjectManager::ProofObligations>(e);
+    update(pobsEvent->context, pobsEvent->added, pobsEvent->removed);
     break;
   }
   default:
@@ -224,9 +290,31 @@ void TargetManager::update(ref<ObjectManager::Event> e) {
   }
 }
 
+void TargetManager::update(ExecutionState *context, const pobs_ty &addedPobs,
+                           const pobs_ty &) {
+  if (!context) {
+    return;
+  }
+
+  for (auto pob : addedPobs) {
+    auto pobTargets = targets(*pob);
+    auto &pobTargetForest = targetForest(*pob);
+
+    auto history = context->history();
+    while (history && history->target) {
+      if (pobTargetForest.contains(history->target)) {
+        updateDone(*pob, history->target);
+      }
+      history = history->visitedTargets;
+    }
+    updateTargets(*pob);
+  }
+}
+
 void TargetManager::update(ExecutionState *current,
                            const std::vector<ExecutionState *> &addedStates,
-                           const std::vector<ExecutionState *> &removedStates) {
+                           const std::vector<ExecutionState *> &removedStates,
+                           bool /* isolated */) {
 
   states.insert(addedStates.begin(), addedStates.end());
 
@@ -236,6 +324,11 @@ void TargetManager::update(ExecutionState *current,
   }
   for (const auto state : addedStates) {
     localStates.insert(state);
+    for (auto target : state->targets()) {
+      if (state->isolated) {
+        targetToStates[target].insert(state);
+      }
+    }
   }
   for (const auto state : removedStates) {
     localStates.insert(state);
@@ -262,6 +355,11 @@ void TargetManager::update(ExecutionState *current,
   }
 
   for (const auto state : removedStates) {
+    for (auto target : state->targets()) {
+      if (state->isolated) {
+        targetToStates[target].erase(state);
+      }
+    }
     states.erase(state);
     distances.erase(state);
   }
@@ -281,7 +379,7 @@ bool TargetManager::isReachedTarget(const ExecutionState &state,
 
 bool TargetManager::isReachedTarget(const ExecutionState &state,
                                     ref<Target> target, WeightResult &result) {
-  if (state.constraints.path().KBlockSize() == 0) {
+  if (state.constraints.path().KBlockSize() == 0 && state.error == None) {
     return false;
   }
 
@@ -297,7 +395,7 @@ bool TargetManager::isReachedTarget(const ExecutionState &state,
         return true;
       }
     } else {
-      if (state.pc->parent == target->getBlock()) {
+      if (state.pc == target->getBlock()->getFirstInstruction()) {
         result = Done;
         return true;
       }
@@ -331,7 +429,7 @@ bool TargetManager::isReachedTarget(const ExecutionState &state,
         found = false;
         break;
       }
-      possibleInstruction = state.stack.callStack().at(i).caller;
+      possibleInstruction = state.stack.callStack().at(i).caller->getIterator();
       i--;
     }
     if (found) {

@@ -17,6 +17,7 @@
 #include "klee/Module/CodeGraphInfo.h"
 #include "klee/Module/KInstruction.h"
 #include "klee/Module/KModule.h"
+#include "klee/Module/TargetForest.h"
 #include "klee/Support/ErrorHandling.h"
 
 #include <memory>
@@ -373,11 +374,11 @@ TargetedExecutionManager::collectAllLocations(const SarifReport &paths) const {
   return locations;
 }
 
-bool TargetedExecutionManager::canReach(const ref<Location> &from,
-                                        const ref<Location> &to,
-                                        LocationToBlocks &locToBlocks) const {
-  for (auto fromBlock : locToBlocks[from]) {
-    for (auto toBlock : locToBlocks[to]) {
+bool TargetedExecutionManager::canReach(
+    const ref<Location> &from, const ref<Location> &to,
+    const LocationToBlocks &locToBlocks) const {
+  for (auto fromBlock : locToBlocks.at(from)) {
+    for (auto toBlock : locToBlocks.at(to)) {
       auto fromKf = fromBlock->parent;
       auto toKf = toBlock->parent;
       if (fromKf == toKf) {
@@ -408,7 +409,7 @@ bool TargetedExecutionManager::canReach(const ref<Location> &from,
 }
 
 bool TargetedExecutionManager::tryResolveLocations(
-    Result &result, LocationToBlocks &locToBlocks) const {
+    Result &result, const LocationToBlocks &locToBlocks) const {
   std::vector<ref<Location>> resolvedLocations;
   size_t index = 0;
   for (const auto &location : result.locations) {
@@ -500,13 +501,23 @@ KFunction *TargetedExecutionManager::tryResolveEntryFunction(
   return resKf;
 }
 
-ref<TargetForest> TargetedExecutionManager::prepareTargets(KModule *kmodule,
-                                                           KFunction *entry,
-                                                           SarifReport paths) {
-  ref<TargetForest> forest = new TargetForest(entry);
+TargetedExecutionManager::Data
+TargetedExecutionManager::prepareTargets(KModule *kmodule, KFunction *entry,
+                                         SarifReport paths) {
+  Data ret;
+
+  ret.forwardWhitelist = new TargetForest(entry);
 
   Locations locations = collectAllLocations(paths);
   LocationToBlocks locToBlocks = prepareAllLocations(kmodule, locations);
+
+  for (auto &locblock : locToBlocks) {
+    for (auto block : locblock.second) {
+      ret.specialPoints.insert(block);
+    }
+  }
+
+  std::map<std::string, ref<TargetForest>> backwardWhitelists;
 
   for (auto &result : paths.results) {
     bool isFullyResolved = tryResolveLocations(result, locToBlocks);
@@ -521,10 +532,67 @@ ref<TargetForest> TargetedExecutionManager::prepareTargets(KModule *kmodule,
       continue;
     }
 
-    forest->addTrace(result, locToBlocks);
+    if (backwardWhitelists.count(result.id) == 0) {
+      ref<TargetForest> whitelist = new TargetForest(kf);
+      backwardWhitelists[result.id] = whitelist;
+    }
+
+    ret.forwardWhitelist->addTrace(result, kf, locToBlocks, false);
+    backwardWhitelists[result.id]->addTrace(result, kf, locToBlocks, true);
   }
 
-  return forest;
+  std::set<KFunction *, KFunctionCompare> functionsToDismantle;
+  auto &dist = codeGraphInfo.getDistance(entry);
+  for (auto &reachable : dist) {
+    functionsToDismantle.insert(reachable.first);
+  }
+
+  ret.backwardWhitelists = backwardWhitelists;
+  ret.functionsToDismantle = std::move(functionsToDismantle);
+
+  return ret;
+}
+
+TargetedExecutionManager::Data
+TargetedExecutionManager::prepareTargets(KFunction *entry,
+                                         std::vector<KBlockTrace> paths) {
+  Data ret;
+  ret.forwardWhitelist = new TargetForest(entry);
+
+  for (auto &path : paths) {
+    for (auto &layer : path) {
+      for (auto block : layer) {
+        ret.specialPoints.insert(block);
+      }
+    }
+  }
+
+  std::map<std::string, ref<TargetForest>> backwardWhitelists;
+
+  unsigned id = 0; // Why need ID in backward?
+  for (auto &path : paths) {
+    auto kf = (*(path.front().begin()))->parent;
+    auto traceID = llvm::itostr(id++);
+
+    if (backwardWhitelists.count(traceID) == 0) {
+      ref<TargetForest> whitelist = new TargetForest(kf);
+      backwardWhitelists[traceID] = whitelist;
+    }
+
+    ret.forwardWhitelist->addTrace(path, false);
+    backwardWhitelists[traceID]->addTrace(path, true);
+  }
+
+  std::set<KFunction *, KFunctionCompare> functionsToDismantle;
+  auto &dist = codeGraphInfo.getDistance(entry);
+  for (auto &reachable : dist) {
+    functionsToDismantle.insert(reachable.first);
+  }
+
+  ret.backwardWhitelists = backwardWhitelists;
+  ret.functionsToDismantle = std::move(functionsToDismantle);
+
+  return ret;
 }
 
 void TargetedExecutionManager::reportFalseNegative(ExecutionState &state,

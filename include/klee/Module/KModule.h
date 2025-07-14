@@ -41,6 +41,7 @@ Function *getTargetFunction(Value *calledVal);
 
 namespace klee {
 struct Cell;
+class CodeGraphInfo;
 class Executor;
 class Expr;
 class InterpreterHandler;
@@ -122,6 +123,59 @@ public:
 
 typedef std::function<bool(KBlock *)> KBlockPredicate;
 
+bool FalsePredicate(KBlock *);
+bool RegularFunctionPredicate(KBlock *);
+
+struct InitializerPredicate {
+  virtual bool operator()(KBlock *block) = 0;
+  virtual bool isInterestingCallBlock(KBlock *kb) = 0;
+  virtual ~InitializerPredicate() {}
+};
+
+struct DefaultBlockPredicate : public InitializerPredicate {
+  explicit DefaultBlockPredicate(bool initJoinBlocks)
+      : initJoinBlocks(initJoinBlocks){};
+  bool operator()(KBlock *block) override;
+  bool isInterestingCallBlock(KBlock *kb) override;
+  ~DefaultBlockPredicate() override {}
+
+private:
+  bool initJoinBlocks;
+};
+
+struct TraceVerifyPredicate : public InitializerPredicate {
+  explicit TraceVerifyPredicate(std::set<KBlock *, KBlockCompare> specialPoints,
+                                CodeGraphInfo &cgd, bool initJoinBlocks)
+      : specialPoints(specialPoints), cgd(cgd),
+        initJoinBlocks(initJoinBlocks){};
+
+  bool operator()(KBlock *block) override;
+
+  bool isInterestingCallBlock(KBlock *kb) override;
+
+  ~TraceVerifyPredicate() override {}
+
+private:
+  std::set<KBlock *, KBlockCompare> specialPoints;
+  std::set<KFunction *> interestingFns;
+  std::set<KFunction *> uninsterestingFns;
+
+  CodeGraphInfo &cgd;
+  bool initJoinBlocks;
+
+  bool isInterestingFn(KFunction *kf);
+};
+
+struct PredicateAdapter {
+
+  bool operator()(KBlock *block);
+
+  PredicateAdapter(InitializerPredicate &predicate) : predicate(predicate) {}
+
+private:
+  InitializerPredicate &predicate;
+};
+
 struct KBasicBlock : public KBlock {
 public:
   KBasicBlock(KFunction *, llvm::BasicBlock *, KModule *,
@@ -196,6 +250,7 @@ public:
   std::unordered_map<const llvm::BasicBlock *, KBlock *> blockMap;
   KBlock *entryKBlock;
   std::vector<KBlock *> returnKBlocks;
+  KBlockSet finalKBlocks;
   std::vector<KCallBlock *> kCallBlocks;
 
   /// count of instructions in function

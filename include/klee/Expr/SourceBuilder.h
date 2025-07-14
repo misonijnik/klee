@@ -29,6 +29,10 @@ public:
   symbolicSizeConstantAddress(unsigned version,
                               const KGlobalVariable *allocSite, ref<Expr> size);
 
+  static ref<SymbolicSource>
+  symbolicSizeConstantAddress(unsigned version, const KValue *allocSite,
+                              ref<Expr> size);
+
   static ref<SymbolicSource> makeSymbolic(const std::string &name,
                                           unsigned version);
   static ref<SymbolicSource> lazyInitializationAddress(ref<Expr> pointer);
@@ -40,7 +44,6 @@ public:
                                          int _index, KModule *km);
   static ref<SymbolicSource> value(const llvm::Value &_allocSite, int _index,
                                    KModule *km);
-  static ref<SymbolicSource> irreproducible(const std::string &name);
   static ref<SymbolicSource> mockNaive(const KModule *kModule,
                                        const llvm::Function &kFunction,
                                        unsigned version);
@@ -48,6 +51,9 @@ public:
   mockDeterministic(const KModule *kModule, const llvm::Function &kFunction,
                     const std::vector<ref<Expr>> &args);
   static ref<SymbolicSource> alpha(int _index);
+  static ref<SymbolicSource> global(const llvm::GlobalVariable &name);
+  static ref<SymbolicSource> irreproducible(const std::string &name,
+                                            unsigned version);
 };
 
 }; // namespace klee

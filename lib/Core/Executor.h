@@ -18,6 +18,7 @@
 #include "BidirectionalSearcher.h"
 #include "ExecutionState.h"
 #include "ObjectManager.h"
+#include "ProofObligation.h"
 #include "SeedMap.h"
 #include "TargetedExecutionManager.h"
 #include "UserSearcher.h"
@@ -43,6 +44,7 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <klee/Expr/Lemma.h>
 #include <map>
 #include <memory>
 #include <set>
@@ -110,13 +112,26 @@ template <class T> class ref;
 /// during an instruction step. Should contain addedStates,
 /// removedStates, and haltExecution, among others.
 
+typedef std::vector<ref<const MemoryObject>> ObjectResolutionList;
+
 class Executor : public Interpreter {
+  friend struct ComposeHelper;
   friend class OwningSearcher;
   friend class WeightedRandomSearcher;
   friend class SpecialFunctionHandler;
   friend class StatsTracker;
-  friend klee::Searcher *klee::constructBaseSearcher(Executor &executor);
-  friend klee::Searcher *klee::constructUserSearcher(Executor &executor);
+  friend std::unique_ptr<Searcher>
+  klee::constructBaseSearcher(Executor &executor);
+  friend std::unique_ptr<Searcher>
+  klee::constructUserSearcher(Executor &executor);
+
+  struct ComposeResult {
+    bool success;
+    PathConstraints composed;
+    Conflict conflict;
+    ref<Expr> nullPointerExpr;
+    ImmutableList<Symbolic> symbolics;
+  };
 
 public:
   typedef std::pair<ExecutionState *, ExecutionState *> StatePair;
@@ -153,6 +168,7 @@ private:
   std::unique_ptr<MemoryManager> memory;
 
   std::unique_ptr<ObjectManager> objectManager;
+  Summary summary;
   StatsTracker *statsTracker;
   TreeStreamWriter *pathWriter, *symPathWriter;
   SpecialFunctionHandler *specialFunctionHandler;
@@ -245,6 +261,9 @@ private:
 
   std::unordered_map<KFunction *, TargetedHaltsOnTraces> targets;
 
+  // For statistics
+  std::set<KBlock *> summarized;
+
   /// Typeids used during exception handling
   std::vector<ref<Expr>> eh_typeids;
 
@@ -268,7 +287,7 @@ private:
   void executeInstruction(ExecutionState &state, KInstruction *ki);
 
   void seed(ExecutionState &initialState);
-  void run(ExecutionState *initialState);
+  void run(ExecutionState *initialState, TargetedExecutionManager::Data &data);
 
   // Given a concrete object in our [klee's] address space, add it to
   // objects checked code can reference.
@@ -386,8 +405,6 @@ private:
   void executeCall(ExecutionState &state, KInstruction *ki, llvm::Function *f,
                    std::vector<ref<Expr>> &arguments);
 
-  typedef std::vector<ref<const MemoryObject>> ObjectResolutionList;
-
   bool resolveMemoryObjects(ExecutionState &state, ref<PointerExpr> address,
                             KInstruction *target, unsigned bytes,
                             ObjectResolutionList &mayBeResolvedMemoryObjects,
@@ -437,6 +454,9 @@ private:
   /// Can we reach at least one target of `current` from there?
   bool canReachSomeTargetFromBlock(ExecutionState &current, KBlock *block);
 
+  bool canReachSomeTargetThroughState(ProofObligation &pob,
+                                      ExecutionState &state);
+
   /// Create a new state where each input condition has been added as
   /// a constraint and return the results. The input state is included
   /// as one of the results. Note that the output vector may include
@@ -467,7 +487,8 @@ private:
   // Used for testing.
   ref<Expr> replaceReadWithSymbolic(ExecutionState &state, ref<Expr> e);
 
-  ref<Expr> makeMockValue(const std::string &name, Expr::Width width);
+  ref<Expr> makeMockValue(ExecutionState &state, const std::string &name,
+                          Expr::Width width);
 
   const Cell &eval(const KInstruction *ki, unsigned index,
                    ExecutionState &state, StackFrame &sf,
@@ -675,6 +696,13 @@ private:
   void reportProgressTowardsTargets(std::string prefix,
                                     const SetOfStates &states) const;
   void reportProgressTowardsTargets() const;
+  void updateHaltExecutionStatus();
+
+  std::unique_ptr<DefaultIsolatedStatesInitializer>
+  createIsolatedStatesInitializer(InitializerPredicate *predicate,
+                                  TargetedExecutionManager::Data const &data);
+  void pruneInactivePobs(
+      DefaultIsolatedStatesInitializer *isolatedStatesInitializer);
 
   /// bindModuleConstants - Initialize the module constant table.
   void bindModuleConstants(llvm::APFloat::roundingMode rm);
@@ -722,14 +750,56 @@ private:
   bool branchingPermitted(ExecutionState &state, unsigned N);
 
   void printDebugInstructions(ExecutionState &state);
-  void doDumpStates();
+  void doDumpObjects();
 
   /// Only for debug purposes; enable via debugger or klee-control
   void dumpStates();
   void dumpPForest();
 
+  ref<Expr> fillValue(ExecutionState &state, ref<ValueSource> valueSource,
+                      ref<Expr> size);
+
+  ref<ObjectState> fillGlobal(ExecutionState &state,
+                              ref<GlobalSource> globalSource);
+
+  ref<ObjectState> fillMakeSymbolic(ExecutionState &state,
+                                    ref<MakeSymbolicSource> makeSymbolicSource,
+                                    ref<Expr> size);
+
+  ref<ObjectState>
+  fillUninitialized(ExecutionState &state,
+                    ref<UninitializedSource> uninitializedSource,
+                    ref<Expr> size);
+
+  ref<ObjectState>
+  fillIrreproducible(ExecutionState &state,
+                     ref<IrreproducibleSource> makeSymbolicSource,
+                     ref<Expr> size);
+
+  ref<ObjectState> fillConstant(ExecutionState &state,
+                                ref<ConstantSource> constanSource,
+                                ref<Expr> size);
+
+  ref<Expr> fillSymbolicSizeConstantAddress(
+      ExecutionState &state,
+      ref<SymbolicSizeConstantAddressSource> symbolicSizeConstantAddressSource,
+      ref<Expr> arraySize, ref<Expr> size);
+
+  ref<Expr> fillSizeAddressSymcretes(ExecutionState &state,
+                                     ref<Expr> oldAddress, ref<Expr> newAddress,
+                                     ref<Expr> size);
+
+  ComposeResult compose(const ExecutionState &state, const PathConstraints &pob,
+                        ref<Expr> nullPointerExpr,
+                        ImmutableList<Symbolic> &pobSymbolics);
+
   void executeAction(ref<SearcherAction> action);
+
   void goForward(ref<ForwardAction> action);
+  void goBackward(ref<BackwardAction> action);
+  void initializeIsolated(ref<InitializeAction> action);
+
+  void closeProofObligation(ProofObligation *pob);
 
   const KInstruction *getKInst(const llvm::Instruction *ints) const;
   const KBlock *getKBlock(const llvm::BasicBlock *bb) const;

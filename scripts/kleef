@@ -197,7 +197,7 @@ class KLEEF(object):
         use_perf=False,
         use_valgrind=False,
         write_ktests=False,
-        debug=False,
+            debug=False,
     ):
         self.source = Path(source) if source else None
         self.is32 = is32

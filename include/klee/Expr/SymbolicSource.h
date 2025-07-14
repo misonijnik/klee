@@ -7,6 +7,7 @@
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/Argument.h"
+#include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Instruction.h"
 
 #include <memory>
@@ -37,7 +38,7 @@ public:
 
   enum Kind {
     Constant = 3,
-    Uninitialied,
+    Uninitialized,
     SymbolicSizeConstantAddress,
     MakeSymbolic,
     LazyInitializationContent,
@@ -48,7 +49,8 @@ public:
     Irreproducible,
     MockNaive,
     MockDeterministic,
-    Alpha
+    Alpha,
+    Global,
   };
 
 public:
@@ -109,12 +111,12 @@ public:
   UninitializedSource(unsigned version, const KInstruction *allocSite)
       : version(version), allocSite(allocSite) {}
 
-  Kind getKind() const override { return Kind::Uninitialied; }
+  Kind getKind() const override { return Kind::Uninitialized; }
 
   std::string getName() const override { return "uninitialized"; }
 
   static bool classof(const SymbolicSource *S) {
-    return S->getKind() == Kind::Uninitialied;
+    return S->getKind() == Kind::Uninitialized;
   }
 
   static bool classof(const UninitializedSource *) { return true; }
@@ -320,7 +322,10 @@ public:
 class IrreproducibleSource : public SymbolicSource {
 public:
   const std::string name;
-  IrreproducibleSource(const std::string &_name) : name(_name) {}
+  const unsigned version;
+
+  IrreproducibleSource(const std::string &_name, unsigned _version)
+      : name(_name), version(_version) {}
 
   Kind getKind() const override { return Kind::Irreproducible; }
   virtual std::string getName() const override { return "irreproducible"; }
@@ -331,7 +336,7 @@ public:
   static bool classof(const IrreproducibleSource *) { return true; }
 
   virtual unsigned computeHash() override {
-    unsigned res = getKind();
+    unsigned res = (getKind() * SymbolicSource::MAGIC_HASH_CONSTANT) + version;
     for (unsigned i = 0, e = name.size(); i != e; ++i) {
       res = (res * SymbolicSource::MAGIC_HASH_CONSTANT) + name[i];
     }
@@ -345,6 +350,9 @@ public:
     }
     const IrreproducibleSource &irb =
         static_cast<const IrreproducibleSource &>(b);
+    if (version != irb.version) {
+      return version < irb.version ? -1 : 1;
+    }
     if (name != irb.name) {
       return name < irb.name ? -1 : 1;
     }
@@ -378,6 +386,43 @@ public:
     const AlphaSource &amb = static_cast<const AlphaSource &>(b);
     if (index != amb.index) {
       return index < amb.index ? -1 : 1;
+    }
+    return 0;
+  }
+};
+
+class GlobalSource : public SymbolicSource {
+public:
+  const llvm::GlobalVariable &gv;
+  GlobalSource(const llvm::GlobalVariable &_gv) : gv(_gv) {}
+
+  Kind getKind() const override { return Kind::Global; }
+  virtual std::string getName() const override { return "global"; }
+
+  static bool classof(const SymbolicSource *S) {
+    return S->getKind() == Kind::Global;
+  }
+  static bool classof(const GlobalSource *) { return true; }
+
+  virtual unsigned computeHash() override {
+    auto name = gv.getName();
+    unsigned res = (getKind() * SymbolicSource::MAGIC_HASH_CONSTANT);
+    for (unsigned i = 0, e = name.size(); i != e; ++i) {
+      res = (res * SymbolicSource::MAGIC_HASH_CONSTANT) + name[i];
+    }
+    hashValue = res;
+    return hashValue;
+  }
+
+  virtual int internalCompare(const SymbolicSource &b) const override {
+    if (getKind() != b.getKind()) {
+      return getKind() < b.getKind() ? -1 : 1;
+    }
+    const GlobalSource &gb = static_cast<const GlobalSource &>(b);
+    auto name = gv.getName();
+    auto bName = gb.gv.getName();
+    if (name != bName) {
+      return name < bName ? -1 : 1;
     }
     return 0;
   }

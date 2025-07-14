@@ -10,11 +10,14 @@
 #include "Executor.h"
 
 #include "AddressSpace.h"
+#include "Composer.h"
 #include "ConstructStorage.h"
 #include "CoreStats.h"
 #include "DistanceCalculator.h"
 #include "ExecutionState.h"
 #include "ExternalDispatcher.h"
+#include "klee/Module/TargetForest.h"
+#include "klee/Support/DebugFlags.h"
 #if LLVM_VERSION_CODE <= LLVM_VERSION(14, 0)
 #include "GetElementPtrTypeIterator.h"
 #endif
@@ -208,6 +211,16 @@ llvm::cl::opt<unsigned> MinNumberElementsLazyInit(
     llvm::cl::desc("Minimum number of array elements for one lazy "
                    "initialization (default 4)"),
     llvm::cl::init(4), llvm::cl::cat(LazyInitCat));
+
+llvm::cl::opt<ExecutionKind> ExecutionMode(
+    "execution-mode",
+    cl::values(clEnumValN(ExecutionKind::Forward, "forward",
+                          "Use basic klee symbolic execution"),
+               clEnumValN(ExecutionKind::Bidirectional, "bidirectional",
+                          "Use bidirectional execution")),
+    cl::init(ExecutionKind::Forward), cl::desc("Execution mode"),
+    cl::cat(ExecCat));
+
 } // namespace
 
 cl::opt<std::string> FunctionCallReproduce(
@@ -229,6 +242,12 @@ cl::opt<HaltExecution::Reason> DumpStatesOnHalt(
         clEnumValN(HaltExecution::Reason::Unspecified, "all",
                    "Dump test cases for all active states on exit (default)")),
     cl::cat(TestGenCat));
+
+cl::opt<bool> InitializeInJoinBlocks(
+    "initialize-in-join-blocks",
+    cl::desc("Initialize execution in join blocks (default=false)"),
+    cl::init(false), cl::cat(ExecCat));
+
 } // namespace klee
 
 namespace {
@@ -495,8 +514,9 @@ const std::unordered_set<Intrinsic::ID> Executor::modelledFPIntrinsics = {
 Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
                    InterpreterHandler *ih)
     : Interpreter(opts), interpreterHandler(ih), searcher(nullptr),
-      externalDispatcher(new ExternalDispatcher(ctx)), statsTracker(0),
-      pathWriter(0), symPathWriter(0),
+      externalDispatcher(new ExternalDispatcher(ctx)),
+      summary(interpreterHandler), statsTracker(0), pathWriter(0),
+      symPathWriter(0),
       specialFunctionHandler(0), timers{time::Span(TimerInterval)},
       guidanceKind(opts.Guidance), codeGraphInfo(new CodeGraphInfo()),
       distanceCalculator(new DistanceCalculator(*codeGraphInfo)),
@@ -1034,7 +1054,7 @@ void Executor::allocateGlobalObjects(ExecutionState &state) {
       if (size->isZero()) {
         const Array *array = makeArray(
             Expr::createPointer(Context::get().getPointerWidthInBytes()),
-            SourceBuilder::irreproducible(v.getName().str()));
+            SourceBuilder::irreproducible(v.getName().str(), 0));
         size = Expr::createTempRead(array, Context::get().getPointerWidth());
         klee_warning("Unable to find size for global variable: %.*s (model "
                      "size as symbolic with irreproducible content)",
@@ -1134,8 +1154,9 @@ void Executor::initializeGlobalObjects(ExecutionState &state) {
           }
         }
       } else {
-        executeMakeSymbolic(
-            state, mo, SourceBuilder::irreproducible("unsizedGlobal"), false);
+        executeMakeSymbolic(state, mo,
+                            SourceBuilder::irreproducible("unsizedGlobal", 0),
+                            false);
       }
     } else if (v.hasInitializer()) {
       initializeGlobalObject(state, os, v.getInitializer(), 0);
@@ -1150,8 +1171,9 @@ void Executor::initializeGlobalObjects(ExecutionState &state) {
 
 bool Executor::branchingPermitted(ExecutionState &state, unsigned N) {
   assert(N);
-  if ((MaxMemoryInhibit && atMemoryLimit) || state.forkDisabled ||
-      inhibitForking || (MaxForks != ~0u && stats::forks >= MaxForks)) {
+  if (!state.isolated &&
+      ((MaxMemoryInhibit && atMemoryLimit) || state.forkDisabled ||
+       inhibitForking || (MaxForks != ~0u && stats::forks >= MaxForks))) {
 
     if (MaxMemoryInhibit && atMemoryLimit)
       klee_warning_once(0, "skipping fork (memory cap exceeded)");
@@ -1192,7 +1214,9 @@ void Executor::branch(ExecutionState &state,
     }
     stats::inhibitedForks += N - 1;
   } else {
-    stats::forks += N - 1;
+    if (!state.isolated) {
+      stats::forks += N - 1;
+    }
 
     // XXX do proper balance or keep random?
     result.push_back(&state);
@@ -1335,13 +1359,42 @@ bool mustVisitForkBranches(ref<Target> target, KInstruction *instr) {
 bool Executor::canReachSomeTargetFromBlock(ExecutionState &es, KBlock *block) {
   if (interpreterOpts.Guidance != GuidanceKind::ErrorGuidance)
     return true;
-  auto nextInstr = block->getFirstInstruction();
   for (const auto &p : *es.targetForest.getTopLayer()) {
     auto target = p.first;
     if (mustVisitForkBranches(target, es.prevPC))
       return true;
-    auto dist = distanceCalculator->getDistance(nextInstr, es.stack.callStack(),
-                                                target->getBlock());
+    auto dist = distanceCalculator->getDistance(block, es.stack.callStack(),
+                                                target->getBlock(), false);
+    if (dist.result != WeightResult::Miss)
+      return true;
+  }
+  return false;
+}
+
+bool Executor::canReachSomeTargetThroughState(ProofObligation &pob,
+                                              ExecutionState &state) {
+  if (interpreterOpts.Guidance != GuidanceKind::ErrorGuidance)
+    return true;
+
+  if (state.finalComposing) {
+    return true;
+  }
+
+  auto stack = pob.stack;
+  CallStackFrame::subtractFrames(stack, state.stack.callStack());
+  auto pobTargetForest = pob.targetForest;
+
+  auto history = state.history();
+  while (history && history->target) {
+    if (pobTargetForest.contains(history->target)) {
+      pobTargetForest.stepTo(history->target);
+    }
+    history = history->visitedTargets;
+  }
+
+  for (auto target : pobTargetForest.getTargets()) {
+    auto dist = distanceCalculator->getDistance(state.initPC->parent, stack,
+                                                target->getBlock(), true);
     if (dist.result != WeightResult::Miss)
       return true;
   }
@@ -1395,7 +1448,6 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
       res = PartialValidity::MayBeTrue;
   }
   if (terminateEverything) {
-    current.pc = current.prevPC;
     terminateStateEarlyAlgorithm(current, "State missed all it's targets.",
                                  StateTerminationType::MissedAllTargets);
     return StatePair(nullptr, nullptr);
@@ -1408,7 +1460,6 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
   }
   solver->setLimits(time::Span(), 0);
   if (!success) {
-    current.pc = current.prevPC;
     terminateStateOnSolverError(current, "Query timed out (fork).");
     return StatePair(nullptr, nullptr);
   }
@@ -1517,7 +1568,9 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
     TimerStatIncrementer timer(stats::forkTime);
     ExecutionState *falseState, *trueState = &current;
 
-    ++stats::forks;
+    if (!current.isolated) {
+      ++stats::forks;
+    }
 
     falseState = objectManager->branchState(trueState, reason);
 
@@ -1713,8 +1766,8 @@ ref<klee::ConstantExpr> Executor::toConstant(ExecutionState &state, ref<Expr> e,
   std::string str;
   llvm::raw_string_ostream os(str);
   os << "silently concretizing (reason: " << reason << ") expression " << e
-     << " to value " << value << " (" << state.pc->getSourceFilepath() << ":"
-     << state.pc->getLine() << ")";
+     << " to value " << value << " (" << state.getPrevPC()->getSourceFilepath()
+     << ":" << state.prevPC->getLine() << ")";
 
   if (ExternalCallWarnings == ExtCallWarnings::All)
     klee_warning("%s", os.str().c_str());
@@ -1869,20 +1922,27 @@ void Executor::printDebugInstructions(ExecutionState &state) {
 
 void Executor::stepInstruction(ExecutionState &state) {
   printDebugInstructions(state);
-  if (statsTracker)
-    statsTracker->stepInstruction(state);
+  if (!state.isolated) {
+    if (statsTracker) {
+      statsTracker->stepInstruction(state);
+    }
+    ++stats::instructions;
+  }
 
-  ++stats::instructions;
   ++state.steppedInstructions;
   if (isa<LoadInst>(state.pc->inst()) || isa<StoreInst>(state.pc->inst())) {
     ++state.steppedMemoryInstructions;
   }
   state.prevPC = state.pc;
-  state.constraints.advancePath(state.pc);
-  ++state.pc;
+  if (state.pc->inst()->isTerminator()) {
+    state.pc = nullptr;
+  } else {
+    ++state.pc;
+  }
+  state.constraints.advancePath(state.prevPC, state.pc);
   state.afterFork = false;
 
-  if (stats::instructions == MaxInstructions)
+  if (stats::instructions == MaxInstructions && MaxInstructions != 0)
     haltExecution = HaltExecution::MaxInstructions;
 
   if (MaxSteppedInstructions &&
@@ -2101,6 +2161,8 @@ void Executor::unwindToNextLandingpad(ExecutionState &state) {
 
         state.pushFrame(state.prevPC, kf);
         state.pc = kf->instructions;
+        state.constraints.retractPath();
+        state.constraints.advancePath(state.prevPC, state.pc);
         state.increaseLevel();
         bindArgument(kf, 0, state, sui->exceptionObject);
         bindArgument(kf, 1, state, clauses_mo->getSizeExpr());
@@ -2108,7 +2170,7 @@ void Executor::unwindToNextLandingpad(ExecutionState &state) {
                      PointerExpr::create(clauses_mo->getBaseExpr(),
                                          clauses_mo->getBaseExpr()));
 
-        if (statsTracker) {
+        if (statsTracker && !state.isolated) {
           statsTracker->framePushed(
               state, &state.stack.infoStack()[state.stack.size() - 2]);
         }
@@ -2493,10 +2555,10 @@ void Executor::executeCall(ExecutionState &state, KInstruction *ki, Function *f,
     }
 
     state.pushFrame(state.prevPC, kf);
-    transferToBasicBlock(&*kf->function()->begin(), state.getPrevPCBlock(),
-                         state);
+    transferToBasicBlock(&*kf->function()->begin(),
+                         state.getPrevPCBlock()->basicBlock(), state);
 
-    if (statsTracker)
+    if (statsTracker && !state.isolated)
       statsTracker->framePushed(
           state, &state.stack.infoStack()[state.stack.size() - 2]);
 
@@ -2528,9 +2590,9 @@ void Executor::executeCall(ExecutionState &state, KInstruction *ki, Function *f,
       uint64_t size = 0; // total size of variadic arguments
       bool requires16ByteAlignment = false;
 
-      std::vector<uint64_t> offsets;
-      offsets.reserve(callingArgs); // offsets of variadic arguments
-      uint64_t argWidth;            // width of current variadic argument
+      // offsets of variadic arguments
+      std::vector<uint64_t> offsets(callingArgs, 0);
+      uint64_t argWidth; // width of current variadic argument
 
       const CallBase &cb = cast<CallBase>(*i);
       for (unsigned k = funcArgs; k < callingArgs; k++) {
@@ -2665,6 +2727,8 @@ void Executor::transferToBasicBlock(KBlock *kdst, BasicBlock *src,
 
   // XXX this lookup has to go ?
   state.pc = kdst->instructions;
+  state.constraints.retractPath();
+  state.constraints.advancePath(state.prevPC, state.pc);
   state.increaseLevel();
   if (state.pc->inst()->getOpcode() == Instruction::PHI) {
     PHINode *first = static_cast<PHINode *>(state.pc->inst());
@@ -2733,7 +2797,9 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     // Control flow
   case Instruction::Ret: {
     ReturnInst *ri = cast<ReturnInst>(i);
-    KInstIterator kcaller = state.stack.callStack().back().caller;
+    // Is this OK?
+    auto kcallinst = state.stack.callStack().back().caller;
+    KInstIterator kcaller = kcallinst ? kcallinst->getIterator() : nullptr;
     Instruction *caller = kcaller ? kcaller->inst() : nullptr;
     bool isVoidReturn = (ri->getNumOperands() == 0);
     ref<Expr> result = ConstantExpr::alloc(0, Expr::Bool);
@@ -2745,7 +2811,13 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
     if (state.stack.size() <= 1) {
       assert(!caller && "caller set on initial stack frame");
       state.pc = state.prevPC;
+      state.constraints.retractPath();
+      state.constraints.advancePath(state.prevPC, state.pc);
       state.increaseLevel();
+      if (state.isolated) {
+        state.popFrame();
+        state.returnValue = result;
+      }
       terminateStateOnExit(state);
     } else {
       if (kmodule->inMainModule(*i)) {
@@ -2767,7 +2839,11 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       } else {
         state.pc = kcaller;
         state.increaseLevel();
-        ++state.pc;
+        if (state.getPCBlock()->getLastInstruction() != state.getPC()) {
+          ++state.pc;
+        }
+        state.constraints.retractPath();
+        state.constraints.advancePath(state.prevPC, state.pc);
       }
 
 #ifdef SUPPORT_KLEE_EH_CXX
@@ -2883,8 +2959,9 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       // requires that we still be in the context of the branch
       // instruction (it reuses its statistic id). Should be cleaned
       // up with convenient instruction specific data.
-      if (statsTracker)
+      if (statsTracker && !state.isolated) {
         statsTracker->markBranchVisited(branches.first, branches.second);
+      }
 
       if (branches.first) {
         transferToBasicBlock(bi->getSuccessor(0), bi->getParent(),
@@ -4532,19 +4609,578 @@ void Executor::decreaseConfidenceFromStoppedStates(
   }
 }
 
-void Executor::doDumpStates() {
-  auto &states = objectManager->getStates();
-  if (DumpStatesOnHalt == HaltExecution::Reason::NotHalt || states.empty()) {
-    interpreterHandler->incPathsExplored(states.size());
+void Executor::doDumpObjects() {
+  if (DumpStatesOnHalt == HaltExecution::Reason::NotHalt ||
+      (DumpStatesOnHalt == HaltExecution::Reason::UnreachedTarget &&
+       haltExecution == HaltExecution::Reason::ReachedTarget) ||
+      (objectManager->getStates().empty() &&
+       objectManager->getRootPobs().empty())) {
+    interpreterHandler->incPathsExplored(objectManager->getStates().size());
     return;
   }
 
-  klee_message("halting execution, dumping remaining states");
+  if (FunctionCallReproduce != "" &&
+      haltExecution != HaltExecution::Reason::ReachedTarget) {
+    haltExecution = HaltExecution::UnreachedTarget;
+  }
+
+  klee_message("halting execution, dumping remaining objects");
+
   for (const auto &state : objectManager->getStates()) {
     terminateStateEarly(*state, "Execution halting.",
                         StateTerminationType::Interrupted);
   }
+
   objectManager->updateSubscribers();
+
+  for (const auto &pob : objectManager->getRootPobs()) {
+    objectManager->removePob(pob);
+  }
+
+  for (const auto &state : objectManager->getIsolatedStates()) {
+    terminateState(*state, StateTerminationType::Interrupted); // Correct?
+  }
+
+  objectManager->updateSubscribers();
+}
+
+ref<Expr> Executor::fillValue(ExecutionState &state,
+                              ref<ValueSource> valueSource, ref<Expr> size) {
+  assert(isa<ConstantExpr>(size));
+  auto concreteSize = dyn_cast<ConstantExpr>(size)->getZExtValue();
+  int diffLevel = -state.stack.stackBalance();
+  if ((valueSource->index >= 0 && diffLevel > 0) ||
+      (valueSource->index > 0 && valueSource->index + diffLevel > 0)) {
+    int reindex = valueSource->index + diffLevel;
+    const Array *newArray =
+        makeArray(size, SourceBuilder::value(valueSource->value(), reindex,
+                                             kmodule.get()));
+    ref<Expr> result = Expr::createTempRead(newArray, concreteSize * 8);
+    if (isa<InstructionSource>(valueSource)) {
+      const Instruction *inst = cast<Instruction>(&valueSource->value());
+      const KInstruction *target = getKInst(const_cast<Instruction *>(inst));
+      StackFrame sf(target->parent->parent);
+      if (isa<AllocaInst>(target->inst())) {
+        lazyInitializeLocalObject(state, sf, result, target);
+      }
+    }
+    return result;
+  }
+  ref<Expr> result;
+  switch (valueSource->getKind()) {
+  case SymbolicSource::Kind::Instruction: {
+    const Instruction *inst = cast<Instruction>(&valueSource->value());
+    const KInstruction *ki = getKInst(const_cast<Instruction *>(inst));
+    if (valueSource->index == -1) {
+
+      assert(isa<CallInst>(inst) || isa<InvokeInst>(inst));
+      KFunction *kf = ki->parent->parent;
+
+      if (state.stack.empty()) {
+        const CallBase &cs = cast<CallBase>(*inst);
+        Value *fp = cs.getCalledOperand();
+        Function *calledf = getTargetFunction(fp);
+        KFunction *lastkf =
+            state.pc ? state.pc->parent->parent : state.prevPC->parent->parent;
+        KBlock *pckb = state.pc ? state.pc->parent : state.prevPC->parent;
+        bool isFinalPCKB = std::find(lastkf->returnKBlocks.begin(),
+                                     lastkf->returnKBlocks.end(),
+                                     pckb) != lastkf->returnKBlocks.end();
+        if (!(isFinalPCKB && calledf == lastkf->function())) {
+          klee_error("postcondition violated");
+        }
+        result = state.returnValue;
+      } else {
+        const StackFrame &frame = state.stack.valueStack().back();
+        KFunction *framekf = frame.kf;
+        if (kf->function() != framekf->function()) {
+          klee_error("bad stack frame while reading stack in fillValue");
+        }
+        result = getDestCell(frame, ki).value;
+        assert(result);
+      }
+    } else {
+      assert(valueSource->index >= 0);
+      assert(!state.stack.empty());
+      StackFrame &frame = state.stack.valueStack().at(state.stack.size() -
+                                                      valueSource->index - 1);
+      KFunction *framekf = frame.kf;
+
+      if (isa<PHINode>(inst)) {
+        assert(framekf->function() == inst->getParent()->getParent());
+        if (inst->getParent() == state.getPCBlock()->basicBlock()) {
+          result = eval(ki, state.incomingBBIndex, state, frame).value;
+        } else {
+          result = readDest(state, frame, ki);
+        }
+      } else if ((isa<CallInst>(inst) || isa<InvokeInst>(inst))) {
+        KFunction *kf = ki->parent->parent;
+        if (kf->function() != framekf->function()) {
+          klee_error("bad stack frame while reading stack in fillValue");
+        }
+        result = readDest(state, frame, ki);
+      } else {
+        const Function *f = inst->getParent()->getParent();
+        const KFunction *kf = getKFunction(f);
+        if (kf->function() != framekf->function()) {
+          klee_error("bad stack frame while reading stack in fillValue");
+        }
+        result = readDest(state, frame, ki);
+      }
+    }
+    break;
+  }
+  case SymbolicSource::Kind::Argument: {
+    assert(valueSource->index >= 0);
+    assert(!state.stack.empty());
+    StackFrame &frame = state.stack.valueStack().at(state.stack.size() -
+                                                    valueSource->index - 1);
+    const Argument *arg = cast<Argument>(&valueSource->value());
+    const Function *f = arg->getParent();
+    const KFunction *kf = getKFunction(f);
+    const unsigned argN = arg->getArgNo();
+    assert(kf->function() == frame.kf->function());
+    result = readArgument(state, frame, kf, argN);
+    break;
+  }
+
+  default:
+    assert(0 && "unreachable");
+    break;
+  }
+  return ZExtExpr::create(result, concreteSize * 8);
+}
+
+ref<ObjectState> Executor::fillGlobal(ExecutionState &state,
+                                      ref<GlobalSource> globalSource) {
+  auto mo = globalObjects[&globalSource->gv];
+  auto op = state.addressSpace.findObject(mo);
+  return new ObjectState(*op.second);
+}
+
+ref<ObjectState>
+Executor::fillMakeSymbolic(ExecutionState &state,
+                           ref<MakeSymbolicSource> makeSymbolicSource,
+                           ref<Expr> size) {
+  unsigned stateNameVersion =
+      state.arrayNames.count(makeSymbolicSource->name)
+          ? state.arrayNames.at(makeSymbolicSource->name)
+          : 0;
+  unsigned newVersion = makeSymbolicSource->version + stateNameVersion;
+  const Array *newArray = makeArray(
+      size, SourceBuilder::makeSymbolic(makeSymbolicSource->name, newVersion));
+
+  return new ObjectState(newArray);
+}
+
+ref<ObjectState>
+Executor::fillUninitialized(ExecutionState &state,
+                            ref<UninitializedSource> uninitializedSource,
+                            ref<Expr> size) {
+  auto allocSite = uninitializedSource->allocSite;
+  unsigned newVersion =
+      state.uninitializedAllocations[allocSite] + uninitializedSource->version;
+  const Array *newArray =
+      makeArray(size, SourceBuilder::uninitialized(newVersion, allocSite));
+  return new ObjectState(newArray);
+}
+
+ref<ObjectState>
+Executor::fillIrreproducible(ExecutionState &state,
+                             ref<IrreproducibleSource> irreproducibleSource,
+                             ref<Expr> size) {
+  unsigned stateNameVersion =
+      state.arrayNames.count(irreproducibleSource->name)
+          ? state.arrayNames.at(irreproducibleSource->name)
+          : 0;
+  unsigned newVersion = irreproducibleSource->version + stateNameVersion;
+  const Array *newArray =
+      makeArray(size, SourceBuilder::irreproducible(irreproducibleSource->name,
+                                                    newVersion));
+  return new ObjectState(newArray);
+}
+
+ref<ObjectState> Executor::fillConstant(ExecutionState &,
+                                        ref<ConstantSource> constantSource,
+                                        ref<Expr> size) {
+  const Array *newArray = makeArray(
+      size, SourceBuilder::constant(constantSource->constantValues->clone()));
+  return new ObjectState(newArray);
+}
+
+ref<Expr> Executor::fillSymbolicSizeConstantAddress(
+    ExecutionState &state,
+    ref<SymbolicSizeConstantAddressSource> symbolicSizeConstantAddressSource,
+    ref<Expr> arraySize, ref<Expr> size) {
+  unsigned stateNameVersion = state.arrayNames.count("const_arr")
+                                  ? state.arrayNames.at("const_arr")
+                                  : 0;
+  unsigned newVersion =
+      symbolicSizeConstantAddressSource->version + stateNameVersion;
+  const Array *newArray = makeArray(
+      arraySize,
+      SourceBuilder::symbolicSizeConstantAddress(
+          newVersion, symbolicSizeConstantAddressSource->allocSite, size));
+  return Expr::createTempRead(newArray, Context::get().getPointerWidth());
+}
+
+Executor::ComposeResult
+Executor::compose(const ExecutionState &state, const PathConstraints &pob,
+                  ref<Expr> nullPointerExpr,
+                  ImmutableList<Symbolic> &pobSymbolics) {
+  ComposeResult result;
+  ComposeHelper helper(this);
+  ComposeVisitor composer(state, helper);
+  ExprHashMap<ref<Expr>> rebuildMap;
+  unsigned offset = state.constraints.path().getBlocks().size();
+
+  composer.state.constraints.advancePath(pob.path());
+  for (auto &indexConstraints : pob.orderedCS()) {
+    Path::PathIndex index = indexConstraints.first;
+    index.block += offset;
+    for (ref<Expr> constraint : indexConstraints.second) {
+      std::pair<ref<Expr>, ref<Expr>> composeResult =
+          composer.compose(constraint);
+      if (composeResult.first->isFalse()) {
+        result.success = false;
+        return result;
+      }
+      ref<Expr> condition =
+          AndExpr::create(composeResult.first, composeResult.second);
+
+      condition = Simplificator::simplifyExpr(composer.state.constraints.cs(),
+                                              condition)
+                      .simplified;
+
+      ValidityCore core;
+      bool isValid;
+      solver->setLimits(coreSolverTimeout, -1);
+      bool success = solver->getValidityCore(
+          composer.state.constraints.cs(), Expr::createIsZero(condition), core,
+          isValid, composer.state.queryMetaData);
+      solver->setLimits(time::Span(), -1);
+      if (!success || haltExecution) {
+        result.success = false;
+        return result;
+      }
+      if (isValid) {
+        auto conflict = Conflict();
+        conflict.path = Path::concat(state.constraints.path(), pob.path());
+        if (debugPrints.isSet(DebugPrint::Conflict)) {
+          llvm::errs() << "[conflict] Conflict in backward: "
+                       << conflict.path.toString() << "\n";
+        }
+        constraints_ty rebuiltCore;
+        for (auto e : core.constraints) {
+          for (auto original :
+               composer.state.constraints.simplificationMap().at(e)) {
+            if (rebuildMap.count(original)) {
+              conflict.core.insert(Expr::createIsZero(rebuildMap.at(original)));
+            }
+          }
+        }
+
+        conflict.core.insert(Expr::createIsZero(constraint));
+
+        result.success = false;
+        result.conflict = conflict;
+        return result;
+      }
+
+      auto added = composer.state.constraints.addConstraint(condition, index);
+      for (auto expr : added) {
+        rebuildMap.insert({expr, constraint});
+      }
+    }
+    timers.invoke();
+  }
+
+  if (nullPointerExpr) {
+    auto composedNPE = composer.compose(nullPointerExpr);
+    assert(!composedNPE.first->isFalse());
+    result.nullPointerExpr = composedNPE.second;
+  }
+
+  result.success = true;
+  result.composed = composer.state.constraints;
+  for (auto &symbolic : composer.state.symbolics) {
+    if (symbolic.array->source->getKind() == SymbolicSource::MakeSymbolic) {
+      result.symbolics.push_back(Symbolic(symbolic));
+    }
+  }
+
+  for (auto &symbolic : pobSymbolics) {
+    if (symbolic.array->source->getKind() == SymbolicSource::MakeSymbolic) {
+      auto hack = composer.compose(ReadExpr::create(
+          UpdateList(symbolic.array, nullptr), ConstantExpr::create(0, 64)));
+      assert(hack.second);
+      Symbolic _symbolic(symbolic);
+      _symbolic.array = cast<ReadExpr>(hack.second)->updates.root;
+      result.symbolics.push_back(Symbolic(_symbolic));
+    }
+  }
+
+  return result;
+}
+
+void Executor::executeAction(ref<SearcherAction> action) {
+  switch (action->getKind()) {
+  case SearcherAction::Kind::Forward: {
+    if (debugPrints.isSet(DebugPrint::Forward) &&
+        cast<ForwardAction>(action)->state->isolated) {
+      llvm::errs()
+          << "[forward] State: "
+          << cast<ForwardAction>(action)->state->constraints.path().toString()
+          << "\n";
+      if (debugConstraints.isSet(DebugPrint::Forward)) {
+        // TODO
+      }
+    }
+    goForward(cast<ForwardAction>(action));
+    break;
+  }
+  case SearcherAction::Kind::Backward: {
+    if (debugPrints.isSet(DebugPrint::Backward)) {
+      auto prop = cast<BackwardAction>(action)->prop;
+      llvm::errs() << "[backward] State: "
+                   << prop.state->constraints.path().toString() << "\n";
+      llvm::errs() << "[backward] Pob: "
+                   << prop.pob->constraints.path().toString() << "\n";
+      llvm::errs() << "[backward] To-be pob: "
+                   << Path::concat(prop.state->constraints.path(),
+                                   prop.pob->constraints.path())
+                          .toString()
+                   << "\n";
+      if (debugConstraints.isSet(DebugPrint::Backward)) {
+        llvm::errs() << "[backward] State: ";
+        prop.state->constraints.cs().dump();
+        llvm::errs() << "\n";
+        llvm::errs() << "[backward] Pob: ";
+        prop.pob->constraints.cs().dump();
+        llvm::errs() << "\n";
+      }
+    }
+    // auto t1 = std::chrono::high_resolution_clock::now();
+    goBackward(cast<BackwardAction>(action));
+    // auto t2 = std::chrono::high_resolution_clock::now();
+    // auto ms_int =
+    //     std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1);
+    // llvm::errs() << "[backward] It took: " << ms_int.count() << " ms\n";
+    break;
+  }
+  case SearcherAction::Kind::Initialize: {
+    initializeIsolated(cast<InitializeAction>(action));
+    break;
+  }
+  }
+  timers.invoke();
+}
+
+static bool shouldWriteTest(const ExecutionState &state, bool isError = false) {
+  state.updateCoveredNew();
+  bool coveredNew = isError ? state.isCoveredNewError() : state.isCoveredNew();
+  return !OnlyOutputStatesCoveringNew || coveredNew;
+}
+
+static std::string terminationTypeFileExtension(StateTerminationType type) {
+  std::string ret;
+#undef TTYPE
+#undef TTMARK
+#define TTYPE(N, I, S)                                                         \
+  case StateTerminationType::N:                                                \
+    ret = (S);                                                                 \
+    break;
+#define TTMARK(N, I)
+  switch (type) { TERMINATION_TYPES }
+  return ret;
+};
+
+void Executor::goForward(ref<ForwardAction> action) {
+  ref<ForwardAction> fa = cast<ForwardAction>(action);
+  objectManager->setCurrentState(fa->state);
+  ExecutionState &state = *fa->state;
+
+  if (coverOnTheFly && shouldWriteTest(state)) {
+    fa->state->clearCoveredNew();
+    interpreterHandler->processTestCase(
+        state, nullptr,
+        terminationTypeFileExtension(StateTerminationType::CoverOnTheFly)
+            .c_str());
+  }
+
+  if (targetManager) {
+    targetManager->pullGlobal(state);
+  }
+
+  if (targetCalculator && TrackCoverage != TrackCoverageBy::None &&
+      state.multiplexKF && functionsByModule.modules.size() > 1 &&
+      targetCalculator->isCovered(state.multiplexKF)) {
+    terminateStateEarly(state, "Multiplex function has been covered.",
+                        StateTerminationType::CoveredEntryPoint);
+  } else if (targetManager && targetManager->isTargeted(state) &&
+             state.targets().empty()) {
+    terminateStateEarlyAlgorithm(state, "State missed all it's targets.",
+                                 StateTerminationType::MissedAllTargets);
+  } else if (state.isCycled(MaxCycles)) {
+    terminateStateEarly(state, "max-cycles exceeded.",
+                        StateTerminationType::MaxCycles);
+  } else if (state.isSymbolicCycled(MaxSymbolicCycles)) {
+    terminateStateEarly(state, "max-sym-cycles exceeded.",
+                        StateTerminationType::MaxCycles);
+  } else if (objectManager->removeSet.count(state.id)) {
+    terminateState(state, StateTerminationType::SilentExit);
+  } else {
+    maxNewWriteableOSSize = 0;
+    maxNewStateStackSize = 0;
+
+    KInstruction *ki = state.pc;
+    stepInstruction(state);
+    executeInstruction(state, ki);
+  }
+
+  timers.invoke();
+  if (::dumpStates)
+    dumpStates();
+  if (::dumpPForest)
+    dumpPForest();
+
+  if (targetCalculator && TrackCoverage != TrackCoverageBy::None &&
+      targetCalculator->isCovered(state.initPC->parent->parent)) {
+    haltExecution = HaltExecution::CovCheck;
+  }
+}
+
+void Executor::goBackward(ref<BackwardAction> action) {
+  objectManager->removePropagation(action->prop);
+
+  ExecutionState *state = action->prop.state;
+  ProofObligation *pob = action->prop.pob;
+
+  objectManager->setContextState(state);
+
+  // Conflict::core_ty conflictCore;
+  // ExprHashMap<ref<Expr>> rebuildMap;
+
+  Executor::ComposeResult composeResult;
+  if (canReachSomeTargetThroughState(*pob, *state)) {
+    auto nullPointerExpr =
+        state->nullPointerExpr ? state->nullPointerExpr : pob->nullPointerExpr;
+    composeResult =
+        compose(*state, pob->constraints, nullPointerExpr, pob->symbolics);
+  } else {
+    composeResult.success = false;
+  }
+
+  // ProofObligation *newPob = new ProofObligation(state->initPC->parent, pob);
+  // bool success = Composer::tryRebuild(*pob, *state, *newPob, conflictCore,
+  // rebuildMap); timers.invoke();
+
+  if (composeResult.success) {
+    if (debugPrints.isSet(DebugPrint::Backward)) {
+      llvm::errs() << "[backward] Composition sucessful.\n";
+    }
+    if (state->finalComposing) {
+      if (auto error = dyn_cast<ReproduceErrorTarget>(pob->root->location)) {
+        if (error->isThatError(klee::MustBeNullPointerException) &&
+            !error->isThatError(klee::MayBeNullPointerException)) {
+          ref<Expr> result = composeResult.nullPointerExpr;
+          solver->setLimits(coreSolverTimeout, -1);
+          solver->tryGetUnique(composeResult.composed.cs(),
+                               composeResult.nullPointerExpr, result,
+                               state->queryMetaData);
+          solver->setLimits(time::Span(), -1);
+          if (!isReadFromSymbolicArray(result)) {
+            if (debugPrints.isSet(DebugPrint::ClosePob)) {
+              llvm::errs()
+                  << "[close pob] Pob closed due to backward reach at: "
+                  << pob->root->location->toString() << "\n";
+            }
+            llvm::errs() << "[TRUE POSITIVE] FOUND TRUE POSITIVE AT: "
+                         << pob->root->location->toString() << "\n";
+            closeProofObligation(pob);
+          }
+        } else {
+          if (debugPrints.isSet(DebugPrint::ClosePob)) {
+            llvm::errs() << "[close pob] Pob closed due to backward reach at: "
+                         << pob->root->location->toString() << "\n";
+          }
+          llvm::errs() << "[TRUE POSITIVE] FOUND TRUE POSITIVE AT: "
+                       << pob->root->location->toString() << "\n";
+          closeProofObligation(pob);
+        }
+      } else {
+        if (debugPrints.isSet(DebugPrint::ClosePob)) {
+          llvm::errs() << "[close pob] Pob closed due to backward reach at: "
+                       << pob->root->location->toString() << "\n";
+        }
+        llvm::errs() << "[TRUE POSITIVE] FOUND TRUE POSITIVE AT: "
+                     << pob->root->location->toString() << "\n";
+        closeProofObligation(pob);
+      }
+
+      klee_warning("GENERATING TEST FROM PROOF OBLIGATION. GENERATION FOR "
+                   "PATHS WITH LAZY INITIALIZATION IS NOT SUPPORTED.");
+
+      auto state = ExecutionState();
+      state.constraints = pob->constraints;
+      state.symbolics = pob->symbolics;
+      interpreterHandler->processTestCase(state, "backward", "reachable.err",
+                                          false);
+
+    } else {
+      auto returnPropagation = state->constraints.path().fromOutTransition();
+      if (returnPropagation.first) {
+        auto kCallBlock = returnPropagation.second;
+        for (auto kf : kCallBlock->calledFunctions) {
+          for (auto returnBlock : kf->returnKBlocks) {
+            auto callPob =
+                ProofObligation::create(pob, state, composeResult.composed,
+                                        composeResult.nullPointerExpr);
+            ProofObligation::propagateToReturn(
+                callPob, kCallBlock->kcallInstruction, returnBlock);
+            callPob->symbolics = composeResult.symbolics;
+            objectManager->addPob(callPob);
+          }
+        }
+      } else {
+        auto newPob = ProofObligation::create(
+            pob, state, composeResult.composed, composeResult.nullPointerExpr);
+        newPob->symbolics = composeResult.symbolics;
+        objectManager->addPob(newPob);
+      }
+    }
+  } else {
+    if (debugPrints.isSet(DebugPrint::Backward)) {
+      llvm::errs() << "[backward] Composition failed.\n";
+    }
+    if (state->isolated && composeResult.conflict.core.size()) {
+      summary.addLemma(
+          new Lemma(state->constraints.path(), composeResult.conflict.core));
+      if (state->constraints.path().getBlocks().size() > 0 &&
+          !summarized.count(
+              state->constraints.path().getBlocks().back().block)) {
+        summarized.insert(state->constraints.path().getBlocks().back().block);
+      }
+    }
+  }
+}
+
+void Executor::closeProofObligation(ProofObligation *pob) {
+  objectManager->removePob(pob->root);
+}
+
+void Executor::initializeIsolated(ref<InitializeAction> action) {
+  if (debugPrints.isSet(DebugPrint::Init)) {
+    llvm::errs() << "[initialize, executor] From "
+                 << action->location->toString() << " to:\n";
+    for (auto i : action->targets) {
+      llvm::errs() << "[initialize, executor] " << i->toString() << "\n";
+    }
+  }
+  auto state =
+      objectManager->initializeState(action->location, action->targets);
+  assert(state->isolated);
+  prepareSymbolicArgs(*state, state->stack.valueStack().back());
 }
 
 const KInstruction *Executor::getKInst(const llvm::Instruction *inst) const {
@@ -4582,7 +5218,7 @@ void Executor::seed(ExecutionState &initialState) {
   ExecutionState *lastState = 0;
   while (!seedMap->empty()) {
     if (haltExecution) {
-      doDumpStates();
+      doDumpObjects();
       return;
     }
 
@@ -4631,7 +5267,7 @@ void Executor::seed(ExecutionState &initialState) {
                  (int)objectManager->getStates().size());
 
     if (OnlySeed) {
-      doDumpStates();
+      doDumpObjects();
       return;
     }
   }
@@ -4683,7 +5319,58 @@ void Executor::reportProgressTowardsTargets() const {
   reportProgressTowardsTargets("", objectManager->getStates());
 }
 
-void Executor::run(ExecutionState *initialState) {
+void Executor::updateHaltExecutionStatus() {
+  bool errorAndBackward = ExecutionMode == ExecutionKind::Bidirectional;
+  if (errorAndBackward) {
+    if (objectManager->getRootPobs().empty()) {
+      haltExecution = HaltExecution::Unspecified;
+    }
+  }
+}
+
+std::unique_ptr<DefaultIsolatedStatesInitializer>
+Executor::createIsolatedStatesInitializer(
+    InitializerPredicate *predicate,
+    TargetedExecutionManager::Data const &data) {
+  auto result = std::make_unique<DefaultIsolatedStatesInitializer>(
+      codeGraphInfo.get(), *predicate);
+  result->initializeFunctions(data.functionsToDismantle);
+  for (auto &backwardlist : data.backwardWhitelists) {
+    for (const auto &target : backwardlist.second->getTargets()) {
+      result->addErrorInit(target);
+    }
+  }
+
+  return result;
+}
+
+void Executor::pruneInactivePobs(
+    DefaultIsolatedStatesInitializer *isolatedStatesInitializer) {
+  if (ExecutionMode == ExecutionKind::Bidirectional) {
+    bool changed = true;
+    while (changed) {
+      changed = false;
+      for (auto pob : objectManager->leafPobs) {
+        if (!targetManager->hasTargetedStates(pob->location) &&
+            !isolatedStatesInitializer->initsLeftForTarget(pob->location) &&
+            objectManager->propagationCount[pob] == 0) {
+          if (!pob->parent) {
+            llvm::errs() << "[FALSE POSITIVE] "
+                         << "FOUND FALSE POSITIVE AT: "
+                         << pob->location->toString() << "\n";
+          }
+          objectManager->removePob(pob);
+          changed = true;
+        }
+      }
+      if (changed) {
+        objectManager->updateSubscribers();
+      }
+    }
+  }
+}
+void Executor::run(ExecutionState *initialState,
+                   TargetedExecutionManager::Data &data) {
   // Delay init till now so that ticks don't accrue during optimization and
   // such.
   if (guidanceKind != GuidanceKind::ErrorGuidance)
@@ -4692,15 +5379,32 @@ void Executor::run(ExecutionState *initialState) {
   if (usingSeeds) {
     seed(*initialState);
   }
+  if (ExecutionMode == ExecutionKind::Bidirectional &&
+      guidanceKind != GuidanceKind::ErrorGuidance) {
+    klee_error("Bidirectional execution is only support in error-guided mode");
+  }
 
-  searcher =
-      std::make_unique<ForwardOnlySearcher>(constructUserSearcher(*this));
-
+  DefaultIsolatedStatesInitializer *isolatedStatesInitializer = nullptr;
+  if (ExecutionMode == ExecutionKind::Forward) {
+    searcher =
+        std::make_unique<ForwardOnlySearcher>(constructUserSearcher(*this));
+  } else if (ExecutionMode == ExecutionKind::Bidirectional) {
+    InitializerPredicate *predicate = new TraceVerifyPredicate(
+        data.specialPoints, *codeGraphInfo.get(), InitializeInJoinBlocks);
+    objectManager->setPredicate(predicate);
+    auto initializer = createIsolatedStatesInitializer(predicate, data);
+    isolatedStatesInitializer = initializer.get();
+    auto bidirectional =
+        constructUserBidirectionalSearcher(*this, std::move(initializer));
+    searcher = std::move(bidirectional);
+  } else {
+    klee_error("Unsupported execution kind");
+  }
   if (targetManager) {
     objectManager->addSubscriber(targetManager.get());
   }
 
-  if (targetedExecutionManager) {
+  if (guidanceKind == GuidanceKind::ErrorGuidance && targetedExecutionManager) {
     objectManager->addSubscriber(targetedExecutionManager.get());
   }
 
@@ -4719,8 +5423,14 @@ void Executor::run(ExecutionState *initialState) {
     objectManager->updateSubscribers();
 
     if (!checkMemoryUsage()) {
+      // update searchers when states were terminated early due to memory
+      // pressure
       objectManager->updateSubscribers();
     }
+
+    pruneInactivePobs(isolatedStatesInitializer);
+
+    updateHaltExecutionStatus();
   }
 
   if (guidanceKind == GuidanceKind::ErrorGuidance) {
@@ -4737,32 +5447,10 @@ void Executor::run(ExecutionState *initialState) {
       haltExecution = HaltExecution::NoMoreStates;
   }
 
-  doDumpStates();
-
-  searcher = nullptr;
-  targetManager = nullptr;
+  doDumpObjects();
 
   haltExecution = HaltExecution::NotHalt;
 }
-
-static bool shouldWriteTest(const ExecutionState &state, bool isError = false) {
-  state.updateCoveredNew();
-  bool coveredNew = isError ? state.isCoveredNewError() : state.isCoveredNew();
-  return !OnlyOutputStatesCoveringNew || coveredNew;
-}
-
-static std::string terminationTypeFileExtension(StateTerminationType type) {
-  std::string ret;
-#undef TTYPE
-#undef TTMARK
-#define TTYPE(N, I, S)                                                         \
-  case StateTerminationType::N:                                                \
-    ret = (S);                                                                 \
-    break;
-#define TTMARK(N, I)
-  switch (type) { TERMINATION_TYPES }
-  return ret;
-};
 
 static std::string terminationTypeName(StateTerminationType type) {
   std::string ret;
@@ -4777,69 +5465,6 @@ static std::string terminationTypeName(StateTerminationType type) {
   switch (type) { TERMINATION_TYPES }
   return ret;
 };
-
-void Executor::executeAction(ref<SearcherAction> action) {
-  switch (action->getKind()) {
-  case SearcherAction::Kind::Forward: {
-    goForward(cast<ForwardAction>(action));
-    break;
-  }
-  }
-  timers.invoke();
-}
-
-void Executor::goForward(ref<ForwardAction> action) {
-  ref<ForwardAction> fa = cast<ForwardAction>(action);
-  objectManager->setCurrentState(fa->state);
-  ExecutionState &state = *fa->state;
-
-  if (coverOnTheFly && shouldWriteTest(state)) {
-    fa->state->clearCoveredNew();
-    interpreterHandler->processTestCase(
-        state, nullptr,
-        terminationTypeFileExtension(StateTerminationType::CoverOnTheFly)
-            .c_str());
-  }
-
-  if (targetManager) {
-    targetManager->pullGlobal(state);
-  }
-
-  if (targetCalculator && TrackCoverage != TrackCoverageBy::None &&
-      state.multiplexKF && functionsByModule.modules.size() > 1 &&
-      targetCalculator->isCovered(state.multiplexKF)) {
-    terminateStateEarly(state, "Multiplex function has been covered.",
-                        StateTerminationType::CoveredEntryPoint);
-  } else if (targetManager && targetManager->isTargeted(state) &&
-             state.targets().empty() && !state.isCoveredNew()) {
-    terminateStateEarlyAlgorithm(state, "State missed all it's targets.",
-                                 StateTerminationType::MissedAllTargets);
-  } else if (state.isCycled(MaxCycles)) {
-    terminateStateEarly(state, "max-cycles exceeded.",
-                        StateTerminationType::MaxCycles);
-  } else if (state.isSymbolicCycled(MaxSymbolicCycles)) {
-    terminateStateEarly(state, "max-sym-cycles exceeded.",
-                        StateTerminationType::MaxCycles);
-  } else {
-    maxNewWriteableOSSize = 0;
-    maxNewStateStackSize = 0;
-
-    KInstruction *ki = state.pc;
-    stepInstruction(state);
-    executeInstruction(state, ki);
-  }
-
-  timers.invoke();
-  if (::dumpStates)
-    dumpStates();
-  if (::dumpPForest)
-    dumpPForest();
-
-  if (targetCalculator && TrackCoverage != TrackCoverageBy::None &&
-      targetCalculator->isCovered(state.initPC->parent->parent)) {
-    haltExecution = HaltExecution::CovCheck;
-  }
-}
 
 std::string Executor::getAddressInfo(ExecutionState &state,
                                      ref<PointerExpr> address, unsigned size,
@@ -4932,7 +5557,7 @@ void Executor::terminateState(ExecutionState &state,
                               StateTerminationType reason) {
   state.terminationReasonType = fromStateTerminationType(reason);
   if (reason >= StateTerminationType::MaxDepth &&
-      reason <= StateTerminationType::EARLY) {
+      reason <= StateTerminationType::EARLY && !state.isolated) {
     SetOfStates states = {&state};
     decreaseConfidenceFromStoppedStates(states, state.terminationReasonType);
   }
@@ -4941,8 +5566,10 @@ void Executor::terminateState(ExecutionState &state,
                       "replay did not consume all objects in test input.");
   }
 
-  interpreterHandler->incPathsExplored();
-  state.pc = state.prevPC;
+  if (!state.isolated) {
+    interpreterHandler->incPathsExplored();
+  }
+
   solver->notifyStateTermination(state.id);
 
   objectManager->removeState(&state);
@@ -4957,7 +5584,9 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
         state, nullptr, terminationTypeFileExtension(terminationType).c_str());
   }
 
-  interpreterHandler->incPathsCompleted();
+  if (!state.isolated) {
+    interpreterHandler->incPathsCompleted();
+  }
   terminateState(state, terminationType);
 }
 
@@ -5049,6 +5678,10 @@ void Executor::reportStateOnTargetError(ExecutionState &state,
   if (guidanceKind == GuidanceKind::ErrorGuidance) {
     bool reportedTruePositive =
         targetedExecutionManager->reportTruePositive(state, error);
+    if (reportedTruePositive) {
+      llvm::errs() << "[Error path:] " << state.constraints.path().toString()
+                   << "\n";
+    }
     if (!reportedTruePositive) {
       targetedExecutionManager->reportFalseNegative(state, error);
     }
@@ -5057,7 +5690,10 @@ void Executor::reportStateOnTargetError(ExecutionState &state,
 
 void Executor::terminateStateOnTargetError(ExecutionState &state,
                                            ReachWithError error) {
-  reportStateOnTargetError(state, error);
+  if (!state.isolated) {
+    reportStateOnTargetError(state, error);
+  }
+  state.error = error;
 
   // Proceed with normal `terminateStateOnError` call
   std::string messaget;
@@ -5094,12 +5730,17 @@ void Executor::terminateStateOnError(ExecutionState &state,
                                      StateTerminationType terminationType,
                                      const llvm::Twine &info,
                                      const char *suffix) {
+
+  // Last instruction was not successfully executed
+  state.constraints.retractPath();
+
   std::string message = messaget.str();
   static std::set<std::pair<Instruction *, std::string>> emittedErrors;
   const KInstruction *ki = getLastNonKleeInternalInstruction(state);
   Instruction *lastInst = ki->inst();
 
-  if ((EmitAllErrors ||
+  if (!state.isolated &&
+      (EmitAllErrors ||
        emittedErrors.insert(std::make_pair(lastInst, message)).second) &&
       shouldWriteTest(state, true)) {
     std::string filepath = ki->getSourceFilepath();
@@ -5352,7 +5993,7 @@ void Executor::callExternalFunction(ExecutionState &state, KInstruction *target,
       if (i != arguments.size() - 1)
         os << ", ";
     }
-    os << ") at " << state.pc->getSourceLocationString();
+    os << ") at " << state.getPrevPC()->getSourceLocationString();
 
     if (ExternalCallWarnings == ExtCallWarnings::All)
       klee_warning("%s", os.str().c_str());
@@ -5410,7 +6051,7 @@ void Executor::callExternalFunction(ExecutionState &state, KInstruction *target,
         e->getWidth() == Context::get().getPointerWidth() &&
         resultType->isPointerTy()) {
       ref<Expr> symExternCallsCanReturnNullExpr =
-          makeMockValue("symExternCallsCanReturnNull", Expr::Bool);
+          makeMockValue(state, "symExternCallsCanReturnNull", Expr::Bool);
       e = SelectExpr::create(
           symExternCallsCanReturnNullExpr,
           PointerExpr::create(Expr::createPointer(0), Expr::createPointer(0)),
@@ -5449,10 +6090,11 @@ ref<Expr> Executor::replaceReadWithSymbolic(ExecutionState &state,
   return res;
 }
 
-ref<Expr> Executor::makeMockValue(const std::string &name, Expr::Width width) {
-  const Array *array =
-      makeArray(Expr::createPointer(Expr::getMinBytesForWidth(width)),
-                SourceBuilder::irreproducible(name));
+ref<Expr> Executor::makeMockValue(ExecutionState &state,
+                                  const std::string &name, Expr::Width width) {
+  const Array *array = makeArray(
+      Expr::createPointer(Expr::getMinBytesForWidth(width)),
+      SourceBuilder::irreproducible(name, updateNameVersion(state, name)));
   ref<Expr> result = Expr::createTempRead(array, width);
   return result;
 }
@@ -5477,12 +6119,12 @@ void Executor::executeAlloc(ExecutionState &state, ref<Expr> size, bool isLocal,
                             KInstruction *target, bool zeroMemory,
                             const ObjectState *reallocFrom,
                             size_t allocationAlignment, bool checkOutOfMemory) {
-  static unsigned allocations = 0;
   if (allocationAlignment == 0) {
     allocationAlignment = getAllocationAlignment(state.prevPC->inst());
   }
 
-  if (!isa<ConstantExpr>(size) && !UseSymbolicSizeAllocation) {
+  if (!isa<ConstantExpr>(size) && !UseSymbolicSizeAllocation &&
+      !state.isolated) {
     concretizeSize(state, size, isLocal, target, zeroMemory, reallocFrom,
                    allocationAlignment, checkOutOfMemory);
     return;
@@ -5527,7 +6169,8 @@ void Executor::executeAlloc(ExecutionState &state, ref<Expr> size, bool isLocal,
         source = SourceBuilder::constant(
             constructStorage(size, ConstantExpr::create(0, Expr::Int8)));
       } else {
-        source = SourceBuilder::uninitialized(allocations++, target);
+        source = SourceBuilder::uninitialized(
+            state.uninitializedAllocations[target]++, target);
       }
       auto array = makeArray(size, source);
       ObjectState *os = bindObjectInState(state, mo, isLocal, array);
@@ -5541,7 +6184,7 @@ void Executor::executeAlloc(ExecutionState &state, ref<Expr> size, bool isLocal,
 
       if (checkOutOfMemory && !isLocal) {
         ref<Expr> symCheckOutOfMemoryExpr =
-            makeMockValue("symCheckOutOfMemory", Expr::Bool);
+            makeMockValue(state, "symCheckOutOfMemory", Expr::Bool);
         address = SelectExpr::create(symCheckOutOfMemoryExpr,
                                      Expr::createPointer(0), address);
       }
@@ -5643,6 +6286,7 @@ bool Executor::resolveExact(ExecutionState &estate, ref<Expr> address,
     auto error = isReadFromSymbolicArray(uniqueBase)
                      ? ReachWithError::MayBeNullPointerException
                      : ReachWithError::MustBeNullPointerException;
+    bound->nullPointerExpr = base;
     terminateStateOnTargetError(*bound, error);
   }
   if (!branches.second) {
@@ -5660,8 +6304,9 @@ bool Executor::resolveExact(ExecutionState &estate, ref<Expr> address,
 
   /* We do not need this variable here, just a placeholder for resolve */
   [[maybe_unused]] bool success = resolveMemoryObjects(
-      state, pointer, state.prevPC, 0, rl, mayBeOutOfBound, hasLazyInitialized,
-      incomplete, LazyInitialization == LazyInitializationPolicy::Only);
+      state, pointer, state.getPrevPC(), 0, rl, mayBeOutOfBound,
+      hasLazyInitialized, incomplete,
+      LazyInitialization == LazyInitializationPolicy::Only);
   assert(success);
 
   ExecutionState *unbound = &state;
@@ -5862,8 +6507,9 @@ Executor::allocate(ExecutionState &state, ref<Expr> size, bool isLocal,
   /// Determine source for address array:
   /// * LI source if allocate occures on lazy initialization
   /// * Otherwise choose source depending on the allocation site
-  ref<SymbolicSource> sourceAddressArray;
+  ref<Expr> addressExpr;
   if (!lazyInitializationSource) {
+    ref<SymbolicSource> sourceAddressArray;
     if (const auto inst =
             dyn_cast<const llvm::Instruction>(allocSite->source->unwrap())) {
       KInstruction *ki =
@@ -5876,9 +6522,11 @@ Executor::allocate(ExecutionState &state, ref<Expr> size, bool isLocal,
       sourceAddressArray = SourceBuilder::symbolicSizeConstantAddress(
           updateNameVersion(state, "const_arr"), kgb, size);
     }
+    const Array *addressArray = makeArray(
+        Expr::createPointer(pointerWidthInBits / CHAR_BIT), sourceAddressArray);
+    addressExpr = Expr::createTempRead(addressArray, pointerWidthInBits);
   } else {
-    sourceAddressArray =
-        lazyInitializationSource->hasOrderedReads()->updates.root->source;
+    addressExpr = lazyInitializationSource;
   }
 
   if (lazyInitializationSource) {
@@ -5887,11 +6535,6 @@ Executor::allocate(ExecutionState &state, ref<Expr> size, bool isLocal,
                                     lazyInitializationSource)
             .simplified;
   }
-
-  const Array *addressArray = makeArray(
-      Expr::createPointer(pointerWidthInBits / CHAR_BIT), sourceAddressArray);
-  ref<Expr> addressExpr =
-      Expr::createTempRead(addressArray, pointerWidthInBits);
 
   if (lazyInitializationSource && isLocal) {
     conditionExpr = AndExpr::create(
@@ -5960,7 +6603,6 @@ bool Executor::resolveMemoryObjects(
     size = kmodule->targetData->getTypeStoreSize(state.gepExprBases[base]);
   }
 
-  base = Simplificator::simplifyExpr(state.constraints.cs(), base).simplified;
   ref<PointerExpr> basePointer = PointerExpr::create(base, base);
 
   auto mso = MemorySubobject(address, bytes);
@@ -6036,8 +6678,7 @@ bool Executor::resolveMemoryObjects(
         return false;
       } else if (mayLazyInitialize) {
         uint64_t minObjectSize = 0;
-        // minObjectSize = MinNumberElementsLazyInit * MinElementSizeLazyInit;
-        minObjectSize = MinNumberElementsLazyInit * size;
+        minObjectSize = state.isolated ? 0 : MinNumberElementsLazyInit * size;
 
         const Array *lazyInstantiationSize = makeArray(
             Expr::createPointer(Context::get().getPointerWidth() / CHAR_BIT),
@@ -6046,7 +6687,7 @@ bool Executor::resolveMemoryObjects(
                                              Context::get().getPointerWidth());
         ref<const MemoryObject> idLazyInitialization = lazyInitializeObject(
             state, basePointer, target, minObjectSize, sizeExpr, false,
-            checkOutOfBounds, UseSymbolicSizeLazyInit);
+            checkOutOfBounds, state.isolated || UseSymbolicSizeLazyInit);
         RefObjectPair op = state.addressSpace.findOrLazyInitializeObject(
             idLazyInitialization.get());
         state.addressSpace.bindObject(op.first, op.second.get());
@@ -6289,10 +6930,6 @@ void Executor::executeMemoryOperation(
   ref<Expr> zeroPointer = PointerExpr::create(Expr::createPointer(0));
 
   if (SimplifySymIndices) {
-    if (!isa<ConstantExpr>(base)) {
-      base =
-          Simplificator::simplifyExpr(estate.constraints.cs(), base).simplified;
-    }
     if (isWrite && !isa<ConstantExpr>(value))
       value = Simplificator::simplifyExpr(estate.constraints.cs(), value)
                   .simplified;
@@ -6459,7 +7096,7 @@ void Executor::executeMemoryOperation(
   }
 
   ExecutionState *unbound = nullptr;
-  if (MergedPointerDereference) {
+  if (state->isolated || MergedPointerDereference) {
     ref<Expr> guard;
     bool mayBeInBounds;
 
@@ -6737,11 +7374,14 @@ void Executor::lazyInitializeLocalObject(ExecutionState &state, StackFrame &sf,
     }
   }
   ref<Expr> conditionExpr = Expr::createTrue();
-  ref<PointerExpr> pointer = PointerExpr::create(address, address);
-  ref<const MemoryObject> id =
-      lazyInitializeObject(state, pointer, target, elementSize, size, true,
-                           conditionExpr, UseSymbolicSizeLazyInit);
+  ref<PointerExpr> pointer = PointerExpr::create(address);
+  ref<PointerExpr> basePointer =
+      PointerExpr::create(pointer->getBase(), pointer->getBase());
+  ref<const MemoryObject> id = lazyInitializeObject(
+      state, pointer, target, elementSize, size, true, conditionExpr,
+      state.isolated || UseSymbolicSizeLazyInit);
   state.addPointerResolution(pointer, id.get());
+  state.addPointerResolution(basePointer, id.get());
   state.addConstraint(EqExpr::create(address, id->getBaseExpr()));
   state.addConstraint(
       Expr::createIsZero(EqExpr::create(address, Expr::createPointer(0))));
@@ -6989,14 +7629,28 @@ void Executor::runFunctionAsMain(Function *f, int argc, char **argv,
   objectManager->addProcessForest(processForest.get());
 
   ExecutionState *state = formState(f, argc, argv, envp);
+  auto emptyState = state->copy();
+  emptyState->popFrame();
+  emptyState->isolated = true;
+  for (const auto &v : kmodule->module->globals()) {
+    if (v.isConstant()) {
+      continue;
+    }
+    auto mo = globalObjects[&v];
+    auto array = makeArray(mo->sizeExpr, SourceBuilder::global(v));
+    bindObjectInState(*emptyState, mo, false, array);
+  }
+  objectManager->setEmptyState(emptyState);
   bindModuleConstants(llvm::APFloat::rmNearestTiesToEven);
+
+  TargetedExecutionManager::Data data;
+  std::vector<ProofObligation *> pobs;
 
   KFunction *kEntryFunction = kmodule->functionMap.at(f);
   if (guidanceKind == GuidanceKind::ErrorGuidance) {
-    ref<TargetForest> forest;
     if (FunctionCallReproduce == "") {
       auto &paths = interpreterOpts.Paths.value();
-      forest = targetedExecutionManager->prepareTargets(
+      data = targetedExecutionManager->prepareTargets(
           kmodule.get(), kEntryFunction, std::move(paths));
     } else {
       /* Find all calls to function specified in .prp file
@@ -7006,23 +7660,43 @@ void Executor::runFunctionAsMain(Function *f, int argc, char **argv,
         klee_warning("%s was eliminated by LLVM passes, so it is unreachable",
                      FunctionCallReproduce.c_str());
       } else {
+        KBlockTrace trace;
+        trace.push_back({kEntryFunction->entryKBlock});
         auto kCallBlock = kfIt->second->entryKBlock;
-        forest = new TargetForest(kEntryFunction);
-        forest->add(ReproduceErrorTarget::create(
-            {ReachWithError::Reachable}, "",
-            ErrorLocation(kCallBlock->getFirstInstruction()), kCallBlock));
+        trace.push_back({kCallBlock});
+        data =
+            targetedExecutionManager->prepareTargets(kEntryFunction, {trace});
       }
     }
 
-    if (forest->empty()) {
+    if (data.forwardWhitelist->empty()) {
       klee_warning(
           "No targets found in error-guided mode after prepare targets");
       delete state;
       return;
     }
 
-    targets.emplace(kEntryFunction, TargetedHaltsOnTraces(forest));
-    prepareTargetedExecution(*state, forest);
+    targets.emplace(kEntryFunction,
+                    TargetedHaltsOnTraces(data.forwardWhitelist));
+    prepareTargetedExecution(*state, data.forwardWhitelist);
+
+    for (auto &backwardList : data.backwardWhitelists) {
+      auto errorTargets = backwardList.second->getTargets();
+      for (auto target : errorTargets) {
+        assert(target->shouldFailOnThisTarget());
+        auto errorT = dyn_cast<ReproduceErrorTarget>(target);
+        auto pob = new ProofObligation(
+            errorT->isThatError(Reachable)
+                ? ReachBlockTarget::create(errorT->getBlock(), false)
+                : target);
+        pob->setTargeted(true);
+        pob->targetForest = *(backwardList.second->deepCopy());
+        if (errorT->isThatError(Reachable)) {
+          pob->targetForest.stepTo(errorT);
+        }
+        pobs.push_back(pob);
+      }
+    }
   }
 
   objectManager->addInitialState(state);
@@ -7045,10 +7719,16 @@ void Executor::runFunctionAsMain(Function *f, int argc, char **argv,
   if (symPathWriter)
     state->symPathOS = symPathOS;
 
-  run(state);
+  for (auto pob : pobs) {
+    objectManager->addPob(pob);
+  }
 
-  if (statsTracker)
-    statsTracker->done();
+  summary.readFromFile(kmodule.get());
+
+  run(state, data);
+
+  summary.dumpToFile(kmodule.get());
+  objectManager->clear();
 
   clearMemory();
   clearGlobal();
@@ -7106,7 +7786,7 @@ void Executor::prepareSymbolicValue(ExecutionState &state, StackFrame &frame,
 void Executor::prepareMockValue(ExecutionState &state, StackFrame &frame,
                                 const std::string &name, Expr::Width width,
                                 KInstruction *target) {
-  ref<Expr> result = makeMockValue(name, width);
+  ref<Expr> result = makeMockValue(state, name, width);
   bindLocal(target, frame, result);
   if (isa<AllocaInst>(target->inst())) {
     lazyInitializeLocalObject(state, frame, result, target);
@@ -7826,7 +8506,7 @@ void Executor::dumpStates() {
 
       InfoStackFrame &sf = es->stack.infoStack().back();
       uint64_t md2u =
-          computeMinDistToUncovered(es->pc, sf.minDistToUncoveredOnReturn);
+          computeMinDistToUncovered(es->getPC(), sf.minDistToUncoveredOnReturn);
       uint64_t icnt = theStatisticManager->getIndexedValue(
           stats::instructions, es->pc->getGlobalIndex());
       uint64_t cpicnt =

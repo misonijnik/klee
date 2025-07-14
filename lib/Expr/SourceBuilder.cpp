@@ -38,6 +38,14 @@ ref<SymbolicSource> SourceBuilder::symbolicSizeConstantAddress(
   return r;
 }
 
+ref<SymbolicSource> SourceBuilder::symbolicSizeConstantAddress(
+    unsigned version, const KValue *allocSite, ref<Expr> size) {
+  ref<SymbolicSource> r(
+      new SymbolicSizeConstantAddressSource(version, allocSite, size));
+  r->computeHash();
+  return r;
+}
+
 ref<SymbolicSource> SourceBuilder::makeSymbolic(const std::string &name,
                                                 unsigned version) {
   ref<SymbolicSource> r(new MakeSymbolicSource(name, version));
@@ -90,9 +98,15 @@ ref<SymbolicSource> SourceBuilder::value(const llvm::Value &_allocSite,
   return instruction(*allocSite, _index, km);
 }
 
-ref<SymbolicSource> SourceBuilder::irreproducible(const std::string &name) {
-  static unsigned id = 0;
-  ref<SymbolicSource> r(new IrreproducibleSource(name + llvm::utostr(++id)));
+ref<SymbolicSource> SourceBuilder::irreproducible(const std::string &name,
+                                                  unsigned version) {
+  ref<SymbolicSource> r(new IrreproducibleSource(name, version));
+  r->computeHash();
+  return r;
+}
+
+ref<SymbolicSource> SourceBuilder::global(const llvm::GlobalVariable &gv) {
+  ref<SymbolicSource> r(new GlobalSource(gv));
   r->computeHash();
   return r;
 }

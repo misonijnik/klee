@@ -38,6 +38,10 @@ template <typename T> class ImmutableList {
         prev = nullptr;
       }
     }
+
+    ImmutableListNode(std::shared_ptr<ImmutableListNode> prev, size_t prev_len,
+                      std::vector<T> values)
+        : prev(prev), prev_len(prev_len), values(std::move(values)) {}
   };
 
   std::shared_ptr<ImmutableListNode> node;
@@ -97,6 +101,26 @@ public:
     node->values.push_back(value);
   }
 
+  void pop_back() {
+    while (node && node->values.empty()) {
+      node = node->prev;
+    }
+    if (!node) {
+      return;
+    }
+    node = std::make_shared<ImmutableListNode>(node->prev, node->prev_len,
+                                               node->values);
+    node->values.pop_back();
+  }
+
+  T at(size_t index) const {
+    auto cur = node;
+    while (cur && cur->prev_len > index) {
+      cur = cur->prev;
+    }
+    return cur->values[index - cur->prev_len];
+  }
+
   bool empty() const { return size() == 0; }
 
   const T &back() const {
@@ -104,6 +128,55 @@ public:
     auto it = iterator(node.get());
     it.get = size() - 1;
     return *it;
+  }
+
+  const T &front() const { return at(0); }
+
+  friend bool operator==(const ImmutableList<T> &lhs,
+                         const ImmutableList<T> &rhs) {
+    if (lhs.size() != rhs.size()) {
+      return false;
+    }
+
+    auto li = lhs.begin();
+    auto ri = rhs.begin();
+    while (li != lhs.end() && ri != rhs.end()) {
+      if (*li != *ri) {
+        return false;
+      }
+      ++li;
+      ++ri;
+    }
+
+    return true;
+  }
+
+  friend bool operator!=(const ImmutableList<T> &lhs,
+                         const ImmutableList<T> &rhs) {
+    return !(lhs == rhs);
+  }
+
+  friend bool operator<(const ImmutableList<T> &lhs,
+                        const ImmutableList<T> &rhs) {
+    if (lhs.size() < rhs.size()) {
+      return true;
+    } else if (lhs.size() > rhs.size()) {
+      return false;
+    }
+
+    auto li = lhs.begin();
+    auto ri = rhs.begin();
+    while (li != lhs.end() && ri != rhs.end()) {
+      if (*li < *ri) {
+        return true;
+      } else if (*ri < *li) {
+        return false;
+      }
+      ++li;
+      ++ri;
+    }
+
+    return false;
   }
 
   ImmutableList() : node(){};

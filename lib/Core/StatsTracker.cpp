@@ -403,8 +403,11 @@ void StatsTracker::stepInstruction(ExecutionState &es) {
         // number propogation.
         es.coveredLines[ki->getSourceFilepath()].insert(ki->getLine());
         es.instsSinceCovNew = 1;
-        ++stats::coveredInstructions;
-        stats::uncoveredInstructions += (uint64_t)-1;
+
+        if (!es.isolated) {
+          ++stats::coveredInstructions;
+          stats::uncoveredInstructions += (uint64_t)-1;
+        }
       }
     }
   }
@@ -1128,9 +1131,9 @@ void StatsTracker::computeReachableUncovered() {
       KInstIterator kii;
 
       if (next == sf_ie) {
-        kii = es->pc;
+        kii = es->pc ? es->pc : es->prevPC;
       } else {
-        kii = next->caller;
+        kii = next->caller->getIterator();
         ++kii;
       }
 

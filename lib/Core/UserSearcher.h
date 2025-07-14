@@ -9,8 +9,12 @@
 
 #ifndef KLEE_USERSEARCHER_H
 #define KLEE_USERSEARCHER_H
+#include "BidirectionalSearcher.h"
+
+#include <memory>
 
 namespace klee {
+class BackwardSearcher;
 class Executor;
 class Searcher;
 
@@ -19,12 +23,21 @@ bool userSearcherRequiresMD2U();
 
 void initializeSearchOptions();
 
-Searcher *constructBaseSearcher(Executor &executor);
-Searcher *constructUserSearcher(Executor &executor);
+std::unique_ptr<Searcher> constructBaseSearcher(Executor &executor);
+std::unique_ptr<Searcher> constructUserSearcher(Executor &executor);
+
+std::unique_ptr<BackwardSearcher>
+constructUserBackwardSearcher(Executor &executor);
+
+std::unique_ptr<BidirectionalSearcher> constructUserBidirectionalSearcher(
+    Executor &executor, std::unique_ptr<IsolatedStatesInitializer> initializer);
+
 struct BaseSearcherConstructor {
   Executor &executor;
   BaseSearcherConstructor(Executor &executor) : executor(executor) {}
-  Searcher *operator()() const { return constructBaseSearcher(executor); }
+  Searcher *operator()() const {
+    return constructBaseSearcher(executor).release();
+  }
 };
 } // namespace klee
 

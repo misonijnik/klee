@@ -66,25 +66,6 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const MemoryMap &mm);
 
 extern llvm::cl::opt<unsigned long long> MaxCyclesBeforeStuck;
 
-struct CallStackFrame {
-  KInstIterator caller;
-  KFunction *kf;
-
-  /// @brief Location of a return statement in current stack frame.
-  /// @details Serves for a very special case when actual location
-  /// of `return` statement in source code can not be deduced from
-  /// LLVM IR `dbg!` metadata.
-  std::optional<ref<CodeLocation>> returnLocation;
-
-  CallStackFrame(KInstIterator caller_, KFunction *kf_)
-      : caller(caller_), kf(kf_) {}
-  ~CallStackFrame() = default;
-
-  bool equals(const CallStackFrame &other) const;
-
-  bool operator==(const CallStackFrame &other) const { return equals(other); }
-};
-
 struct StackFrame {
   KFunction *kf;
   std::vector<ref<const MemoryObject>> allocas;
@@ -105,8 +86,8 @@ struct StackFrame {
 struct InfoStackFrame {
   KFunction *kf;
   CallPathNode *callPathNode = nullptr;
-  PersistentMap<llvm::BasicBlock *, unsigned long long> multilevel;
-  PersistentMap<llvm::BasicBlock *, unsigned long long> symbolicMultilevel;
+  PersistentMap<KBlock *, unsigned long long> multilevel;
+  PersistentMap<KBlock *, unsigned long long> symbolicMultilevel;
 
   /// Minimum distance to an uncovered instruction once the function
   /// returns. This is not a good place for this but is used to
@@ -131,12 +112,14 @@ private:
   info_stack_ty infoStack_;
   call_stack_ty uniqueFrames_;
   size_t stackSize = 0;
-  unsigned stackBalance = 0;
+  int stackBalance_ = 0;
 
 public:
   PersistentMap<KFunction *, unsigned long long> multilevel;
   void pushFrame(KInstIterator caller, KFunction *kf);
   void popFrame();
+  int stackBalance() const { return stackBalance_; }
+  void SETSTACKBALANCETOZERO() { stackBalance_ = 0; }
   inline value_stack_ty &valueStack() { return valueStack_; }
   inline const value_stack_ty &valueStack() const { return valueStack_; }
   inline const call_stack_ty &callStack() const { return callStack_; }
@@ -147,8 +130,7 @@ public:
   void forceReturnLocation(const ref<CodeLocation> &location) {
     assert(!callStack_.empty() && "Call stack should contain at least one "
                                   "stack frame to force return location");
-    std::optional<ref<CodeLocation>> &callStackReturnLocation =
-        callStack_.back().returnLocation;
+    std::optional<ref<CodeLocation>> callStackReturnLocation = std::nullopt;
     assert(!callStackReturnLocation.has_value() &&
            "Forced return location twice for a single call stack");
 
@@ -159,7 +141,7 @@ public:
     if (callStack_.empty()) {
       return std::nullopt;
     }
-    return callStack_.back().returnLocation;
+    return std::nullopt;
   }
 
   inline unsigned size() const { return callStack_.size(); }
@@ -277,8 +259,6 @@ struct MemorySubobjectCompare {
   }
 };
 
-typedef std::pair<llvm::BasicBlock *, llvm::BasicBlock *> Transition;
-
 /// @brief ExecutionState representing a path under exploration
 class ExecutionState {
 #ifdef KLEE_UNITTEST
@@ -290,8 +270,6 @@ private:
   ExecutionState(const ExecutionState &state);
 
 public:
-  using stack_ty = ExecutionStack;
-
   // Execution - Control Flow specific
 
   /// @brief Pointer to initial instruction
@@ -305,9 +283,7 @@ public:
   KInstIterator prevPC;
 
   /// @brief Execution stack representing the current instruction stream
-  stack_ty stack;
-
-  int stackBalance = 0;
+  ExecutionStack stack;
 
   /// @brief Remember from which Basic Block control flow arrived
   /// (i.e. to select the right phi values)
@@ -375,6 +351,8 @@ public:
   /// @brief Set of used array names for this state.  Used to avoid collisions.
   std::map<std::string, uint64_t> arrayNames;
 
+  std::map<const KInstruction *, uint64_t> uninitializedAllocations;
+
   /// @brief The numbers of times this state has run through
   /// Executor::stepInstruction
   std::uint64_t steppedInstructions = 0;
@@ -406,6 +384,9 @@ public:
   /// @brief Disables forking for this state. Set by user code
   bool forkDisabled = false;
 
+  bool isolated = false;
+  bool finalComposing = false;
+
   bool afterFork = false;
 
   /// Needed for composition
@@ -414,6 +395,10 @@ public:
   ExprHashMap<llvm::Type *> gepExprBases;
 
   mutable ReachWithError error = ReachWithError::None;
+  ref<Expr> nullPointerExpr = nullptr;
+
+  ExprHashSet assumptions;
+
   std::atomic<HaltExecution::Reason> terminationReasonType{
       HaltExecution::NotHalt};
 
@@ -483,9 +468,21 @@ public:
     id = nextID++;
     queryMetaData.id = id;
   };
-  llvm::BasicBlock *getInitPCBlock() const;
-  llvm::BasicBlock *getPrevPCBlock() const;
-  llvm::BasicBlock *getPCBlock() const;
+
+  KBlock *getInitPCBlock() const { return initPC->parent; }
+
+  KBlock *getPrevPCBlock() const {
+    return prevPC ? prevPC->parent : getInitPCBlock();
+  }
+
+  KBlock *getPCBlock() const { return pc ? pc->parent : getPrevPCBlock(); }
+
+  KInstruction *getInitPC() const { return initPC; }
+
+  KInstruction *getPrevPC() const { return prevPC ? prevPC : getInitPC(); }
+
+  KInstruction *getPC() const { return pc ? pc : getPrevPC(); }
+
   void increaseLevel();
 
   inline bool isTransfered() const { return getPrevPCBlock() != getPCBlock(); }
@@ -527,8 +524,8 @@ public:
     areTargetsChanged_ = true;
   }
 
-  bool reachedTarget(ref<ReachBlockTarget> target) const;
   static std::uint32_t getLastID() { return nextID - 1; };
+  ref<Target> getLocationTarget() const;
 
   inline bool isCycled(unsigned long long bound) const {
     if (bound == 0)

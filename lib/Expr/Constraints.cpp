@@ -20,6 +20,7 @@
 #include "klee/Expr/SourceBuilder.h"
 #include "klee/Expr/SymbolicSource.h"
 #include "klee/Expr/Symcrete.h"
+#include "klee/Module/KInstruction.h"
 #include "klee/Module/KModule.h"
 #include "klee/Support/CompilerWarning.h"
 #include "klee/Support/OptionCategories.h"
@@ -382,11 +383,44 @@ const Assignment &ConstraintSet::concretization() const {
   return *_concretization;
 }
 
+const constraints_ty &PathConstraints::original() const { return _original; }
+
+const ExprHashMap<ExprHashSet> &PathConstraints::simplificationMap() const {
+  return _simplificationMap;
+}
+
 const ConstraintSet &PathConstraints::cs() const { return constraints; }
 
-void PathConstraints::advancePath(KInstruction *ki) { _path.advance(ki); }
+const ConstraintSet &
+PathConstraints::withAssumptions(const ExprHashSet &assumptions) const {
+  if (assumptions.size() == 0) {
+    return cs();
+  }
+  tmpConstraints = constraints;
+  for (auto assump : assumptions) {
+    tmpConstraints.addConstraint(assump);
+  }
+  return tmpConstraints;
+}
 
-ExprHashSet PathConstraints::addConstraint(ref<Expr> e) {
+const PathConstraints::ordered_constraints_ty &
+PathConstraints::orderedCS() const {
+  return orderedConstraints;
+}
+
+void PathConstraints::advancePath(KInstruction *prevPC, KInstruction *pc) {
+  _path.stepInstruction(prevPC, pc);
+}
+
+void PathConstraints::retractPath() { _path.retractInstruction(); }
+
+void PathConstraints::advancePath(const Path &path) {
+  _path = Path::concat(_path, path);
+}
+// void PathConstraints::advancePath(KInstruction *ki) { _path.advance(ki); }
+
+ExprHashSet PathConstraints::addConstraint(ref<Expr> e,
+                                           Path::PathIndex currIndex) {
   auto expr = Simplificator::simplifyExpr(constraints, e);
   if (auto ce [[maybe_unused]] = dyn_cast<ConstantExpr>(expr.simplified)) {
     assert(ce->isTrue() && "Attempt to add invalid constraint");
@@ -399,7 +433,13 @@ ExprHashSet PathConstraints::addConstraint(ref<Expr> e) {
     if (auto ce [[maybe_unused]] = dyn_cast<ConstantExpr>(expr)) {
       assert(ce->isTrue() && "Expression simplified to false");
     } else {
+      _original.insert(expr);
       added.insert(expr);
+      pathIndexes.insert({expr, currIndex});
+      _simplificationMap[expr].insert(expr);
+      auto indexConstraints = orderedConstraints[currIndex].second;
+      indexConstraints.insert(expr);
+      orderedConstraints.replace({currIndex, indexConstraints});
       constraints.addConstraint(expr);
     }
   }
@@ -411,10 +451,17 @@ ExprHashSet PathConstraints::addConstraint(ref<Expr> e) {
         Simplificator::simplify(constraints.cs(), RewriteEqualities);
     if (simplified.wasSimplified) {
       constraints.changeCS(simplified.simplified);
+
+      _simplificationMap = Simplificator::composeExprDependencies(
+          _simplificationMap, simplified.dependency);
     }
   }
 
   return added;
+}
+
+ExprHashSet PathConstraints::addConstraint(ref<Expr> e) {
+  return addConstraint(e, _path.getCurrentIndex());
 }
 
 bool PathConstraints::isSymcretized(ref<Expr> expr) const {

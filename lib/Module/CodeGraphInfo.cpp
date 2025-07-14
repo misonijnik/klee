@@ -10,14 +10,14 @@
 #include "klee/Module/CodeGraphInfo.h"
 #include "klee/Module/KModule.h"
 
-#include "klee/Module/KModule.h"
-
 #include "llvm/IR/CFG.h"
 
 #include <deque>
+#include <queue>
 #include <unordered_map>
 
 using namespace klee;
+using namespace llvm;
 
 void CodeGraphInfo::calculateDistance(KBlock *bb) {
   auto &dist = blockDistance[bb];
@@ -179,27 +179,43 @@ const FunctionDistanceMap &CodeGraphInfo::getBackwardDistance(KFunction *kf) {
 
 void CodeGraphInfo::getNearestPredicateSatisfying(KBlock *from,
                                                   KBlockPredicate predicate,
+                                                  bool forward,
                                                   KBlockSet &result) {
   std::unordered_set<KBlock *> visited;
+  std::unordered_set<KBlock *> queued;
 
   auto blockMap = from->parent->blockMap;
   std::deque<KBlock *> nodes;
+  bool firstIteration = true;
   nodes.push_back(from);
 
   while (!nodes.empty()) {
     KBlock *currBB = nodes.front();
-    visited.insert(currBB);
+    if (!firstIteration) {
+      visited.insert(currBB);
+    }
 
-    if (predicate(currBB) && currBB != from) {
+    if (predicate(currBB) && !firstIteration) {
       result.insert(currBB);
     } else {
-      for (auto succ : successors(currBB->basicBlock())) {
-        if (visited.count(blockMap[succ]) == 0) {
-          nodes.push_back(blockMap[succ]);
+      if (forward) {
+        for (auto const &succ : successors(currBB->basicBlock())) {
+          if (!visited.count(blockMap[succ]) && !queued.count(blockMap[succ])) {
+            nodes.push_back(blockMap[succ]);
+            queued.insert(blockMap[succ]);
+          }
+        }
+      } else {
+        for (auto const &pred : predecessors(currBB->basicBlock())) {
+          if (!visited.count(blockMap[pred]) && !queued.count(blockMap[pred])) {
+            nodes.push_back(blockMap[pred]);
+            queued.insert(blockMap[pred]);
+          }
         }
       }
     }
     nodes.pop_front();
+    firstIteration = false;
   }
 }
 
@@ -222,4 +238,40 @@ CodeGraphInfo::getFunctionBlocks(KFunction *kf) {
   if (functionBlocks.count(kf) == 0)
     calculateFunctionBlocks(kf);
   return functionBlocks.at(kf);
+}
+
+std::set<KBlock *, KBlockCompare> CodeGraphInfo::getNearestPredicateSatisfying(
+    KBlock *from, KBlockPredicate predicate, bool forward) {
+  std::set<KBlock *, KBlockCompare> result;
+  getNearestPredicateSatisfying(from, predicate, forward, result);
+  return result;
+}
+
+std::vector<std::pair<KBlock *, KBlock *>>
+CodeGraphInfo::dismantleFunction(KFunction *kf, KBlockPredicate predicate) {
+  std::vector<std::pair<KBlock *, KBlock *>> dismantled;
+  std::queue<KBlock *> queue;
+  std::set<KBlock *> used;
+
+  // triple check!
+  if (kf->finalKBlocks.count(kf->entryKBlock)) {
+    return {{kf->entryKBlock, kf->entryKBlock}};
+  }
+
+  queue.push(kf->entryKBlock);
+  while (!queue.empty()) {
+    auto kblock = queue.front();
+    queue.pop();
+    used.insert(kblock);
+    std::set<KBlock *> visited;
+    std::set<KBlock *, KBlockCompare> nearest;
+    getNearestPredicateSatisfying(kblock, predicate, true, nearest);
+    for (auto to : nearest) {
+      dismantled.push_back({kblock, to});
+      if (!used.count(to)) {
+        queue.push(to);
+      }
+    }
+  }
+  return dismantled;
 }

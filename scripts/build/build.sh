@@ -365,6 +365,11 @@ check_os() {
     # Remove `"`, if exists
     DISTRIBUTION_VER=${DISTRIBUTION_VER#\"}
     DISTRIBUTION_VER=${DISTRIBUTION_VER%\"}
+    # Workaround for linux mint support -- essentialy, assume ubuntu
+    if [[ "$DISTRIBUTION" == "linuxmint" ]]; then
+      DISTRIBUTION="ubuntu"
+      DISTRIBUTION_VER="22.04"
+    fi
 
   elif [[ "$OSTYPE" == "darwin"* ]]; then
     # Host is Mac OS X

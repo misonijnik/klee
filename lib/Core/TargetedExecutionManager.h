@@ -100,13 +100,14 @@ private:
   std::unordered_set<std::string> brokenTraces;
   std::unordered_set<std::string> reportedTraces;
 
-  bool tryResolveLocations(Result &result, LocationToBlocks &locToBlocks) const;
+  bool tryResolveLocations(Result &result,
+                           const LocationToBlocks &locToBlocks) const;
   LocationToBlocks prepareAllLocations(KModule *kmodule,
                                        Locations &locations) const;
   Locations collectAllLocations(const SarifReport &paths) const;
 
   bool canReach(const ref<Location> &from, const ref<Location> &to,
-                LocationToBlocks &locToBlocks) const;
+                const LocationToBlocks &locToBlocks) const;
 
   KFunction *tryResolveEntryFunction(const Result &result,
                                      LocationToBlocks &locToBlocks) const;
@@ -116,13 +117,20 @@ private:
   StatesSet localStates;
 
 public:
+  struct Data {
+    ref<TargetForest> forwardWhitelist;
+    std::map<std::string, ref<TargetForest>> backwardWhitelists;
+    std::set<KFunction *, KFunctionCompare> functionsToDismantle;
+    std::set<KBlock *, KBlockCompare> specialPoints;
+  };
+
   explicit TargetedExecutionManager(CodeGraphInfo &codeGraphInfo_,
                                     TargetManager &targetManager_)
       : codeGraphInfo(codeGraphInfo_), targetManager(targetManager_) {}
   ~TargetedExecutionManager() = default;
 
-  ref<TargetForest> prepareTargets(KModule *kmodule, KFunction *entry,
-                                   SarifReport paths);
+  Data prepareTargets(KModule *kmodule, KFunction *entry, SarifReport paths);
+  Data prepareTargets(KFunction *entry, std::vector<KBlockTrace> paths);
 
   void reportFalseNegative(ExecutionState &state, ReachWithError error);
 

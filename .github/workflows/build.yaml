@@ -156,6 +156,7 @@ jobs:
         env: ${{ matrix.env }}
         run: scripts/build/run-tests.sh --run-docker --debug
 
+
   macOS:
     runs-on: macos-latest
     env:
@@ -173,11 +174,11 @@ jobs:
       - name: Checkout KLEE source code
         uses: actions/checkout@v4
       - name: Create virtualenv for Python3 (PEP 668)
-        run:  python3 -m venv .venv
+        run: python3 -m venv .venv
       - name: Build KLEE
-        run:  source .venv/bin/activate && echo "$(which tabulate)" && scripts/build/build.sh klee --debug --install-system-deps
+        run: source .venv/bin/activate && echo "$(which tabulate)" && scripts/build/build.sh klee --debug --install-system-deps
       - name: Run tests
-        run:  source .venv/bin/activate && scripts/build/run-tests.sh /tmp/klee_build* --debug
+        run: source .venv/bin/activate && scripts/build/run-tests.sh /tmp/klee_build* --debug
 
   Docker:
     runs-on: ubuntu-latest
@@ -230,8 +231,8 @@ jobs:
   clang-format:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - uses: actions/setup-python@v4
-      with:
-        python-version: 3.x
-    - uses: pre-commit/action@v3.0.1
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: 3.x
+      - uses: pre-commit/action@v3.0.1

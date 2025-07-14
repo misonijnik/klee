@@ -9,6 +9,7 @@
 #ifndef KLEE_EVENT_RECORDER_H
 #define KLEE_EVENT_RECORDER_H
 
+#include "klee/ADT/ImmutableList.h"
 #include "klee/Expr/Path.h"
 
 namespace klee {
