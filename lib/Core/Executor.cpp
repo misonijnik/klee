@@ -5391,6 +5391,7 @@ void Executor::run(ExecutionState *initialState,
   } else if (ExecutionMode == ExecutionKind::Bidirectional) {
     InitializerPredicate *predicate = new TraceVerifyPredicate(
         data.specialPoints, *codeGraphInfo.get(), InitializeInJoinBlocks);
+    // object manager assumes ownership over predicate
     objectManager->setPredicate(predicate);
     auto initializer = createIsolatedStatesInitializer(predicate, data);
     isolatedStatesInitializer = initializer.get();
