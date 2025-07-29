@@ -7381,8 +7381,10 @@ void Executor::lazyInitializeLocalObject(ExecutionState &state, StackFrame &sf,
   ref<const MemoryObject> id = lazyInitializeObject(
       state, pointer, target, elementSize, size, true, conditionExpr,
       state.isolated || UseSymbolicSizeLazyInit);
-  // state.addPointerResolution(pointer, id.get());
-  // state.addPointerResolution(basePointer, id.get());
+  if (!state.isolated) {
+    state.addPointerResolution(pointer, id.get());
+    state.addPointerResolution(basePointer, id.get());
+  }
   state.addConstraint(EqExpr::create(address, id->getBaseExpr()));
   state.addConstraint(
       Expr::createIsZero(EqExpr::create(address, Expr::createPointer(0))));
